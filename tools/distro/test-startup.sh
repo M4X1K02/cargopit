@@ -5,7 +5,11 @@ set -euo pipefail
 INSTALL_DIR="${MONOCOQUE_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/monocoque}"
 BIN_DIR="${HOME}/.local/bin"
 PLAY_TIMEOUT_SEC=12
+MISSING_TIMEOUT_SEC=6
 SIMD_REQUIRED_MSG="simd is required but is not installed"
+# Keep in sync with simd_find_binary() in src/monocoque/helper/ensure_simd.c
+SIMD_PATH_USR_LOCAL="/usr/local/bin/simd"
+SIMD_PATH_USR_BIN="/usr/bin/simd"
 
 export PATH="$BIN_DIR:$PATH"
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/usr/local/lib:/usr/local/lib64"
@@ -27,12 +31,19 @@ if ! command -v timeout >/dev/null 2>&1; then
     exit 1
 fi
 
+has_packaged_simd() {
+    [ -x "$SIMD_PATH_USR_LOCAL" ] || [ -x "$SIMD_PATH_USR_BIN" ]
+}
+
 pkill -x simd 2>/dev/null || true
 sleep 1
 
-isolated="$(mktemp -d /tmp/monocoque-startup-missing-XXXXXX)"
-mkdir -p "$isolated/.config/monocoque" "$isolated/.cache/monocoque"
-cat > "$isolated/.config/monocoque/monocoque.config" << 'EOF'
+if has_packaged_simd; then
+    echo "SKIP missing simd probe: packaged simd is present after install"
+else
+    isolated="$(mktemp -d /tmp/monocoque-startup-missing-XXXXXX)"
+    mkdir -p "$isolated/.config/monocoque" "$isolated/.cache/monocoque"
+    cat > "$isolated/.config/monocoque/monocoque.config" << 'EOF'
 configs = (
     {
         sim = "default";
@@ -42,27 +53,28 @@ configs = (
 );
 EOF
 
-set +e
-missing_out="$(
-    env -i \
-        HOME="$isolated" \
-        XDG_CONFIG_HOME="$isolated/.config" \
-        XDG_CACHE_HOME="$isolated/.cache" \
-        XDG_DATA_HOME="$isolated/.local/share" \
-        PATH="/bin:/usr/bin" \
-        TERM=dumb \
-        timeout --signal=TERM --kill-after=2 6 \
-        "$MONOCOQUE_BIN" play --disable_audio 2>&1
-)"
-set -e
-rm -rf "$isolated"
+    set +e
+    missing_out="$(
+        env -i \
+            HOME="$isolated" \
+            XDG_CONFIG_HOME="$isolated/.config" \
+            XDG_CACHE_HOME="$isolated/.cache" \
+            XDG_DATA_HOME="$isolated/.local/share" \
+            PATH="/bin:/usr/bin" \
+            TERM=dumb \
+            timeout --signal=TERM --kill-after=2 "$MISSING_TIMEOUT_SEC" \
+            "$MONOCOQUE_BIN" play --disable_audio 2>&1
+    )"
+    set -e
+    rm -rf "$isolated"
 
-if ! printf '%s\n' "$missing_out" | grep -Fq "$SIMD_REQUIRED_MSG"; then
-    echo "FAIL: play mode did not demand simd when it was not installed" >&2
-    printf '%s\n' "$missing_out" >&2
-    exit 1
+    if ! printf '%s\n' "$missing_out" | grep -Fq "$SIMD_REQUIRED_MSG"; then
+        echo "FAIL: play mode did not demand simd when it was not installed" >&2
+        printf '%s\n' "$missing_out" >&2
+        exit 1
+    fi
+    echo "PASS play mode reports missing simd"
 fi
-echo "PASS play mode reports missing simd"
 
 set +e
 timeout --signal=TERM --kill-after=2 "$PLAY_TIMEOUT_SEC" \
