@@ -33,7 +33,8 @@ fi
 
 PASS=0
 FAIL=0
-LOGDIR="${TMPDIR:-/tmp}/monocoque-install-tests"
+# Honour INSTALLER_LOG_DIR from CI; otherwise keep logs under TMPDIR.
+LOGDIR="${INSTALLER_LOG_DIR:-${TMPDIR:-/tmp}/monocoque-install-tests}"
 mkdir -p "$LOGDIR"
 
 log() { printf '%s\n' "$*"; }
