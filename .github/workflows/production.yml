@@ -1,0 +1,37 @@
+# Registers the GitHub Actions deployment environment that rulesets can
+# require (Settings → Environments, or a ruleset's "Required deployments").
+#
+# GitHub creates an environment the first time a job with `environment:`
+# runs. The Environments REST API is not available to every token, so this
+# workflow is how `production` gets created on the repository.
+#
+# GitHub does not expand the `env` context in a job's `environment` key, so
+# the name is defined once as a YAML anchor and reused below.
+
+name: Production environment
+
+on:
+  pull_request:
+  push:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  record-production-deployment:
+    name: Record production deployment
+    runs-on: ubuntu-latest
+    environment:
+      name: &github_deployment_environment production
+    steps:
+      - name: Confirm production environment
+        env:
+          CARGOPIT_GITHUB_ENVIRONMENT: *github_deployment_environment
+        run: |
+          printf '%s\n' \
+            "environment=${CARGOPIT_GITHUB_ENVIRONMENT}" \
+            "ref=${GITHUB_REF}" \
+            "sha=${GITHUB_SHA}"
