@@ -19,7 +19,6 @@
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../simulatorapi/simapi/simapi/simmapper.h"
 #include "../simulatorapi/simapi/simapi/simmap.h"
-#include "../simulatorapi/dr2_haptic_telemetry.h"
 #include "../slog/slog.h"
 
 #define DEFAULT_UPDATE_RATE      240.0
@@ -63,7 +62,6 @@ static void map_live_simdata(SimData* simdata, SimMap* simmap,
                              SimulatorAPI api, bool udp, char* packet)
 {
     simapi_datamap(simdata, simmap, api, udp, packet);
-    dr2_apply_haptic_telemetry(simdata);
 }
 
 static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin_was_raw)

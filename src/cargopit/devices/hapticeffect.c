@@ -18,6 +18,7 @@
 #define maxbrake     0
 #define maxthrottle  0
 #define maxXvelocity 0.001
+#define minYvelocity 0
 #define maxZvelocity 1
 #define HAPTIC_WHEEL_COUNT 4
 #define HAPTIC_BRAKE_APPLIED_FRAC 0.05
@@ -241,7 +242,7 @@ static int throttle_is_applied(const SimData* simdata)
 
 static int car_is_moving_for_tyres(const SimData* simdata)
 {
-    if (!haptic_chassis_is_rolling(simdata))
+    if (simdata->Yvelocity <= minYvelocity)
     {
         return 0;
     }
@@ -250,6 +251,24 @@ static int car_is_moving_for_tyres(const SimData* simdata)
         return 0;
     }
     return 1;
+}
+
+static int sim_provides_slip_ratio(const SimData* simdata)
+{
+    int i;
+
+    if (simdata->simapi == SIMULATORAPI_DIRT_RALLY_2)
+    {
+        return 1;
+    }
+    for (i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        if (fabs(simdata->tyreslipratio[i]) != 0.0)
+        {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static double sum_slip_beyond(
@@ -521,17 +540,7 @@ double slipeffect(SimData* simdata, HapticEffect* h, int useconfig, int* configc
     wheelslip[2] = 0;
     wheelslip[3] = 0;
 
-    int sim_slip_ratio = 0;
-    for (int i = 0; i < 4; i++)
-    {
-        if (fabs(simdata->tyreslipratio[i]) != 0.0)
-        {
-            sim_slip_ratio = 1;
-            break;
-        }
-    }
-
-    if(sim_slip_ratio == 0)
+    if (!sim_provides_slip_ratio(simdata))
     {
         //slogt("wheel vibration calculation with wheel config set to %i configchecked %i configfile %s car %s sim %i", useconfig, *configcheck, configfile, simdata->car, simdata->simexe);
 

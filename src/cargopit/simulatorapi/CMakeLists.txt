@@ -28,6 +28,8 @@ set(simulatorapi_source_files
   simapi/simapi/rbr.h
   simapi/simapi/forzadef.h
   simapi/simapi/r3edef.h
+  simapi/simapi/lmudef.h
+  simapi/include/lmu.h
   simapi/simapi/mapping/acmapper.c
   simapi/simapi/mapping/rf2mapper.c
   simapi/simapi/mapping/r3emapper.c
@@ -40,8 +42,6 @@ set(simulatorapi_source_files
   simapi/simapi/mapping/wreckfest2mapper.c
   simapi/simapi/mapping/forzamapper.c
   simapi/simapi/getpid.c
-  dr2_haptic_telemetry.c
-  dr2_haptic_telemetry.h
 )
 
 add_library(simulatorapi STATIC ${simulatorapi_source_files})

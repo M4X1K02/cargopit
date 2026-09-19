@@ -1,4 +1,4 @@
 [submodule "src/cargopit/simulatorapi/simapi"]
 	path = src/cargopit/simulatorapi/simapi
-	url = https://github.com/spacefreak18/simapi
+	url = https://github.com/M4X1K02/simapi
 	# url = git@github.com:spacefreak18/simapi # ssh is better but Microsoft requires an account
