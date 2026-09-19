@@ -12,6 +12,8 @@ BRIDGE_RELEASE_URL="https://github.com/Spacefreak18/simshmbridge/releases/downlo
 CARGOPIT_GITHUB_REPO="M4X1K02/cargopit"
 CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 CARGOPIT_RAW_MASTER_URL="https://raw.githubusercontent.com/${CARGOPIT_GITHUB_REPO}/master"
+CARGOPIT_RELEASES_URL="https://github.com/${CARGOPIT_GITHUB_REPO}/releases"
+AUR_INSTALL_UNAVAILABLE_MSG="AUR install is not offered yet; use --from-source"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,7 +21,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-MODE="auto"
 BUILD_BRIDGES=0
 SKIP_BRIDGES=0
 ALLOW_ROOT=0
@@ -67,7 +68,6 @@ Usage: $(basename "${BASH_SOURCE[0]:-install.sh}") [options]
 
 Options:
   --from-source     Build simapi, simd, and cargopit from source (default)
-  --aur             Install simapi-git, simd-git, then monocoque-git from AUR
   --distrobox       Print (and run, if distrobox exists) immutable-distro setup
   --build-bridges   Cross-compile simshmbridge with mingw instead of prebuilts
   --skip-bridges    Do not download or build simshmbridge compatibility EXEs
@@ -93,10 +93,6 @@ run_root() {
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
-}
-
-is_tty() {
-    [ -t 0 ] && [ -t 1 ]
 }
 
 ensure_writable_dir() {
@@ -353,62 +349,6 @@ check_requirements() {
         log_error "Missing required commands after dependency install: ${missing[*]}"
         exit 1
     fi
-}
-
-maybe_install_aur() {
-    if [ "$MODE" = "aur" ]; then
-        return 0
-    fi
-    if [ "$MODE" = "from-source" ]; then
-        return 1
-    fi
-    if [ "$DISTRO_FAMILY" != "arch" ]; then
-        return 1
-    fi
-    if ! have_cmd yay && ! have_cmd paru; then
-        return 1
-    fi
-    if ! is_tty; then
-        log_info "No TTY; skipping AUR prompt (use --aur to force)"
-        return 1
-    fi
-    echo ""
-    echo "You can install packaged builds from AUR instead of compiling:"
-    echo "  yay -S simapi-git && yay -S simd-git && yay -S monocoque-git"
-    echo ""
-    local use_aur=""
-    read -r -p "Install from AUR? [y/N]: " use_aur
-    [[ "$use_aur" =~ ^[Yy]$ ]]
-}
-
-aur_helper() {
-    if have_cmd yay; then
-        echo yay
-    elif have_cmd paru; then
-        echo paru
-    else
-        log_error "AUR install requested but neither yay nor paru is installed"
-        exit 1
-    fi
-}
-
-install_from_aur() {
-    local helper
-    helper="$(aur_helper)"
-    log_info "Installing AUR packages sequentially with $helper (simapi first)"
-    "$helper" -S --needed simapi-git
-    "$helper" -S --needed simd-git
-    "$helper" -S --needed monocoque-git
-
-    if [ "$SKIP_BRIDGES" -eq 0 ]; then
-        install_bridges
-    fi
-    setup_configs
-    create_launcher_scripts
-    setup_systemd_services
-    install_udev_rules
-    verify_install
-    print_next_steps
 }
 
 git_clone_or_update() {
@@ -849,6 +789,7 @@ print_next_steps() {
     echo ""
     echo "Game setup:    https://spacefreak18.github.io/simapi/simd_usage"
     echo "Docs:          https://spacefreak18.github.io/simapi/"
+    echo "Packages:      $CARGOPIT_RELEASES_URL"
     echo ""
 }
 
@@ -872,8 +813,11 @@ run_distrobox() {
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            --from-source) MODE="from-source" ;;
-            --aur) MODE="aur" ;;
+            --from-source) ;;
+            --aur)
+                log_error "$AUR_INSTALL_UNAVAILABLE_MSG"
+                exit 1
+                ;;
             --distrobox) DO_DISTROBOX=1 ;;
             --build-bridges) BUILD_BRIDGES=1 ;;
             --skip-bridges) SKIP_BRIDGES=1 ;;
@@ -918,23 +862,11 @@ main() {
         exit 1
     fi
 
-    if [ "$MODE" = "aur" ]; then
-        install_dependencies
-        check_requirements
-        install_from_aur
-        exit 0
-    fi
-
     install_dependencies
     check_requirements
 
     if [ "$DEPS_ONLY" -eq 1 ]; then
         log_success "Dependencies only; done"
-        exit 0
-    fi
-
-    if maybe_install_aur; then
-        install_from_aur
         exit 0
     fi
 

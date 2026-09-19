@@ -13,6 +13,8 @@ CONTAINER="simracing"
 INSTALL_DIR="$HOME/.local/share/simracing"
 BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/cargopit"
+CARGOPIT_GITHUB_REPO="M4X1K02/cargopit"
+CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 
 # Color output
 RED='\033[0;31m'
@@ -132,7 +134,7 @@ fi
 
 # Install packages inside the container
 log_info "Installing packages inside container (this may take a few minutes)..."
-distrobox enter --root "$CONTAINER" -- bash -c '
+distrobox enter --root "$CONTAINER" -- env CARGOPIT_GIT_URL="$CARGOPIT_GIT_URL" bash -c '
     set -euo pipefail
 
     # Enable the multilib repo for 32-bit runtime support — Proton bridge
@@ -161,7 +163,7 @@ PACMANCONF_EOF
     # commands — installing the package is just the simplest reliable way
     # to get every lib32-* dependency it needs without hand-picking each
     # one).
-    sudo pacman -Syu --needed --noconfirm base-devel git mingw-w64-gcc wine lib32-glibc
+    sudo pacman -Syu --needed --noconfirm base-devel git cmake mingw-w64-gcc wine lib32-glibc libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 procps-ng
 
     # Install yay (AUR helper) if not present
     if ! command -v yay &>/dev/null; then
@@ -174,15 +176,35 @@ PACMANCONF_EOF
         rm -rf "$TMPDIR"
     fi
 
-    # Install AUR packages sequentially (simd depends on simapi, monocoque depends on both)
+    # simapi and simd from AUR; cargopit has no AUR package yet
     echo "Installing AUR packages..."
     yay -S --needed --noconfirm simapi-git
     yay -S --needed --noconfirm simd-git
-    yay -S --needed --noconfirm monocoque-git
 
     # Build simshmbridge (not on AUR)
     INSTALL_DIR="$HOME/.local/share/simracing"
     mkdir -p "$INSTALL_DIR"
+
+    if [ -z "${CARGOPIT_GIT_URL:-}" ]; then
+        echo "CARGOPIT_GIT_URL is not set" >&2
+        exit 1
+    fi
+    CARGOPIT_SRC="$INSTALL_DIR/cargopit"
+    echo "Building cargopit from source..."
+    if [ ! -d "$CARGOPIT_SRC/.git" ]; then
+        git clone --recurse-submodules "$CARGOPIT_GIT_URL" "$CARGOPIT_SRC"
+    else
+        git -C "$CARGOPIT_SRC" pull --ff-only || true
+        git -C "$CARGOPIT_SRC" submodule update --init --recursive
+    fi
+    cmake -S "$CARGOPIT_SRC" -B "$CARGOPIT_SRC/build"
+    cmake --build "$CARGOPIT_SRC/build" -j"$(nproc)"
+    if [ ! -x "$CARGOPIT_SRC/build/cargopit" ]; then
+        echo "cargopit binary was not produced" >&2
+        exit 1
+    fi
+    sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit" /usr/local/bin/cargopit
+
     cd "$INSTALL_DIR"
     if [ ! -d "simshmbridge" ]; then
         echo "Cloning simshmbridge..."
@@ -259,7 +281,8 @@ echo ""
 log_success "Cargopit (distrobox) installed!"
 echo ""
 echo "  Installed:"
-echo "    AUR packages:  simapi-git, simd-git, monocoque-git (in '$CONTAINER' container)"
+echo "    AUR packages:  simapi-git, simd-git (in '$CONTAINER' container)"
+echo "    Cargopit:      built from source in the container"
 echo "    Bridge:        $INSTALL_DIR/simshmbridge/"
 echo "    Config:        $CONFIG_DIR/cargopit.config"
 echo "    Commands:      start-cargopit, test-cargopit (simd starts with cargopit)"

@@ -32,27 +32,21 @@ https://santeri.pikarinen.com/pages/usb_hid_reverse_engineering/
 
 ## Quick Install
 
-Prefer a packaged build of upstream monocoque when one exists. This fork is installed from source (`./install.sh --from-source`). The source installer compiles simapi, simd, and cargopit; it does **not** configure Steam, audio devices, or wheel firmware.
+Prefer a packaged build of cargopit when one exists. This fork is also installed from source (`./install.sh --from-source`). The source installer compiles simapi, simd, and cargopit; it does **not** configure Steam, audio devices, or wheel firmware.
 
-**Arch Linux (AUR)** — install simapi first, then simd, then monocoque:
-```bash
-yay -S simapi-git
-yay -S simd-git
-yay -S monocoque-git
-```
-simshmbridge is not in AUR; use the [prebuilt compatibility EXEs](https://github.com/spacefreak18/simshmbridge/releases).
+**Fedora / Nobara** — use the RPM for your Fedora version from [Releases](https://github.com/M4X1K02/cargopit/releases), plus matching [simapi/simd packages](https://github.com/Spacefreak18/simapi/releases). Nobara is Fedora-based; do not expect a separate installer flavour.
 
-**Fedora / Nobara** — use the RPM for your Fedora version from [Releases](https://github.com/Spacefreak18/monocoque/releases), plus matching [simapi/simd packages](https://github.com/Spacefreak18/simapi/releases). Nobara is Fedora-based; do not expect a separate installer flavour.
+**Debian / Ubuntu / Mint** — use the `.deb` that matches your release from [Releases](https://github.com/M4X1K02/cargopit/releases). Linux Mint often still needs the `libconfig9` (older SONAME) package; if `dpkg` complains about `libconfig`, try the other `.deb` on the same release page.
 
-**Debian / Ubuntu / Mint** — use the `.deb` that matches your release from [Releases](https://github.com/Spacefreak18/monocoque/releases). Linux Mint often still needs the `libconfig9` (older SONAME) package; if `dpkg` complains about `libconfig`, try the other `.deb` on the same release page.
+simshmbridge is not packaged here; use the [prebuilt compatibility EXEs](https://github.com/spacefreak18/simshmbridge/releases).
 
 **Bazzite / Silverblue / Steam Deck (immutable)** — do not layer this with `rpm-ostree`. Use the distrobox helper:
 ```bash
 bash tools/distro/distrobox/install-distrobox.sh
 ```
-This creates an Arch Linux container, installs packages via AUR, and sets up wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
+This creates an Arch Linux container, installs simapi and simd, builds cargopit from source, and sets up wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
 
-**Build from source** (any supported distro). Download the script and run it in a terminal so prompts work (`curl | bash` cannot answer the AUR question and cannot find `cargopit-manager` next to itself):
+**Build from source** (any supported distro). Download the script and run it in a terminal so prompts work (`curl | bash` cannot find `cargopit-manager` next to itself):
 ```bash
 git clone https://github.com/M4X1K02/cargopit.git
 cd cargopit
@@ -60,7 +54,7 @@ git submodule update --init --recursive
 ./install.sh --from-source
 ```
 
-Options: `--aur`, `--skip-bridges`, `--build-bridges`, `--deps-only`. See `./install.sh --help`.
+Options: `--skip-bridges`, `--build-bridges`, `--deps-only`. See `./install.sh --help`.
 
 Installer CI (`.github/workflows/installer.yml`) runs these checks in containers: `bash tools/distro/test-install-containers.sh detect|mocks|immutable|full <distro>`.
 
@@ -112,7 +106,7 @@ apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-
 ```
 Use `liblua5.3-dev` if 5.4 is not in the repo. `libyder-dev` is similarly optional; the installer can build yder.
 
-Debian 12 (bookworm) ships GCC 12, which cannot compile current simapi. Use the [release .deb](https://github.com/Spacefreak18/monocoque/releases), Ubuntu 24.04, or a newer GCC.
+Debian 12 (bookworm) ships GCC 12, which cannot compile current simapi. Use the [release .deb](https://github.com/M4X1K02/cargopit/releases), Ubuntu 24.04, or a newer GCC.
 
 This code depends on the shared memory data headers in the simapi [repo](https://github.com/spacefreak18/simapi). When pulling lastest if the submodule does not download run:
 ```
