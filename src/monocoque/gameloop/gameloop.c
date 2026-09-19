@@ -49,6 +49,69 @@ static int require_simd(void)
            : MONOCOQUE_ERROR_UNKNOWN;
 }
 
+static void restore_stdin_terminal(const struct termios* canonicalmode, int stdin_was_raw)
+{
+    if (stdin_was_raw == 0)
+    {
+        return;
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, canonicalmode);
+}
+
+static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin_was_raw)
+{
+    *stdin_was_raw = 0;
+    if (!isatty(STDIN_FILENO))
+    {
+        slogd("stdin is not a tty; skip quit-key poll");
+        return NULL;
+    }
+
+    struct termios newsettings;
+    if (tcgetattr(STDIN_FILENO, canonicalmode) != 0)
+    {
+        slogw("could not read stdin terminal settings");
+        return NULL;
+    }
+    newsettings = *canonicalmode;
+    newsettings.c_lflag &= (tcflag_t)(~ICANON);
+    newsettings.c_lflag &= (tcflag_t)(~ECHO);
+    newsettings.c_cc[VMIN] = 1;
+    newsettings.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &newsettings) != 0)
+    {
+        slogw("could not set stdin to raw mode");
+        return NULL;
+    }
+    *stdin_was_raw = 1;
+
+    uv_poll_t* poll = malloc(uv_handle_size(UV_POLL));
+    if (poll == NULL)
+    {
+        restore_stdin_terminal(canonicalmode, *stdin_was_raw);
+        *stdin_was_raw = 0;
+        return NULL;
+    }
+    if (uv_poll_init(uv_default_loop(), poll, STDIN_FILENO) != 0)
+    {
+        slogw("could not poll stdin; continuing without quit key");
+        free(poll);
+        restore_stdin_terminal(canonicalmode, *stdin_was_raw);
+        *stdin_was_raw = 0;
+        return NULL;
+    }
+    return poll;
+}
+
+static void stop_mainloop_from_signal(uv_signal_t* handle, int signum)
+{
+    (void)signum;
+    uv_signal_stop(handle);
+    appstate = 0;
+    slogi("signal stop, appstate is now %i", appstate);
+    uv_stop(uv_default_loop());
+}
+
 
 uv_idle_t idler;
 uv_timer_t datachecktimer;
@@ -901,17 +964,10 @@ int monocoque_mainloop(MonocoqueSettings* ms)
     simdata = malloc(sizeof(SimData));
     simmap = simapi_simmap_create();
 
-    struct termios newsettings, canonicalmode;
-    tcgetattr(0, &canonicalmode);
-    newsettings = canonicalmode;
-    newsettings.c_lflag &= (~ICANON & ~ECHO);
-    newsettings.c_cc[VMIN] = 1;
-    newsettings.c_cc[VTIME] = 0;
-    tcsetattr(0, TCSANOW, &newsettings);
-    char ch;
-    struct pollfd mypoll = { STDIN_FILENO, POLLIN|POLLPRI };
-
-    uv_poll_t* poll = (uv_poll_t*) malloc(uv_handle_size(UV_POLL));
+    struct termios canonicalmode;
+    memset(&canonicalmode, 0, sizeof(canonicalmode));
+    int stdin_was_raw = 0;
+    uv_poll_t* poll = init_stdin_quit_poll(&canonicalmode, &stdin_was_raw);
 
     baton = (loop_data*) malloc(sizeof(loop_data));
     baton->simmap = simmap;
@@ -926,11 +982,6 @@ int monocoque_mainloop(MonocoqueSettings* ms)
     simapi_set_log_debug(simapilib_logdebug);
     simapi_set_log_trace(simapilib_logtrace);
 
-    if (0 != uv_poll_init(uv_default_loop(), poll, 0))
-    {
-        return 1;
-    };
-    
     uv_udp_init(uv_default_loop(), &recv_socket);
     uv_timer_init(uv_default_loop(), &datachecktimer);
     uv_timer_init(uv_default_loop(), &showstatstimer);
@@ -943,19 +994,30 @@ int monocoque_mainloop(MonocoqueSettings* ms)
     uv_handle_set_data((uv_handle_t*) &datamaptimer, (void*) baton);
     uv_handle_set_data((uv_handle_t*) &showstatstimer, (void*) baton);
     uv_handle_set_data((uv_handle_t*) &recv_socket, (void*) baton);
-    uv_handle_set_data((uv_handle_t*) poll, (void*) baton);
-
-    if (0 != uv_poll_start(poll, UV_READABLE, cb))
+    if (poll != NULL)
     {
-        return 2;
-    };
+        uv_handle_set_data((uv_handle_t*) poll, (void*) baton);
+        if (uv_poll_start(poll, UV_READABLE, cb) != 0)
+        {
+            slogw("could not start stdin poll; continuing without quit key");
+        }
+    }
+
+    uv_signal_t sigterm;
+    uv_signal_t sigint;
+    uv_signal_init(uv_default_loop(), &sigterm);
+    uv_signal_init(uv_default_loop(), &sigint);
+    uv_signal_start(&sigterm, stop_mainloop_from_signal, SIGTERM);
+    uv_signal_start(&sigint, stop_mainloop_from_signal, SIGINT);
+
     uv_timer_start(&datachecktimer, datacheckcallback, 1000, 1000);
 
     fprintf(stdout, "Searching for sim data... Press q to quit...\n");
     uv_run(uv_default_loop(), UV_RUN_DEFAULT);
 
+    uv_signal_stop(&sigterm);
+    uv_signal_stop(&sigint);
     uv_stop(uv_default_loop());
-    //uv_walk(uv_default_loop(), close_walk_cb, NULL);
     uv_run(uv_default_loop(), UV_RUN_DEFAULT);
     uv_loop_close(uv_default_loop());
     uv_library_shutdown();
@@ -963,7 +1025,8 @@ int monocoque_mainloop(MonocoqueSettings* ms)
 
     fprintf(stdout, "\n");
     fflush(stdout);
-    tcsetattr(0, TCSANOW, &canonicalmode);
+    restore_stdin_terminal(&canonicalmode, stdin_was_raw);
+    free(poll);
 
     free(baton);
     free(simdata);
