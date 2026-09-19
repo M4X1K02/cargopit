@@ -1,7 +1,11 @@
+#include <ctype.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <unistd.h>
 
 #include "serialadapter.h"
 #include "../slog/slog.h"
@@ -194,6 +198,43 @@ int monocoque_serial_read_block(uint8_t serialdevicenum, void* data, size_t size
 
     dev->busy = false;
     return result;
+}
+
+#ifndef TIOCNXCL
+#define TIOCNXCL 0x5429
+#endif
+
+int monocoque_serial_share_port(uint8_t serialdevicenum)
+{
+    monocoque_serial_device* dev = monocoque_get_serial_device(serialdevicenum);
+    if (dev->port == NULL || dev->open == false)
+    {
+        return -1;
+    }
+
+    int fd = -1;
+    if (sp_get_port_handle(dev->port, &fd) != SP_OK || fd < 0)
+    {
+        slogw("could not get native serial handle to share port");
+        return -1;
+    }
+
+    if (ioctl(fd, TIOCNXCL) != 0)
+    {
+        slogw("TIOCNXCL failed; Boxflat may still contend for the wheel");
+    }
+
+    struct termios term;
+    if (tcgetattr(fd, &term) == 0)
+    {
+        term.c_cflag &= (tcflag_t)~HUPCL;
+        if (tcsetattr(fd, TCSANOW, &term) != 0)
+        {
+            slogw("could not clear HUPCL on Moza serial");
+        }
+    }
+
+    return 0;
 }
 
 int monocoque_serial_open(SerialDevice* serialdevice, const char* portdev)
