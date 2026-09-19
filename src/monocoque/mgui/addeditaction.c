@@ -257,7 +257,7 @@ static void addSoundDeviceLayout(AddDeviceData* data)
     
     label_text(subwindow->label_channel, "Channel: ");
     label_text(subwindow->label_channels, "Channels: ");
-    label_text(subwindow->label_volume, "Volume:");
+    label_text(subwindow->label_volume, "PipeWire stream volume:");
     
     layout_label(subwindow->sound_device_sublayout, subwindow->label_channel, 0, 0);
     layout_label(subwindow->sound_device_sublayout, subwindow->label_channels, 2, 0);
@@ -575,12 +575,12 @@ Panel *adddevice_window(Window *parent, App* app, MonocoqueSettings* ms, enum de
     data->ds->serialdevsettings.numleds = 0;
     data->ds->sounddevsettings.channels = 2;
     data->ds->sounddevsettings.pan = 0;
-    data->ds->sounddevsettings.volume = 50;
+    data->ds->sounddevsettings.volume = SOUND_STREAM_VOLUME_UNITY;
     data->ds->sounddevsettings.noise = 0;
     data->ds->hapticsettings.frequency = 32;
-    data->ds->hapticsettings.amplitude = 50;
+    data->ds->hapticsettings.amplitude = HAPTIC_AMPLITUDE_UNITY;
     data->ds->hapticsettings.frequencyMax = 0;
-    data->ds->hapticsettings.amplitudeMax = 0;
+    data->ds->hapticsettings.amplitudeMax = HAPTIC_AMPLITUDE_UNITY;
     data->ds->hapticsettings.motorposition = 0;
     data->ds->hapticsettings.threshold = 0.0;
     data->ds->hapticsettings.duration = 0.0;

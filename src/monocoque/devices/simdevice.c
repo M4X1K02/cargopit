@@ -33,6 +33,12 @@ int devinit(SimDevice* simdevices, SimInfo* siminfo, int numdevices, DeviceSetti
     {
         simdevices[j].initialized = false;
 
+        if (ds[j].enabled == false)
+        {
+            slogi("skipping disabled device at index %i", j);
+            continue;
+        }
+
         if (ds[j].dev_type == SIMDEV_USB) {
             USBDevice* sim = new_usb_device(&ds[j], ms, siminfo);
             if (sim != NULL)
