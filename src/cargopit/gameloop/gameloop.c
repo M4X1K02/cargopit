@@ -19,7 +19,6 @@
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../simulatorapi/simapi/simapi/simmapper.h"
 #include "../simulatorapi/simapi/simapi/simmap.h"
-#include "../simulatorapi/dr2_haptic_telemetry.h"
 #include "../slog/slog.h"
 
 #define DEFAULT_UPDATE_RATE      240.0
@@ -63,15 +62,6 @@ static void map_live_simdata(SimData* simdata, SimMap* simmap,
                              SimulatorAPI api, bool udp, char* packet)
 {
     simapi_datamap(simdata, simmap, api, udp, packet);
-    dr2_apply_haptic_telemetry(simdata);
-}
-
-static SimInfo get_live_siminfo(SimData* simdata, SimMap* simmap,
-                                bool force_udp, int (*setup_udp)(int))
-{
-    SimInfo siminfo = simapi_get_sim(simdata, simmap, force_udp, setup_udp, false);
-    dr2_apply_haptic_siminfo(&siminfo);
-    return siminfo;
 }
 
 static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin_was_raw)
@@ -653,7 +643,7 @@ void datacheckcallback(uv_timer_t* handle)
 
     if ( appstate == 1 )
     {
-        f->siminfo = get_live_siminfo(simdata, simmap, f->ms->force_udp_mode, startudp);
+        f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, false);
 
         if(f->ms->force_udp_mode == true)
         {
@@ -687,7 +677,7 @@ void datacheckcallback(uv_timer_t* handle)
         }
         if(appstate == 2)
         {
-            f->siminfo = get_live_siminfo(simdata, simmap, f->ms->force_udp_mode, NULL);
+            f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, NULL, false);
             if(f->siminfo.isSimOn == false)
             {
                 appstate = 1;

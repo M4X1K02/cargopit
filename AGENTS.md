@@ -41,7 +41,7 @@ git submodule update --init --recursive
 
 | Path | Upstream | Notes |
 | --- | --- | --- |
-| `src/cargopit/simulatorapi/simapi` | [spacefreak18/simapi](https://github.com/spacefreak18/simapi) | Shared-memory headers (`simdata.h`). Do not vendor copies. |
+| `src/cargopit/simulatorapi/simapi` | [M4X1K02/simapi](https://github.com/M4X1K02/simapi) | Shared-memory headers (`simdata.h`). Forked until the DiRT Rally 2 local-velocity mapping is on spacefreak18/simapi. Do not vendor copies. |
 
 Do not edit submodule trees in this repo unless the task is explicitly to bump a submodule pin.
 
