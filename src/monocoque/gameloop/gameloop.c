@@ -19,6 +19,7 @@
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../simulatorapi/simapi/simapi/simmapper.h"
 #include "../simulatorapi/simapi/simapi/simmap.h"
+#include "../simulatorapi/dr2_haptic_telemetry.h"
 #include "../slog/slog.h"
 
 #define DEFAULT_UPDATE_RATE      240.0
@@ -56,6 +57,13 @@ static void restore_stdin_terminal(const struct termios* canonicalmode, int stdi
         return;
     }
     tcsetattr(STDIN_FILENO, TCSANOW, canonicalmode);
+}
+
+static void map_live_simdata(SimData* simdata, SimMap* simmap,
+                             SimulatorAPI api, bool udp, char* packet)
+{
+    simapi_datamap(simdata, simmap, api, udp, packet);
+    dr2_apply_haptic_telemetry(simdata);
 }
 
 static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin_was_raw)
@@ -555,7 +563,7 @@ void shmdatamapcallback(uv_timer_t* handle)
     //appstate = 2;
     if (appstate == 2)
     {
-        simapi_datamap(simdata, simmap, f->siminfo.mapapi, false, NULL);
+        map_live_simdata(simdata, simmap, f->siminfo.mapapi, false, NULL);
         looprun(ms, f, simdata);
     }
 
@@ -592,7 +600,7 @@ static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf,
 
     if (appstate == 2)
     {
-        simapi_datamap(simdata, simmap, f->siminfo.mapapi, true, a);
+        map_live_simdata(simdata, simmap, f->siminfo.mapapi, true, a);
         looprun(ms, f, simdata);
     }
 
@@ -620,7 +628,7 @@ void udpstart(MonocoqueSettings* sms, loop_data* f, SimData* simdata, SimMap* si
 {
     if (appstate == 2)
     {
-        simapi_datamap(simdata, simmap, f->siminfo.simulatorapi, true, NULL);
+        map_live_simdata(simdata, simmap, f->siminfo.simulatorapi, true, NULL);
         if (doui == true)
         {
             looprun(sms, f, simdata);
