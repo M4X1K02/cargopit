@@ -1,6 +1,6 @@
 #!/bin/bash
-# Play-mode startup checks against a built monocoque binary (no packaged simd).
-# Usage: startup_play.sh missing|starts <monocoque-bin>
+# Play-mode startup checks against a built cargopit binary (no packaged simd).
+# Usage: startup_play.sh missing|starts <cargopit-bin>
 set -euo pipefail
 
 SIMD_REQUIRED_MSG="simd is required but is not installed"
@@ -26,7 +26,7 @@ mode="${1:-}"
 bin="${2:-}"
 
 if [ -z "$mode" ] || [ -z "$bin" ] || [ ! -x "$bin" ]; then
-    echo "usage: $0 missing|starts <monocoque-bin>" >&2
+    echo "usage: $0 missing|starts <cargopit-bin>" >&2
     exit 2
 fi
 
@@ -35,7 +35,7 @@ if ! command -v timeout >/dev/null 2>&1; then
     exit 2
 fi
 
-workdir="$(mktemp -d /tmp/monocoque-play-XXXXXX)"
+workdir="$(mktemp -d /tmp/cargopit-play-XXXXXX)"
 cleanup() {
     if [ -n "${workdir:-}" ]; then
         pkill -f "$workdir/bin/simd" 2>/dev/null || true
@@ -44,8 +44,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$workdir/bin" "$workdir/.config/monocoque" "$workdir/.cache/monocoque"
-printf '%s\n' "$MINIMAL_CONFIG" > "$workdir/.config/monocoque/monocoque.config"
+mkdir -p "$workdir/bin" "$workdir/.config/cargopit" "$workdir/.cache/cargopit"
+printf '%s\n' "$MINIMAL_CONFIG" > "$workdir/.config/cargopit/cargopit.config"
 
 run_play() {
     env -i \

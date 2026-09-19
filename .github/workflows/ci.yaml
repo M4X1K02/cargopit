@@ -21,7 +21,7 @@ on:
         required: true
 
 jobs:
-  build-monocoque-debs:
+  build-cargopit-debs:
     # Previously this matrix used `runs-on: ${{ matrix.os }}` with
     # debian-latest/debian-stable as runner *labels*, which only resolve to
     # self-hosted runners. With none online those two legs sat queued
@@ -74,7 +74,7 @@ jobs:
     # expression still renders the *host* path (/home/runner/work/...) while
     # the repo is actually mounted at /__w/... inside the container. Using
     # the expression made cmake fail with `The source directory
-    # "/home/runner/work/monocoque/monocoque" does not exist`. The env var is
+    # "/home/runner/work/cargopit/cargopit" does not exist`. The env var is
     # set to the container-side path, so it's correct either way.
     - name: Set build dir
       id: strings
@@ -104,13 +104,13 @@ jobs:
         mkdir -p PKG_SOURCE/usr/share/applications
         mkdir -p PKG_SOURCE/usr/share/pixmaps
         mkdir -p PKG_SOURCE/usr/share/icons/hicolor/scalable/apps
-        mkdir -p PKG_SOURCE/usr/share/monocoque
+        mkdir -p PKG_SOURCE/usr/share/cargopit
     - name: Download xpm icon
       run: |
-        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.xpm -o PKG_SOURCE/usr/share/pixmaps/monocoque.xpm
+        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.xpm -o PKG_SOURCE/usr/share/pixmaps/cargopit.xpm
     - name: Download svg icon
       run: |
-        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.svg -o PKG_SOURCE/usr/share/icons/hicolor/scalable/apps/monocoque.svg
+        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.svg -o PKG_SOURCE/usr/share/icons/hicolor/scalable/apps/cargopit.svg
     - name: Determine package version
       id: pkgver
       shell: bash
@@ -143,12 +143,12 @@ jobs:
         cp ./tools/distro/debian/dpkg/${{ matrix.os }}/control ./PKG_SOURCE/DEBIAN/control
         sed -i "s/^Version:.*/Version: ${{ steps.pkgver.outputs.version }}/" ./PKG_SOURCE/DEBIAN/control
         cp ./tools/distro/debian/dpkg/copyright ./PKG_SOURCE/DEBIAN/copyright
-        cp ./build/monocoque ./PKG_SOURCE/usr/bin/monocoque
-        cp ./build/gmonocoque ./PKG_SOURCE/usr/bin/gmonocoque
-        cp ./tools/monocoque.desktop ./PKG_SOURCE/usr/share/applications/monocoque.desktop
-        dpkg-deb --build PKG_SOURCE monocoque-${{ matrix.os }}.deb
+        cp ./build/cargopit ./PKG_SOURCE/usr/bin/cargopit
+        cp ./build/gcargopit ./PKG_SOURCE/usr/bin/gcargopit
+        cp ./tools/cargopit.desktop ./PKG_SOURCE/usr/share/applications/cargopit.desktop
+        dpkg-deb --build PKG_SOURCE cargopit-${{ matrix.os }}.deb
         echo "--- control as packaged ---"
-        dpkg-deb --field monocoque-${{ matrix.os }}.deb Package Version
+        dpkg-deb --field cargopit-${{ matrix.os }}.deb Package Version
 
     - name: Release the Package
       # Only a tag can publish a release; without this a workflow_dispatch run
@@ -158,14 +158,14 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ inputs.release_tag || github.ref_name }}
-        files: monocoque-${{ matrix.os }}.deb
+        files: cargopit-${{ matrix.os }}.deb
         # release-please writes the release body from the changelog it just
         # generated. Letting this action generate its own notes as well would
         # overwrite them, so it only does so for a hand-pushed tag.
         generate_release_notes: ${{ inputs.release_tag == '' }}
 
 
-  build-monocoque-rpms:
+  build-cargopit-rpms:
     # Same self-hosted-label problem as the deb jobs above (fedora-43 was a
     # runner label with nothing online to claim it); now a container on an
     # ordinary GitHub-hosted runner, with fedora-44 added alongside 43.
@@ -230,15 +230,15 @@ jobs:
     # %prep instead, so a package's contents are the commit it was built from.
     - name: Stage the checked-out tree as the rpm source
       run: |
-        rm -rf ~/rpmbuild/SOURCES/monocoque
-        cp -r "$GITHUB_WORKSPACE" ~/rpmbuild/SOURCES/monocoque
-        rm -rf ~/rpmbuild/SOURCES/monocoque/.github
+        rm -rf ~/rpmbuild/SOURCES/cargopit
+        cp -r "$GITHUB_WORKSPACE" ~/rpmbuild/SOURCES/cargopit
+        rm -rf ~/rpmbuild/SOURCES/cargopit/.github
 
     # Uses the spec from the checked-out tree instead of curl'ing it from
     # upstream's master branch, so a tag builds the spec that tag contains.
     #
     # The spec's `Version: 0.0.5` is stale and hand-maintained -- real tags are
-    # well past it, so released rpms have been installing as monocoque-0.0.5.
+    # well past it, so released rpms have been installing as cargopit-0.0.5.
     # Stamped from the tag here rather than edited in the spec, so the file
     # stays a working default for local rpmbuild while CI releases carry the
     # real version. Same digit guard as the deb job: rpm versions can't start
@@ -268,13 +268,13 @@ jobs:
         sed -i "s/^Version:.*/Version: $v/" tools/distro/fedora/rpm/fedora.spec
         rpmbuild -ba tools/distro/fedora/rpm/fedora.spec
 
-    # Glob rather than a hardcoded monocoque-0.0.5-1.x86_64.rpm: the filename
+    # Glob rather than a hardcoded cargopit-0.0.5-1.x86_64.rpm: the filename
     # tracks the spec's Version/Release, which is now stamped per-tag above.
     - name: rename file
       run: |
-        cp ~/rpmbuild/RPMS/x86_64/monocoque-*.rpm "$GITHUB_WORKSPACE/monocoque-${{ matrix.os }}.rpm"
+        cp ~/rpmbuild/RPMS/x86_64/cargopit-*.rpm "$GITHUB_WORKSPACE/cargopit-${{ matrix.os }}.rpm"
         echo "--- rpm identity as built ---"
-        rpm -qp --qf '%{NAME} %{VERSION}-%{RELEASE}\n' "$GITHUB_WORKSPACE/monocoque-${{ matrix.os }}.rpm"
+        rpm -qp --qf '%{NAME} %{VERSION}-%{RELEASE}\n' "$GITHUB_WORKSPACE/cargopit-${{ matrix.os }}.rpm"
 
     - name: Release the Package
       # Only a tag can publish a release; without this a workflow_dispatch run
@@ -284,14 +284,14 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ inputs.release_tag || github.ref_name }}
-        files: monocoque-${{ matrix.os }}.rpm
+        files: cargopit-${{ matrix.os }}.rpm
         # release-please writes the release body from the changelog it just
         # generated. Letting this action generate its own notes as well would
         # overwrite them, so it only does so for a hand-pushed tag.
         generate_release_notes: ${{ inputs.release_tag == '' }}
 
 
-  build-monocoque-appimage:
+  build-cargopit-appimage:
     # An AppImage only runs where glibc is at least as new as the one it
     # linked against, so it wants the OLDEST base that can build the code --
     # building on current Ubuntu silently excludes older distros and defeats
@@ -343,11 +343,11 @@ jobs:
     - name: Populate AppDir
       run: |
         DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
-        # Icon basename must match the desktop file's `Icon=monocoque`.
-        # tools/monocoque.svg is the square copy shared with the Flatpak
+        # Icon basename must match the desktop file's `Icon=cargopit`.
+        # tools/cargopit.svg is the square copy shared with the Flatpak
         # build; the published 100x50 artwork is rejected by icon tooling.
-        install -Dm644 tools/monocoque.svg \
-          AppDir/usr/share/icons/hicolor/scalable/apps/monocoque.svg
+        install -Dm644 tools/cargopit.svg \
+          AppDir/usr/share/icons/hicolor/scalable/apps/cargopit.svg
 
     # APPIMAGE_EXTRACT_AND_RUN=1 because these tools are themselves
     # AppImages and there is no FUSE on the runner to mount them with.
@@ -370,7 +370,7 @@ jobs:
           [0-9]*) ;;
           *) v="0.0.0" ;;
         esac
-        export OUTPUT="monocoque-${v}-x86_64.AppImage"
+        export OUTPUT="cargopit-${v}-x86_64.AppImage"
         echo "packaging as $OUTPUT"
 
         wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
@@ -384,30 +384,30 @@ jobs:
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
           --appdir AppDir \
           --plugin gtk \
-          --desktop-file AppDir/usr/share/applications/monocoque.desktop \
-          --icon-file tools/monocoque.svg
+          --desktop-file AppDir/usr/share/applications/cargopit.desktop \
+          --icon-file tools/cargopit.svg
 
         tools/appimage-collect-licenses.sh AppDir
 
-        # monocoque itself and its vendored components are built here rather
+        # cargopit itself and its vendored components are built here rather
         # than installed from packages, so dpkg cannot account for them.
-        install -Dm644 LICENSE.rst AppDir/usr/share/doc/monocoque/LICENSE.rst
-        install -Dm644 tools/distro/debian/dpkg/copyright AppDir/usr/share/doc/monocoque/copyright
-        install -Dm644 src/monocoque/mgui/nappgui_src/LICENSE AppDir/usr/share/doc/nappgui/LICENSE
+        install -Dm644 LICENSE.rst AppDir/usr/share/doc/cargopit/LICENSE.rst
+        install -Dm644 tools/distro/debian/dpkg/copyright AppDir/usr/share/doc/cargopit/copyright
+        install -Dm644 src/cargopit/mgui/nappgui_src/LICENSE AppDir/usr/share/doc/nappgui/LICENSE
 
         # Now package the AppDir, licences included.
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
           --appdir AppDir \
           --output appimage
-        ls -la monocoque*.AppImage
+        ls -la cargopit*.AppImage
         echo "--- licence files in the image ---"
         find AppDir/usr/share/doc -name copyright | wc -l
 
     - name: Upload the AppImage as a build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: monocoque-x86_64.AppImage
-        path: monocoque*.AppImage
+        name: cargopit-x86_64.AppImage
+        path: cargopit*.AppImage
 
     - name: Release the Package
       # Only a tag can publish a release; without this a workflow_dispatch run
@@ -417,14 +417,14 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ inputs.release_tag || github.ref_name }}
-        files: monocoque*.AppImage
+        files: cargopit*.AppImage
         # release-please writes the release body from the changelog it just
         # generated. Letting this action generate its own notes as well would
         # overwrite them, so it only does so for a hand-pushed tag.
         generate_release_notes: ${{ inputs.release_tag == '' }}
 
 
-  build-monocoque-flatpak:
+  build-cargopit-flatpak:
     # Folded in from the standalone flatpak.yml so every artifact lands on
     # one release. Kept as continue-on-error because it is the newest and
     # least battle-tested leg: a Flatpak failure must never turn a release
@@ -459,21 +459,21 @@ jobs:
       - name: Build .flatpak
         working-directory: flatpak
         run: |
-          flatpak-builder --force-clean --repo=repo build-dir io.github.spacefreak18.monocoque.yml
-          flatpak build-bundle repo monocoque.flatpak io.github.spacefreak18.monocoque
+          flatpak-builder --force-clean --repo=repo build-dir io.github.spacefreak18.cargopit.yml
+          flatpak build-bundle repo cargopit.flatpak io.github.spacefreak18.cargopit
 
       - name: Upload .flatpak as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: monocoque.flatpak
-          path: flatpak/monocoque.flatpak
+          name: cargopit.flatpak
+          path: flatpak/cargopit.flatpak
 
       - name: Release the Package
         if: github.ref_type == 'tag' || inputs.release_tag != ''
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ inputs.release_tag || github.ref_name }}
-          files: flatpak/monocoque.flatpak
+          files: flatpak/cargopit.flatpak
           # release-please writes the release body from the changelog it just
           # generated. Letting this action generate its own notes as well would
           # overwrite them, so it only does so for a hand-pushed tag.
@@ -498,4 +498,4 @@ jobs:
   #    - name: Release the Package
   #      uses: softprops/action-gh-release@v1
   #      with:
-  #        files: $HOME/arch-packages/monocoque*.zst
+  #        files: $HOME/arch-packages/cargopit*.zst

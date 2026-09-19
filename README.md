@@ -32,27 +32,27 @@ https://santeri.pikarinen.com/pages/usb_hid_reverse_engineering/
 
 ## Quick Install
 
-Prefer a packaged build of upstream monocoque when one exists. This fork is installed from source (`./install.sh --from-source`). The source installer compiles simapi, simd, and monocoque; it does **not** configure Steam, audio devices, or wheel firmware.
+Prefer a packaged build of cargopit when one exists. This fork is installed from source (`./install.sh --from-source`). The source installer compiles simapi, simd, and cargopit; it does **not** configure Steam, audio devices, or wheel firmware.
 
-**Arch Linux (AUR)** — install simapi first, then simd, then monocoque:
+**Arch Linux (AUR)** — install simapi first, then simd, then cargopit:
 ```bash
 yay -S simapi-git
 yay -S simd-git
-yay -S monocoque-git
+yay -S cargopit-git
 ```
 simshmbridge is not in AUR; use the [prebuilt compatibility EXEs](https://github.com/spacefreak18/simshmbridge/releases).
 
-**Fedora / Nobara** — use the RPM for your Fedora version from [Releases](https://github.com/Spacefreak18/monocoque/releases), plus matching [simapi/simd packages](https://github.com/Spacefreak18/simapi/releases). Nobara is Fedora-based; do not expect a separate installer flavour.
+**Fedora / Nobara** — use the RPM for your Fedora version from [Releases](https://github.com/M4X1K02/cargopit/releases), plus matching [simapi/simd packages](https://github.com/Spacefreak18/simapi/releases). Nobara is Fedora-based; do not expect a separate installer flavour.
 
-**Debian / Ubuntu / Mint** — use the `.deb` that matches your release from [Releases](https://github.com/Spacefreak18/monocoque/releases). Linux Mint often still needs the `libconfig9` (older SONAME) package; if `dpkg` complains about `libconfig`, try the other `.deb` on the same release page.
+**Debian / Ubuntu / Mint** — use the `.deb` that matches your release from [Releases](https://github.com/M4X1K02/cargopit/releases). Linux Mint often still needs the `libconfig9` (older SONAME) package; if `dpkg` complains about `libconfig`, try the other `.deb` on the same release page.
 
 **Bazzite / Silverblue / Steam Deck (immutable)** — do not layer this with `rpm-ostree`. Use the distrobox helper:
 ```bash
 bash tools/distro/distrobox/install-distrobox.sh
 ```
-This creates an Arch Linux container, installs packages via AUR, and sets up wrapper scripts (`start-simd`, `start-monocoque`, `test-monocoque`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
+This creates an Arch Linux container, installs packages via AUR, and sets up wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
 
-**Build from source** (any supported distro). Download the script and run it in a terminal so prompts work (`curl | bash` cannot answer the AUR question and cannot find `monocoque-manager` next to itself):
+**Build from source** (any supported distro). Download the script and run it in a terminal so prompts work (`curl | bash` cannot answer the AUR question and cannot find `cargopit-manager` next to itself):
 ```bash
 git clone https://github.com/M4X1K02/cargopit.git
 cd cargopit
@@ -64,7 +64,7 @@ Options: `--aur`, `--skip-bridges`, `--build-bridges`, `--deps-only`. See `./ins
 
 Installer CI (`.github/workflows/installer.yml`) runs these checks in containers: `bash tools/distro/test-install-containers.sh detect|mocks|immutable|full <distro>`.
 
-After install, run `start-monocoque` or `monocoque-manager`. simd is started automatically if it is not already running; you will only be asked to act if simd is not installed. Game and bridge setup: [simd usage](https://spacefreak18.github.io/simapi/simd_usage). Full docs: [spacefreak18.github.io/simapi](https://spacefreak18.github.io/simapi/).
+After install, run `start-cargopit` or `cargopit-manager`. simd is started automatically if it is not already running; you will only be asked to act if simd is not installed. Game and bridge setup: [simd usage](https://spacefreak18.github.io/simapi/simd_usage). Full docs: [spacefreak18.github.io/simapi](https://spacefreak18.github.io/simapi/).
 
 For a manual walkthrough, see [HOW-TO-USE.md](HOW-TO-USE.md).
 
@@ -112,7 +112,7 @@ apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-
 ```
 Use `liblua5.3-dev` if 5.4 is not in the repo. `libyder-dev` is similarly optional; the installer can build yder.
 
-Debian 12 (bookworm) ships GCC 12, which cannot compile current simapi. Use the [release .deb](https://github.com/Spacefreak18/monocoque/releases), Ubuntu 24.04, or a newer GCC.
+Debian 12 (bookworm) ships GCC 12, which cannot compile current simapi. Use the [release .deb](https://github.com/M4X1K02/cargopit/releases), Ubuntu 24.04, or a newer GCC.
 
 This code depends on the shared memory data headers in the simapi [repo](https://github.com/spacefreak18/simapi). When pulling lastest if the submodule does not download run:
 ```
@@ -128,15 +128,15 @@ make
 ```
 
 ## User Setup Guide
-See the dedicated [How To](HOW-TO-USE.md) for detailed instructions to set up and run 'monocoque`
+See the dedicated [How To](HOW-TO-USE.md) for detailed instructions to set up and run 'cargopit`
 
 ## Testing
 ```
-./monocoque test -vv # Make sure that ~/.config/monocoque/monocoque.config only contains the devices you have connected.
+./cargopit test -vv # Make sure that ~/.config/cargopit/cargopit.config only contains the devices you have connected.
 ```
 
 ### Logs file location
-`~/.cache/monocoque/*.log`
+`~/.cache/cargopit/*.log`
 
 ### Static Analysis
 ```
@@ -149,7 +149,7 @@ See the dedicated [How To](HOW-TO-USE.md) for detailed instructions to set up an
 ### Valgrind
 ```
     cd build
-    valgrind -v --leak-check=full --show-leak-kinds=all --suppressions=../.valgrindrc ./monocoque play
+    valgrind -v --leak-check=full --show-leak-kinds=all --suppressions=../.valgrindrc ./cargopit play
 ```
 
 ## Join the Discussion
@@ -164,8 +164,8 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 | Component | License | Where |
 | --- | --- | --- |
 | cargopit (this fork) | GPL-3.0-or-later | `LICENSE.rst` |
-| slog | MIT | `src/monocoque/slog/slog.h` |
-| NAppGUI | MIT | `src/monocoque/mgui/nappgui_src/LICENSE`, `packaging/licenses/nappgui-LICENSE.txt` |
+| slog | MIT | `src/cargopit/slog/slog.h` |
+| NAppGUI | MIT | `src/cargopit/mgui/nappgui_src/LICENSE`, `packaging/licenses/nappgui-LICENSE.txt` |
 | simapi (submodule) | LGPL-3.0 | https://github.com/Spacefreak18/simapi |
 | Lua 5.4 | MIT | `packaging/licenses/lua-5.4-LICENSE.txt` |
 | GLU | SGI Free B 2.0 | `packaging/licenses/glu-LICENSE.txt` |

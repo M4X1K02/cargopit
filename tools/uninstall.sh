@@ -1,6 +1,6 @@
 #!/bin/bash
-# Monocoque Uninstaller
-# Removes monocoque and all related components
+# Cargopit Uninstaller
+# Removes cargopit and all related components
 
 set -e
 
@@ -10,7 +10,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-INSTALL_DIR="${MONOCOQUE_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/monocoque}"
+INSTALL_DIR="${CARGOPIT_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cargopit}"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}"
 BIN_DIR="$HOME/.local/bin"
@@ -35,7 +35,7 @@ log_error() {
 print_header() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║                  Monocoque Uninstaller                           ║"
+    echo "║                  Cargopit Uninstaller                           ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 }
@@ -48,16 +48,16 @@ if [ "${1:-}" = "--yes" ] || [ "${1:-}" = "-y" ] || ! [ -t 0 ]; then
 fi
 
 log_warn "This will remove:"
-echo "  • Monocoque installation ($INSTALL_DIR)"
-echo "  • Configuration files ($CONFIG_DIR/monocoque, $CONFIG_DIR/simd)"
-echo "  • Launcher scripts ($BIN_DIR/start-*, test-monocoque, monocoque-manager)"
+echo "  • Cargopit installation ($INSTALL_DIR)"
+echo "  • Configuration files ($CONFIG_DIR/cargopit, $CONFIG_DIR/simd)"
+echo "  • Launcher scripts ($BIN_DIR/start-*, test-cargopit, cargopit-manager)"
 echo "  • systemd service files ($SYSTEMD_DIR/simd.service)"
-echo "  • Log files ($CACHE_DIR/monocoque)"
+echo "  • Log files ($CACHE_DIR/cargopit)"
 echo ""
 echo "This will NOT remove:"
 echo "  • System dependencies (yder, libuv, etc.)"
 echo "  • Compiled simapi library (/usr/local/lib/libsimapi.so)"
-echo "  • udev rules (/etc/udev/rules.d/69-monocoque.rules) — remove those by hand if you installed them"
+echo "  • udev rules (/etc/udev/rules.d/69-cargopit.rules) — remove those by hand if you installed them"
 echo ""
 
 if [ "$YES" -ne 1 ]; then
@@ -74,7 +74,7 @@ log_info "Starting uninstallation..."
 # Stop running services
 log_info "Stopping running services..."
 pkill -x simd 2>/dev/null || true
-pkill -x monocoque 2>/dev/null || true
+pkill -x cargopit 2>/dev/null || true
 systemctl --user stop simd.service 2>/dev/null || true
 systemctl --user disable simd.service 2>/dev/null || true
 
@@ -88,14 +88,14 @@ else
 fi
 
 # Remove configuration (ask first)
-if [ -d "$CONFIG_DIR/monocoque" ] || [ -d "$CONFIG_DIR/simd" ]; then
+if [ -d "$CONFIG_DIR/cargopit" ] || [ -d "$CONFIG_DIR/simd" ]; then
     if [ "$YES" -eq 1 ]; then
-        rm -rf "$CONFIG_DIR/monocoque" "$CONFIG_DIR/simd"
+        rm -rf "$CONFIG_DIR/cargopit" "$CONFIG_DIR/simd"
         log_success "Configuration files removed"
     else
         read -r -p "Remove configuration files? [y/N]: " remove_config
         if [[ $remove_config =~ ^[Yy]$ ]]; then
-            rm -rf "$CONFIG_DIR/monocoque" 2>/dev/null || true
+            rm -rf "$CONFIG_DIR/cargopit" 2>/dev/null || true
             rm -rf "$CONFIG_DIR/simd" 2>/dev/null || true
             log_success "Configuration files removed"
         else
@@ -107,9 +107,9 @@ fi
 # Remove launcher scripts
 log_info "Removing launcher scripts..."
 rm -f "$BIN_DIR/start-simd" 2>/dev/null || true
-rm -f "$BIN_DIR/start-monocoque" 2>/dev/null || true
-rm -f "$BIN_DIR/test-monocoque" 2>/dev/null || true
-rm -f "$BIN_DIR/monocoque-manager" 2>/dev/null || true
+rm -f "$BIN_DIR/start-cargopit" 2>/dev/null || true
+rm -f "$BIN_DIR/test-cargopit" 2>/dev/null || true
+rm -f "$BIN_DIR/cargopit-manager" 2>/dev/null || true
 
 # Remove systemd services
 if [ -f "$SYSTEMD_DIR/simd.service" ]; then
@@ -119,14 +119,14 @@ if [ -f "$SYSTEMD_DIR/simd.service" ]; then
 fi
 
 # Remove logs
-if [ -d "$CACHE_DIR/monocoque" ]; then
+if [ -d "$CACHE_DIR/cargopit" ]; then
     if [ "$YES" -eq 1 ]; then
-        rm -rf "$CACHE_DIR/monocoque"
+        rm -rf "$CACHE_DIR/cargopit"
         log_success "Log files removed"
     else
         read -r -p "Remove log files? [y/N]: " remove_logs
         if [[ $remove_logs =~ ^[Yy]$ ]]; then
-            rm -rf "$CACHE_DIR/monocoque"
+            rm -rf "$CACHE_DIR/cargopit"
             log_success "Log files removed"
         else
             log_info "Keeping log files"

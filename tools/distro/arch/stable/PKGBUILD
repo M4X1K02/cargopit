@@ -1,6 +1,6 @@
 # Maintainer: Paul Jones <paul@spacefreak18.xyz>
-_reponame=monocoque
-pkgname=monocoque
+_reponame=cargopit
+pkgname=cargopit
 pkgver=0.2.0
 pkgrel=4
 pkgdesc="Device Manager for Racing Sims"
@@ -23,7 +23,7 @@ makedepends=(
   cmake
 )
 
-source=("monocoque::git+https://github.com/M4X1K02/cargopit.git#commit=$_commit")
+source=("cargopit::git+https://github.com/M4X1K02/cargopit.git#commit=$_commit")
 
 sha256sums=(
   'SKIP'
@@ -39,6 +39,6 @@ package() {
   make
 
   mkdir -p "${pkgdir}/usr/bin/"
-  cp "$srcdir/$_reponame"/build/monocoque "${pkgdir}/usr/bin/monocoque"
+  cp "$srcdir/$_reponame"/build/cargopit "${pkgdir}/usr/bin/cargopit"
   install -D -m644 "$srcdir/$_reponame"/LICENSE.rst -t "${pkgdir}/usr/share/licenses/$_reponame"
 }

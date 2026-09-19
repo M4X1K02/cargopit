@@ -3,7 +3,7 @@
 # Honours the same env vars as install.sh.
 set -euo pipefail
 
-INSTALL_DIR="${MONOCOQUE_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/monocoque}"
+INSTALL_DIR="${CARGOPIT_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cargopit}"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 BIN_DIR="${HOME}/.local/bin"
 
@@ -46,14 +46,14 @@ need_grep() {
     fi
 }
 
-need_exec "$BIN_DIR/start-monocoque"
+need_exec "$BIN_DIR/start-cargopit"
 need_exec "$BIN_DIR/start-simd"
-need_exec "$BIN_DIR/test-monocoque"
-need_exec "$BIN_DIR/monocoque-manager"
+need_exec "$BIN_DIR/test-cargopit"
+need_exec "$BIN_DIR/cargopit-manager"
 
-need_grep "$BIN_DIR/start-monocoque" 'play'
+need_grep "$BIN_DIR/start-cargopit" 'play'
 
-need_file "$CONFIG_DIR/monocoque/monocoque.config"
+need_file "$CONFIG_DIR/cargopit/cargopit.config"
 need_file "$CONFIG_DIR/simd/simd.config"
 need_file "$CONFIG_DIR/systemd/user/simd.service"
 need_grep "$CONFIG_DIR/systemd/user/simd.service" '^ExecStart='
@@ -67,12 +67,12 @@ else
     FAIL=$((FAIL + 1))
 fi
 
-if [ -x "$INSTALL_DIR/monocoque/build/monocoque" ]; then
-    need_exec "$INSTALL_DIR/monocoque/build/monocoque"
-elif command -v monocoque >/dev/null 2>&1; then
-    need_exec "$(command -v monocoque)"
+if [ -x "$INSTALL_DIR/cargopit/build/cargopit" ]; then
+    need_exec "$INSTALL_DIR/cargopit/build/cargopit"
+elif command -v cargopit >/dev/null 2>&1; then
+    need_exec "$(command -v cargopit)"
 else
-    log "FAIL monocoque binary not in $INSTALL_DIR or PATH"
+    log "FAIL cargopit binary not in $INSTALL_DIR or PATH"
     FAIL=$((FAIL + 1))
 fi
 

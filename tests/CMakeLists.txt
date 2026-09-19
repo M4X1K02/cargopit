@@ -17,7 +17,7 @@ add_test(NAME ensure_simd_test COMMAND ensure_simd_test)
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME startup_play_missing_simd
-        COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh missing $<TARGET_FILE:monocoque-cli>)
+        COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh missing $<TARGET_FILE:cargopit-cli>)
     add_test(NAME startup_play_starts_simd
-        COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh starts $<TARGET_FILE:monocoque-cli>)
+        COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh starts $<TARGET_FILE:cargopit-cli>)
 endif()

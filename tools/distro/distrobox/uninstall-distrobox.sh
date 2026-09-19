@@ -1,13 +1,13 @@
 #!/bin/bash
-# Monocoque Distrobox Uninstaller
-# Removes the distrobox-based monocoque installation.
+# Cargopit Distrobox Uninstaller
+# Removes the distrobox-based cargopit installation.
 
 set -euo pipefail
 
 CONTAINER="simracing"
 BIN_DIR="$HOME/.local/bin"
 INSTALL_DIR="$HOME/.local/share/simracing"
-CONFIG_DIR="$HOME/.config/monocoque"
+CONFIG_DIR="$HOME/.config/cargopit"
 UDEV_RULE="/etc/udev/rules.d/99-moza-serial.rules"
 
 # Color output
@@ -32,7 +32,7 @@ log_warn() {
 print_header() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║                Monocoque Distrobox Uninstaller                   ║"
+    echo "║                Cargopit Distrobox Uninstaller                   ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 }
@@ -41,7 +41,7 @@ print_header
 
 log_warn "This will remove:"
 echo "  - Distrobox container '$CONTAINER'"
-echo "  - Wrapper scripts ($BIN_DIR/start-simd, start-monocoque, test-monocoque)"
+echo "  - Wrapper scripts ($BIN_DIR/start-simd, start-cargopit, test-cargopit)"
 echo "  - simshmbridge source ($INSTALL_DIR)"
 echo ""
 echo "This will NOT remove:"
@@ -60,8 +60,8 @@ echo ""
 # Remove wrapper scripts
 log_info "Removing wrapper scripts..."
 rm -f "$BIN_DIR/start-simd"
-rm -f "$BIN_DIR/start-monocoque"
-rm -f "$BIN_DIR/test-monocoque"
+rm -f "$BIN_DIR/start-cargopit"
+rm -f "$BIN_DIR/test-cargopit"
 log_success "Wrapper scripts removed"
 
 # Remove simshmbridge source

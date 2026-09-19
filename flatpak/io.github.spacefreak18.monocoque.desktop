@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Monocoque
-Comment=Device manager for racing sims
-Exec=gmonocoque
-Icon=io.github.spacefreak18.monocoque
-Terminal=false
-Categories=Game;Development;

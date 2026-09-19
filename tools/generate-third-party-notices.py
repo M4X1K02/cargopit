@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 manifest = Path(sys.argv[1] if len(sys.argv) > 1
-                else "flatpak/io.github.spacefreak18.monocoque.yml")
+                else "flatpak/io.github.spacefreak18.cargopit.yml")
 text = manifest.read_text()
 
 entries, name = [], None

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Cargopit
+Comment=Device manager for racing sims
+Exec=gcargopit
+Icon=io.github.spacefreak18.cargopit
+Terminal=false
+Categories=Game;Development;

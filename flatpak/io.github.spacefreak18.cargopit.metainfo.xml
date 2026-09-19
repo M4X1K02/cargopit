@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.spacefreak18.cargopit</id>
+  <name>Cargopit</name>
+  <summary>Device manager for racing sims</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>
+      Cargopit bridges telemetry from supported racing simulators to
+      peripheral devices such as haptic shakers, LED strips, shift lights,
+      and sim wind fans, and exposes a local API for third-party dashboard
+      and configuration tools.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.spacefreak18.cargopit.desktop</launchable>
+  <provides>
+    <binary>cargopit</binary>
+    <binary>gcargopit</binary>
+  </provides>
+  <url type="homepage">https://spacefreak18.github.io/simapi/</url>
+  <url type="vcs-browser">https://github.com/M4X1K02/cargopit</url>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.3.6" date="2026-08-21" />
+  </releases>
+</component>
