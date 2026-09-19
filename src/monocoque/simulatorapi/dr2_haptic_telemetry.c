@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stddef.h>
 
 #include "dr2_haptic_telemetry.h"
 #include "simapi/simapi/simapi.h"
