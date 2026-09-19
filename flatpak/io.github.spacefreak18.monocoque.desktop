@@ -4,6 +4,6 @@ Type=Application
 Name=Cargopit
 Comment=Device manager for racing sims
 Exec=gcargopit
-Icon=io.github.spacefreak18.cargopit
+Icon=io.github.spacefreak18.monocoque
 Terminal=false
 Categories=Game;Development;

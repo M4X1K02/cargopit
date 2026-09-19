@@ -21,7 +21,7 @@
 # simapi itself is still present, but only as cargopit's own statically
 # linked submodule, exactly as upstream's CMakeLists builds it. There is no
 # separate simapi module here.
-app-id: io.github.spacefreak18.cargopit
+app-id: io.github.spacefreak18.monocoque
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
@@ -273,12 +273,12 @@ modules:
         commit: 29c7bd3e0243eb38aa9a7e2eafe6cf74830c4ee8
         dest: src/cargopit/mgui/nappgui_src
       - type: file
-        path: io.github.spacefreak18.cargopit.desktop
+        path: io.github.spacefreak18.monocoque.desktop
       - type: file
-        path: io.github.spacefreak18.cargopit.metainfo.xml
+        path: io.github.spacefreak18.monocoque.metainfo.xml
       # Icon comes from tools/cargopit.svg via the `dir` source above (no
       # separate file source needed). That file is a square 100x100 copy of
-      # the upstream artwork -- the published cargopit.svg the deb job
+      # the upstream artwork -- the published monocoque.svg the deb job
       # downloads is 100x50, which Flatpak's export rejects outright, while
       # appstreamcli separately hard-requires any desktop-application to
       # have an icon at all (both confirmed via failed real CI runs). It is
@@ -303,7 +303,7 @@ modules:
       - install -Dm644 packaging/licenses/lua-5.4-LICENSE.txt /app/share/licenses/lua5.4/LICENSE
       - install -Dm644 packaging/licenses/glu-LICENSE.txt /app/share/licenses/glu/LICENSE
       - install -Dm644 src/cargopit/mgui/nappgui_src/LICENSE /app/share/licenses/nappgui/LICENSE
-      - sh -c 'python3 tools/generate-third-party-notices.py flatpak/io.github.spacefreak18.cargopit.yml > /tmp/notices.md && install -Dm644 /tmp/notices.md /app/share/licenses/THIRD-PARTY-NOTICES.md'
+      - sh -c 'python3 tools/generate-third-party-notices.py flatpak/io.github.spacefreak18.monocoque.yml > /tmp/notices.md && install -Dm644 /tmp/notices.md /app/share/licenses/THIRD-PARTY-NOTICES.md'
     # Confirmed via a failed local build that flatpak-builder's cmake-ninja
     # buildsystem runs the automatic build+install step regardless of
     # whether build-commands are also given -- these run in *addition*,
@@ -315,6 +315,6 @@ modules:
     # already installs cargopit/gcargopit correctly; these build-commands
     # only need to add the extra files CMake doesn't know about.
     build-commands:
-      - install -Dm644 io.github.spacefreak18.cargopit.desktop /app/share/applications/io.github.spacefreak18.cargopit.desktop
-      - install -Dm644 io.github.spacefreak18.cargopit.metainfo.xml /app/share/metainfo/io.github.spacefreak18.cargopit.metainfo.xml
-      - install -Dm644 tools/cargopit.svg /app/share/icons/hicolor/scalable/apps/io.github.spacefreak18.cargopit.svg
+      - install -Dm644 io.github.spacefreak18.monocoque.desktop /app/share/applications/io.github.spacefreak18.monocoque.desktop
+      - install -Dm644 io.github.spacefreak18.monocoque.metainfo.xml /app/share/metainfo/io.github.spacefreak18.monocoque.metainfo.xml
+      - install -Dm644 tools/cargopit.svg /app/share/icons/hicolor/scalable/apps/io.github.spacefreak18.monocoque.svg

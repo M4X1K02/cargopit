@@ -107,10 +107,10 @@ jobs:
         mkdir -p PKG_SOURCE/usr/share/cargopit
     - name: Download xpm icon
       run: |
-        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.xpm -o PKG_SOURCE/usr/share/pixmaps/cargopit.xpm
+        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.xpm -o PKG_SOURCE/usr/share/pixmaps/monocoque.xpm
     - name: Download svg icon
       run: |
-        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.svg -o PKG_SOURCE/usr/share/icons/hicolor/scalable/apps/cargopit.svg
+        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.svg -o PKG_SOURCE/usr/share/icons/hicolor/scalable/apps/monocoque.svg
     - name: Determine package version
       id: pkgver
       shell: bash
@@ -343,11 +343,12 @@ jobs:
     - name: Populate AppDir
       run: |
         DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
-        # Icon basename must match the desktop file's `Icon=cargopit`.
-        # tools/cargopit.svg is the square copy shared with the Flatpak
-        # build; the published 100x50 artwork is rejected by icon tooling.
+        # Icon basename must match the desktop file's `Icon=monocoque`.
+        # This fork still ships upstream artwork; tools/cargopit.svg is the
+        # square copy shared with the Flatpak build. The published 100x50
+        # artwork is rejected by icon tooling.
         install -Dm644 tools/cargopit.svg \
-          AppDir/usr/share/icons/hicolor/scalable/apps/cargopit.svg
+          AppDir/usr/share/icons/hicolor/scalable/apps/monocoque.svg
 
     # APPIMAGE_EXTRACT_AND_RUN=1 because these tools are themselves
     # AppImages and there is no FUSE on the runner to mount them with.
@@ -385,7 +386,7 @@ jobs:
           --appdir AppDir \
           --plugin gtk \
           --desktop-file AppDir/usr/share/applications/cargopit.desktop \
-          --icon-file tools/cargopit.svg
+          --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/monocoque.svg
 
         tools/appimage-collect-licenses.sh AppDir
 
@@ -459,8 +460,8 @@ jobs:
       - name: Build .flatpak
         working-directory: flatpak
         run: |
-          flatpak-builder --force-clean --repo=repo build-dir io.github.spacefreak18.cargopit.yml
-          flatpak build-bundle repo cargopit.flatpak io.github.spacefreak18.cargopit
+          flatpak-builder --force-clean --repo=repo build-dir io.github.spacefreak18.monocoque.yml
+          flatpak build-bundle repo cargopit.flatpak io.github.spacefreak18.monocoque
 
       - name: Upload .flatpak as a build artifact
         uses: actions/upload-artifact@v4

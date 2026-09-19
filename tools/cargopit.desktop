@@ -4,6 +4,6 @@ Type=Application
 Name=Cargopit
 Comment=Launch Cargopit
 Exec=gcargopit
-Icon=cargopit
+Icon=monocoque
 Terminal=false
 Categories=Game;Development;

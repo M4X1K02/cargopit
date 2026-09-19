@@ -15,8 +15,11 @@ import re
 import sys
 from pathlib import Path
 
+# This fork does not have its own AppStream/Flatpak id yet.
+DEFAULT_FLATPAK_MANIFEST = "flatpak/io.github.spacefreak18.monocoque.yml"
+
 manifest = Path(sys.argv[1] if len(sys.argv) > 1
-                else "flatpak/io.github.spacefreak18.cargopit.yml")
+                else DEFAULT_FLATPAK_MANIFEST)
 text = manifest.read_text()
 
 entries, name = [], None

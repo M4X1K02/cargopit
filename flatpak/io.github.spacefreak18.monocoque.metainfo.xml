@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.spacefreak18.cargopit</id>
+  <id>io.github.spacefreak18.monocoque</id>
   <name>Cargopit</name>
   <summary>Device manager for racing sims</summary>
   <metadata_license>CC0-1.0</metadata_license>
@@ -13,7 +13,7 @@
       and configuration tools.
     </p>
   </description>
-  <launchable type="desktop-id">io.github.spacefreak18.cargopit.desktop</launchable>
+  <launchable type="desktop-id">io.github.spacefreak18.monocoque.desktop</launchable>
   <provides>
     <binary>cargopit</binary>
     <binary>gcargopit</binary>
