@@ -20,6 +20,18 @@
 #define maxXvelocity 0.001
 #define minYvelocity 0
 #define maxZvelocity 1
+#define HAPTIC_WHEEL_COUNT 4
+#define HAPTIC_BRAKE_APPLIED_FRAC 0.05
+#define HAPTIC_THROTTLE_APPLIED_FRAC 0.08
+#define HAPTIC_ABS_PUMP_ALPHA 0.35
+#define HAPTIC_ABS_MIN_PUMP 0.04
+#define HAPTIC_SLIP_WHEELSPIN 0
+#define HAPTIC_SLIP_LOCKUP 1
+#define HAPTIC_SUSP_MIN_SPEED_KMH 1
+#define HAPTIC_SUSP_FROZEN_TICKS 12
+#define HAPTIC_SUSP_VEL_EMA_ALPHA 0.25
+#define HAPTIC_SUSP_ENV_ALPHA 0.06
+#define HAPTIC_SUSP_IMPACT_RATIO 2.8
 
 
 bool hasTyreDiameter(SimData* simdata)
@@ -197,6 +209,251 @@ void getTyreDiameter(SimData* simdata)
     }
 }
 
+static int tyre_is_selected(MonocoqueTyreIdentifier selected, int wheel)
+{
+    if (selected == ALLFOUR)
+    {
+        return 1;
+    }
+    if (selected == (MonocoqueTyreIdentifier)wheel)
+    {
+        return 1;
+    }
+    if (selected == FRONTS && (wheel == FRONTLEFT || wheel == FRONTRIGHT))
+    {
+        return 1;
+    }
+    if (selected == REARS && (wheel == REARLEFT || wheel == REARRIGHT))
+    {
+        return 1;
+    }
+    return 0;
+}
+
+static int brake_is_applied(const SimData* simdata)
+{
+    return simdata->brake > HAPTIC_BRAKE_APPLIED_FRAC;
+}
+
+static int throttle_is_applied(const SimData* simdata)
+{
+    return simdata->gas > HAPTIC_THROTTLE_APPLIED_FRAC;
+}
+
+static int car_is_moving_for_tyres(const SimData* simdata)
+{
+    if (simdata->Yvelocity <= minYvelocity)
+    {
+        return 0;
+    }
+    if (fabs(simdata->Zvelocity) > maxZvelocity)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+static double sum_slip_beyond(
+    const double* wheelslip,
+    MonocoqueTyreIdentifier tyre,
+    double threshold,
+    int lockup)
+{
+    double play = 0.0;
+    int i;
+    for (i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        if (!tyre_is_selected(tyre, i))
+        {
+            continue;
+        }
+        if (lockup != 0)
+        {
+            if (wheelslip[i] > threshold)
+            {
+                play += wheelslip[i] - threshold;
+            }
+            continue;
+        }
+        if (wheelslip[i] < -threshold)
+        {
+            play += fabs(wheelslip[i]) - fabs(threshold);
+        }
+    }
+    return play;
+}
+
+static double lock_slip_only(double slip)
+{
+    if (slip <= 0.0)
+    {
+        return 0.0;
+    }
+    return slip;
+}
+
+static void abs_pump_reset(double* last_slip, double* pump_ema, int* primed)
+{
+    int i;
+    for (i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        last_slip[i] = 0.0;
+    }
+    *pump_ema = 0.0;
+    *primed = 0;
+}
+
+static double abs_from_lock_pump(
+    const SimData* simdata,
+    const double* wheelslip,
+    MonocoqueTyreIdentifier tyre,
+    double threshold)
+{
+    static double last_slip[HAPTIC_WHEEL_COUNT];
+    static double pump_ema;
+    static int primed;
+    double max_lock = 0.0;
+    double max_ds = 0.0;
+    int i;
+
+    if (simdata == NULL || wheelslip == NULL || !brake_is_applied(simdata))
+    {
+        abs_pump_reset(last_slip, &pump_ema, &primed);
+        return 0.0;
+    }
+
+    for (i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        double slip;
+        if (!tyre_is_selected(tyre, i))
+        {
+            continue;
+        }
+        slip = lock_slip_only(wheelslip[i]);
+        if (slip > max_lock)
+        {
+            max_lock = slip;
+        }
+        if (primed != 0)
+        {
+            double ds = fabs(slip - last_slip[i]);
+            if (ds > max_ds)
+            {
+                max_ds = ds;
+            }
+        }
+        last_slip[i] = slip;
+    }
+    primed = 1;
+    pump_ema += HAPTIC_ABS_PUMP_ALPHA * (max_ds - pump_ema);
+
+    if (max_lock <= threshold)
+    {
+        return 0.0;
+    }
+    if (pump_ema <= HAPTIC_ABS_MIN_PUMP)
+    {
+        return 0.0;
+    }
+    return max_lock - threshold;
+}
+
+int haptic_chassis_is_rolling(const SimData* simdata)
+{
+    if (simdata == NULL)
+    {
+        return 0;
+    }
+    if (simdata->velocity < HAPTIC_SUSP_MIN_SPEED_KMH)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+static int suspension_telemetry_is_frozen(const SimData* simdata)
+{
+    static double last_velocity[HAPTIC_WHEEL_COUNT];
+    static int frozen_ticks;
+    int same = 1;
+    int i;
+
+    for (i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        if (last_velocity[i] != simdata->suspvelocity[i])
+        {
+            same = 0;
+        }
+        last_velocity[i] = simdata->suspvelocity[i];
+    }
+    if (same == 0)
+    {
+        frozen_ticks = 0;
+        return 0;
+    }
+    if (frozen_ticks < HAPTIC_SUSP_FROZEN_TICKS)
+    {
+        frozen_ticks++;
+    }
+    return frozen_ticks >= HAPTIC_SUSP_FROZEN_TICKS;
+}
+
+static double suspension_from_velocity(
+    const SimData* simdata,
+    MonocoqueTyreIdentifier tyre,
+    double threshold)
+{
+    static double baseline[HAPTIC_WHEEL_COUNT];
+    static int baseline_ready[HAPTIC_WHEEL_COUNT];
+    static double motion_floor;
+    double max_motion = 0.0;
+    double gate;
+    int rolling = haptic_chassis_is_rolling(simdata);
+    int frozen = suspension_telemetry_is_frozen(simdata);
+    int i;
+
+    for (i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        double velocity = simdata->suspvelocity[i];
+        double motion;
+
+        if (baseline_ready[i] == 0)
+        {
+            baseline[i] = velocity;
+            baseline_ready[i] = 1;
+            continue;
+        }
+        baseline[i] += HAPTIC_SUSP_VEL_EMA_ALPHA * (velocity - baseline[i]);
+        if (!tyre_is_selected(tyre, i))
+        {
+            continue;
+        }
+        motion = fabs(velocity - baseline[i]);
+        if (motion > max_motion)
+        {
+            max_motion = motion;
+        }
+    }
+
+    if (!rolling || frozen)
+    {
+        motion_floor = max_motion;
+        return 0.0;
+    }
+
+    motion_floor += HAPTIC_SUSP_ENV_ALPHA * (max_motion - motion_floor);
+    gate = threshold;
+    if (motion_floor * HAPTIC_SUSP_IMPACT_RATIO > gate)
+    {
+        gate = motion_floor * HAPTIC_SUSP_IMPACT_RATIO;
+    }
+    if (max_motion <= gate)
+    {
+        return 0.0;
+    }
+    return max_motion - gate;
+}
+
 int initializeHapticEffect(HapticEffect* h, HapticEffectSettings* hs, MonocoqueSettings* ms)
 {
 
@@ -323,163 +580,39 @@ double slipeffect(SimData* simdata, HapticEffect* h, int useconfig, int* configc
         slogt("wheelslip values from sim are %f %f %f %f", wheelslip[0], wheelslip[1], wheelslip[2], wheelslip[3]);
     }
 
-    if(simdata->Yvelocity <= minYvelocity)
+    if (effecttype != EFFECT_SUSPENSION && !car_is_moving_for_tyres(simdata))
     {
         return 0;
     }
-    if(fabs(simdata->Zvelocity) > maxZvelocity)
-    {
-        return 0;
-    }
-
 
     switch (effecttype)
     {
         case (EFFECT_TYRESLIP):
-
-            if (tyre == FRONTLEFT || tyre == FRONTS || tyre == ALLFOUR)
+            if (!throttle_is_applied(simdata))
             {
-                if(wheelslip[0] < -threshold)
-                {
-                    play += fabs(wheelslip[0]) - fabs(threshold);
-                    slogt("slip is %f", play);
-                }
+                return 0;
             }
-            if (tyre == FRONTRIGHT || tyre == FRONTS || tyre == ALLFOUR)
-            {
-                if(wheelslip[1] < -threshold)
-                {
-                    play += fabs(wheelslip[1]) - fabs(threshold);
-                    slogt("slip is %f", play);
-                }
-            }
-            if (tyre == REARLEFT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(wheelslip[2] < -threshold)
-                {
-                    play += fabs(wheelslip[2]) - fabs(threshold);
-                    slogt("slip is %f", play);
-                }
-            }
-            if (tyre == REARRIGHT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(wheelslip[3] < -threshold)
-                {
-                    play += fabs(wheelslip[3]) - fabs(threshold);
-                    slogt("slip is %f", play);
-                }
-            }
+            play = sum_slip_beyond(wheelslip, tyre, threshold, HAPTIC_SLIP_WHEELSPIN);
+            slogt("slip is %f", play);
             break;
-
         case (EFFECT_TYRELOCK):
-            if (tyre == FRONTLEFT || tyre == FRONTS || tyre == ALLFOUR)
+            if (!brake_is_applied(simdata))
             {
-                if(wheelslip[0] > threshold)
-                {
-                    play += wheelslip[0] - threshold;
-                    slogt("lock is %f", play);
-                }
+                return 0;
             }
-            if (tyre == FRONTRIGHT || tyre == FRONTS || tyre == ALLFOUR)
-            {
-                if(wheelslip[1] > threshold)
-                {
-                    play += wheelslip[1] - threshold;
-                    slogt("lock is %f", play);
-                }
-            }
-            if (tyre == REARLEFT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(wheelslip[2] > threshold)
-                {
-                    play += wheelslip[2] - threshold;
-                    slogt("lock is %f", play);
-                }
-            }
-            if (tyre == REARRIGHT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(wheelslip[3] > threshold)
-                {
-                    play += wheelslip[3] - threshold;
-                    slogt("lock is %f", play);
-                }
-            }
-
+            play = sum_slip_beyond(wheelslip, tyre, threshold, HAPTIC_SLIP_LOCKUP);
+            slogt("lock is %f", play);
             break;
         case (EFFECT_ABSBRAKES):
-            threshold = simdata->abs + threshold;
-            if (tyre == FRONTLEFT || tyre == FRONTS || tyre == ALLFOUR)
-            {
-                if(wheelslip[0] > threshold)
-                {
-                    play += wheelslip[0] - threshold;
-                    slogt("abs is %f", play);
-                }
-            }
-            if (tyre == FRONTRIGHT || tyre == FRONTS || tyre == ALLFOUR)
-            {
-                if(wheelslip[1] > threshold)
-                {
-                    play += wheelslip[1] - threshold;
-                    slogt("abs is %f", play);
-                }
-            }
-            if (tyre == REARLEFT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(wheelslip[2] > threshold)
-                {
-                    play += wheelslip[2] - threshold;
-                    slogt("abs is %f", play);
-                }
-            }
-            if (tyre == REARRIGHT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(wheelslip[3] > threshold)
-                {
-                    play += wheelslip[3] - threshold;
-                    slogt("abs is %f", play);
-                }
-            }
-            if(simdata->abs <= 0)
-            {
-                play = 0;
-            }
+            play = abs_from_lock_pump(simdata, wheelslip, tyre, threshold);
+            slogt("abs is %f", play);
             break;
-
         case (EFFECT_SUSPENSION):
-
-            if (tyre == FRONTLEFT || tyre == FRONTS || tyre == ALLFOUR)
-            {
-                if(simdata->suspension[0] > threshold)
-                {
-                    play += simdata->suspension[0] - threshold;
-                    slogt("suspension is %f", play);
-                }
-            }
-            if (tyre == FRONTRIGHT || tyre == FRONTS || tyre == ALLFOUR)
-            {
-                if(simdata->suspension[1] > threshold)
-                {
-                    play += simdata->suspension[1] - threshold;
-                    slogt("suspension is %f", play);
-                }
-            }
-            if (tyre == REARLEFT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(simdata->suspension[2] > threshold)
-                {
-                    play += simdata->suspension[2] - threshold;
-                    slogt("suspension is %f", play);
-                }
-            }
-            if (tyre == REARRIGHT || tyre == REARS || tyre == ALLFOUR)
-            {
-                if(simdata->suspension[3] > threshold)
-                {
-                    play += simdata->suspension[3] - threshold;
-                    slogt("suspension is %f", play);
-                }
-            }
+            play = suspension_from_velocity(simdata, tyre, threshold);
+            slogt("suspension is %f", play);
+            break;
+        default:
+            slogw("Unknown effect type %i", effecttype);
             break;
     }
 
