@@ -4,12 +4,12 @@
 # repo's .github/workflows/flatpak.yml header for the full list of bugs
 # found and fixed here, cargopit-specific beyond what that sibling project
 # already covered). VERIFIED LOCALLY end-to-end: built, installed, and ran
-# both `cargopit --help` and `gcargopit` from the resulting bundle. Not
+# `cargopit --help` from the resulting bundle. Not
 # yet verified against real CI or real hardware (HID/serial/USB device
 # access under the sandbox).
 #
-# org.freedesktop.Platform, not org.gnome.Platform: cargopit's GUI
-# (gcargopit) only needs GTK3, which freedesktop.Platform//25.08 already
+# org.freedesktop.Platform, not org.gnome.Platform: the CLI only needs
+# PulseAudio and HID/serial, which freedesktop.Platform//25.08 already
 # ships -- no need for the heavier GNOME runtime typiql needs for WebKitGTK.
 # simd is NOT bundled. It is a separate daemon with its own packaging, and
 # cargopit does not need it inside the sandbox to use it: simapi_get_sim()
@@ -25,34 +25,14 @@ app-id: io.github.spacefreak18.monocoque
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
-command: gcargopit
+command: cargopit
 finish-args:
-  # --socket=x11, not fallback-x11: nappgui (the GUI toolkit gcargopit uses)
-  # goes to X11 even when a Wayland display is available. fallback-x11 is
-  # deliberately inactive whenever Wayland works, so under a Wayland session
-  # DISPLAY stayed empty and gcargopit died with `cannot open display` --
-  # confirmed on a real launch, with WAYLAND_DISPLAY=wayland-0 present and the
-  # socket visible inside the sandbox. Granting real X11 routes it through
-  # XWayland instead. --socket=wayland is kept so the toolkit can use it
-  # directly if that ever changes.
-  - --socket=x11
-  - --socket=wayland
-  # Standard companion to X11 access: without it MIT-SHM is unavailable and
-  # some toolkits fall over.
-  - --share=ipc
   - --socket=pulseaudio
   # HID/serial/USB access for wheels, pedals, shifters, and shaker/LED
   # devices -- known risk area, Flatpak's sandboxing of raw device nodes is
   # not always well-behaved; needs real hardware testing, not just a
   # successful build.
   - --device=all
-  # Retained, but not for the reason first written here: the GraphQL API on
-  # port 9000 is served by typiql's own Rust backend, not by cargopit --
-  # cargopit has no network code of its own, and the only libcurl in the
-  # binary is vendored nappgui's HTTP module, which nothing here calls. The
-  # two programs talk through ~/.config/cargopit and the process table, not
-  # a socket. This flag can probably be dropped.
-  - --share=network
   # cargopit builds its paths from $HOME directly (e.g.
   # "%s/.config/cargopit/diameters.config" in cargopit-cli.c), not from
   # XDG_CONFIG_HOME, so it reads and writes the host's real directories.
@@ -198,13 +178,6 @@ modules:
         url: https://github.com/libusb/hidapi/archive/refs/tags/hidapi-0.14.0.tar.gz
         sha256: a5714234abe6e1f53647dd8cba7d69f65f71c558b7896ed218864ffcf405bcbd
 
-  - name: glu
-    buildsystem: meson
-    sources:
-      - type: archive
-        url: https://gitlab.freedesktop.org/mesa/glu/-/archive/glu-9.0.3/glu-glu-9.0.3.tar.gz
-        sha256: 7e919cbc1b2677b01d65fc28fd36a19d1f3e23d76663020e0f3b82b991475e8b
-
   - name: libuv
     buildsystem: cmake-ninja
     config-opts:
@@ -219,7 +192,6 @@ modules:
   - name: cargopit
     buildsystem: cmake-ninja
     config-opts:
-      - -DBUILD_GUI=on
       - -DCMAKE_BUILD_TYPE=Release
     # CMakeLists.txt links most of the dependencies built as separate
     # flatpak modules above (hidapi-hidraw, serialport, argtable2, config,
@@ -255,8 +227,7 @@ modules:
         # breaks. Skipping makes it work either way.
         skip:
           - src/cargopit/simulatorapi/simapi
-          - src/cargopit/mgui/nappgui_src
-      # Two git submodules, each pinned to the exact commit .gitmodules/the
+      # simapi is pinned to the exact commit .gitmodules/the
       # tree tracks -- confirmed via a failed local build that the `dir`
       # source above doesn't pull submodule content in (same class of issue
       # as typiql-tauri/typiql's own submodules, src/lib/per-form etc.).
@@ -264,14 +235,6 @@ modules:
         url: https://github.com/spacefreak18/simapi
         commit: 50fd181681862256780b2a0f74ef4bc459ed631a
         dest: src/cargopit/simulatorapi/simapi
-      # nappgui_src is add_subdirectory()'d directly into cargopit's own
-      # CMake tree (src/cargopit/mgui/CMakeLists.txt), not a separately
-      # installed library -- so it's a source here, not its own flatpak
-      # module.
-      - type: git
-        url: https://github.com/frang75/nappgui_src
-        commit: 29c7bd3e0243eb38aa9a7e2eafe6cf74830c4ee8
-        dest: src/cargopit/mgui/nappgui_src
       - type: file
         path: io.github.spacefreak18.monocoque.desktop
       - type: file
@@ -285,24 +248,19 @@ modules:
       # padded via a <g transform="translate(0,25)">, not stretched. Shared
       # with the AppImage job, which has the same square-icon need.
     post-install:
-      # This package's own licence, the vendored nappgui's (a source rather
-      # than a module, so the per-module collection above misses it), and the
-      # notices file naming every bundled dependency's origin.
+      # This package's own licence and the notices file naming every bundled
+      # dependency's origin.
       - install -Dm644 LICENSE.rst /app/share/licenses/cargopit/LICENSE.rst
       # The Debian copyright file is upstream's own account of what is in this
-      # source tree and under what terms -- slog (MIT), nappgui (MIT), simapi
+      # source tree and under what terms -- slog (MIT), simapi
       # (LGPL) -- which a bundle has to carry because it distributes all of
       # them, unlike a .deb whose dependencies are separate packages. Shipped
       # verbatim rather than restated.
       - install -Dm644 tools/distro/debian/dpkg/copyright /app/share/licenses/cargopit/copyright
-      # lua and glu ship no licence file in their tarballs -- Lua's MIT text
-      # lives in doc/readme.html, glu's SGI Free B only in source headers -- so
-      # checked-in copies are installed from here, where the repo is the build
-      # directory. (Doing it in their own modules fails: those build
-      # out-of-tree, so their source directory is not the working directory.)
+      # lua ships no licence file in its tarball -- Lua's MIT text
+      # lives in doc/readme.html -- so a checked-in copy is installed from
+      # here, where the repo is the build directory.
       - install -Dm644 packaging/licenses/lua-5.4-LICENSE.txt /app/share/licenses/lua5.4/LICENSE
-      - install -Dm644 packaging/licenses/glu-LICENSE.txt /app/share/licenses/glu/LICENSE
-      - install -Dm644 src/cargopit/mgui/nappgui_src/LICENSE /app/share/licenses/nappgui/LICENSE
       - sh -c 'python3 tools/generate-third-party-notices.py flatpak/io.github.spacefreak18.monocoque.yml > /tmp/notices.md && install -Dm644 /tmp/notices.md /app/share/licenses/THIRD-PARTY-NOTICES.md'
     # Confirmed via a failed local build that flatpak-builder's cmake-ninja
     # buildsystem runs the automatic build+install step regardless of
@@ -312,7 +270,7 @@ modules:
     # CMakeLists.txt bug unrelated to Flatpak) had to be commenting it out
     # at the source, not overriding the build here. With that gone, the
     # automatic build+install (using this repo's own new install() rules)
-    # already installs cargopit/gcargopit correctly; these build-commands
+    # already installs cargopit correctly; these build-commands
     # only need to add the extra files CMake doesn't know about.
     build-commands:
       - install -Dm644 io.github.spacefreak18.monocoque.desktop /app/share/applications/io.github.spacefreak18.monocoque.desktop

@@ -19,11 +19,10 @@ Follow these on every change:
 
 | Path | Role |
 | --- | --- |
-| `src/cargopit/` | Main C sources: CLI (`cargopit-cli.c`), GUI (`cargopit-gui.c`), library (`cargopit.c`) |
+| `src/cargopit/` | Main C sources: CLI (`cargopit-cli.c`), library (`cargopit.c`) |
 | `src/cargopit/devices/` | USB, serial, sound, haptic, wheel, tachometer backends |
 | `src/cargopit/gameloop/` | 60 fps update loop |
 | `src/cargopit/helper/` | Config, CLI parameters, paths, simd startup |
-| `src/cargopit/mgui/` | NAppGUI UI (optional, `-DBUILD_GUI=on`) |
 | `src/arduino/` | Sample sketches (shift lights, simwind, simhaptic, custom Lua serial) |
 | `conf/` | Example `cargopit.config` |
 | `tests/` | Automated tests (`ENABLE_TESTS=ON`). Hardware/interactive tools in `tests/manual/` |
@@ -43,7 +42,6 @@ git submodule update --init --recursive
 | Path | Upstream | Notes |
 | --- | --- | --- |
 | `src/cargopit/simulatorapi/simapi` | [spacefreak18/simapi](https://github.com/spacefreak18/simapi) | Shared-memory headers (`simdata.h`). Do not vendor copies. |
-| `src/cargopit/mgui/nappgui_src` | [frang75/nappgui_src](https://github.com/frang75/nappgui_src) | GUI toolkit. Required when `BUILD_GUI` is on. |
 
 Do not edit submodule trees in this repo unless the task is explicitly to bump a submodule pin.
 
@@ -57,7 +55,7 @@ cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Useful CMake options: `BUILD_GUI`, `ENABLE_TESTS`, `BUILD_SHARED`. GCC 13+ is required (simapi uses C23 enum-with-underlying-type). Debian 12 / GCC 12 cannot compile current simapi.
+Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`. GCC 13+ is required (simapi uses C23 enum-with-underlying-type). Debian 12 / GCC 12 cannot compile current simapi.
 
 End-user source install (compiles simapi, simd, and this tree; does not configure Steam, audio, or wheel firmware):
 

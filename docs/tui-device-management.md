@@ -6,7 +6,7 @@ Goal: **every setting a user currently has to edit outside the TUI becomes edita
 
 ## Current TUI
 
-`cargopit-tui` (ratatui, `tui/`) already replaced the Python manager and NAppGUI app. Three tabs:
+`cargopit-manager` is the curses TUI. The NAppGUI app is gone from this tree. A richer device-management TUI (`cargopit-tui`) is the planned replacement. Three tabs in that plan:
 
 | Tab | What it does today |
 | --- | --- |
@@ -227,7 +227,7 @@ Templates only insert; they never wipe the profile without confirm.
 
 Until that socket exists, do not fake live tuning by killing and restarting on every keystroke.
 
-Per-device **test** from the old NAppGUI window (`mgui/testaction.c`: synthetic `SimData`, one device) is worth restoring as `t` on the editor. That needs a C CLI flag (e.g. `cargopit test --config-index N --device-index M`) rather than the TUI reimplementing the game loop.
+Per-device **test** from the old NAppGUI window (synthetic `SimData`, one device) is worth restoring as `t` on the editor. That needs a C CLI flag (e.g. `cargopit test --config-index N --device-index M`) rather than the TUI reimplementing the game loop.
 
 ## simd.config
 

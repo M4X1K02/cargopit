@@ -10,7 +10,6 @@ endif()
 SET_SOURCE_FILES_PROPERTIES( src/cargopit.c PROPERTIES LANGUAGE C)
 #set(CMAKE_BUILD_TYPE Debug)
 
-option(BUILD_GUI "Build GUI support" OFF)
 option(BUILD_SHARED "Build cargopit shared library" OFF)
 option(ENABLE_TESTS "Build test suite" OFF)
 
@@ -61,10 +60,6 @@ else()
 endif()
 add_executable(cargopit-cli src/cargopit/cargopit-cli.c)
 set_target_properties(cargopit-cli PROPERTIES OUTPUT_NAME cargopit)
-if(BUILD_GUI)
-    add_executable(cargopit-gui src/cargopit/cargopit-gui.c)
-    set_target_properties(cargopit-gui PROPERTIES OUTPUT_NAME gcargopit)
-endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBPROCPS libprocps)
@@ -107,11 +102,6 @@ target_link_libraries(cargopit m hidapi-hidraw pulse serialport xml2 argtable2 c
 target_include_directories(cargopit PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
 target_link_libraries(cargopit-cli m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
 target_include_directories(cargopit-cli PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
-if(BUILD_GUI)
-    add_subdirectory(src/cargopit/mgui)
-    target_link_libraries(cargopit-gui m hidapi-hidraw pulse serialport xml2 argtable2 config mgui gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
-    target_include_directories(cargopit-gui PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
-endif()
 
 
 
@@ -184,7 +174,4 @@ if(ENABLE_TESTS AND NOT CARGOPIT_SUBPROJECT)
 endif()
 
 install(TARGETS cargopit-cli RUNTIME DESTINATION bin)
-if(BUILD_GUI)
-    install(TARGETS cargopit-gui RUNTIME DESTINATION bin)
-endif()
 install(FILES tools/cargopit.desktop DESTINATION share/applications)
