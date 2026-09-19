@@ -1,10 +1,10 @@
 #!/bin/bash
-# Monocoque Universal Installer
+# Cargopit Universal Installer
 # Works on: Arch, Debian/Ubuntu, Fedora-based (incl. Nobara), openSUSE
 set -euo pipefail
 
 SCRIPT_VERSION="1.1.0"
-INSTALL_DIR="${MONOCOQUE_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/monocoque}"
+INSTALL_DIR="${CARGOPIT_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cargopit}"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 BIN_DIR="${HOME}/.local/bin"
 SIMAPI_PREFIX="${SIMAPI_PREFIX:-/usr/local}"
@@ -12,6 +12,8 @@ BRIDGE_RELEASE_URL="https://github.com/Spacefreak18/simshmbridge/releases/downlo
 CARGOPIT_GITHUB_REPO="M4X1K02/cargopit"
 CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 CARGOPIT_RAW_MASTER_URL="https://raw.githubusercontent.com/${CARGOPIT_GITHUB_REPO}/master"
+CARGOPIT_RELEASES_URL="https://github.com/${CARGOPIT_GITHUB_REPO}/releases"
+AUR_INSTALL_UNAVAILABLE_MSG="AUR install is not offered yet; use --from-source"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -19,7 +21,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-MODE="auto"
 BUILD_BRIDGES=0
 SKIP_BRIDGES=0
 ALLOW_ROOT=0
@@ -37,13 +38,13 @@ DISTRO_IMMUTABLE=0
 
 SCRIPT_DIR=""
 LOCAL_SRC=""
-MONOCOQUE_SRC=""
+CARGOPIT_SRC=""
 SIMD_BIN=""
-MONOCOQUE_BIN=""
+CARGOPIT_BIN=""
 
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    if [ -f "$SCRIPT_DIR/CMakeLists.txt" ] && [ -d "$SCRIPT_DIR/src/monocoque" ]; then
+    if [ -f "$SCRIPT_DIR/CMakeLists.txt" ] && [ -d "$SCRIPT_DIR/src/cargopit" ]; then
         LOCAL_SRC="$SCRIPT_DIR"
     fi
 fi
@@ -56,7 +57,7 @@ log_error()   { echo -e "${RED}[ERROR]${NC} $1"; }
 print_header() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║          Monocoque Universal Installer v${SCRIPT_VERSION}             ║"
+    echo "║          Cargopit Universal Installer v${SCRIPT_VERSION}              ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 }
@@ -66,8 +67,7 @@ usage() {
 Usage: $(basename "${BASH_SOURCE[0]:-install.sh}") [options]
 
 Options:
-  --from-source     Build simapi, simd, and monocoque from source (default)
-  --aur             Install simapi-git, simd-git, then monocoque-git from AUR
+  --from-source     Build simapi, simd, and cargopit from source (default)
   --distrobox       Print (and run, if distrobox exists) immutable-distro setup
   --build-bridges   Cross-compile simshmbridge with mingw instead of prebuilts
   --skip-bridges    Do not download or build simshmbridge compatibility EXEs
@@ -78,7 +78,7 @@ Options:
   -h, --help        Show this help
 
 Environment:
-  MONOCOQUE_INSTALL_DIR   Install prefix (default: ~/.local/share/monocoque)
+  CARGOPIT_INSTALL_DIR   Install prefix (default: ~/.local/share/cargopit)
   SIMAPI_PREFIX           simapi install prefix (default: /usr/local)
 EOF
 }
@@ -93,10 +93,6 @@ run_root() {
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
-}
-
-is_tty() {
-    [ -t 0 ] && [ -t 1 ]
 }
 
 ensure_writable_dir() {
@@ -202,8 +198,8 @@ print_immutable_help() {
     echo "Do not install with the host package manager (rpm-ostree layering is a last resort)."
     echo "Use distrobox so the stack lives in a mutable container that shares \$HOME:"
     echo ""
-    echo "    distrobox create --name monocoque --image archlinux:latest"
-    echo "    distrobox enter monocoque"
+    echo "    distrobox create --name cargopit --image archlinux:latest"
+    echo "    distrobox enter cargopit"
     echo "    curl -fsSL ${CARGOPIT_RAW_MASTER_URL}/install.sh -o install.sh"
     echo "    bash install.sh --from-source"
     echo ""
@@ -355,62 +351,6 @@ check_requirements() {
     fi
 }
 
-maybe_install_aur() {
-    if [ "$MODE" = "aur" ]; then
-        return 0
-    fi
-    if [ "$MODE" = "from-source" ]; then
-        return 1
-    fi
-    if [ "$DISTRO_FAMILY" != "arch" ]; then
-        return 1
-    fi
-    if ! have_cmd yay && ! have_cmd paru; then
-        return 1
-    fi
-    if ! is_tty; then
-        log_info "No TTY; skipping AUR prompt (use --aur to force)"
-        return 1
-    fi
-    echo ""
-    echo "You can install packaged builds from AUR instead of compiling:"
-    echo "  yay -S simapi-git && yay -S simd-git && yay -S monocoque-git"
-    echo ""
-    local use_aur=""
-    read -r -p "Install from AUR? [y/N]: " use_aur
-    [[ "$use_aur" =~ ^[Yy]$ ]]
-}
-
-aur_helper() {
-    if have_cmd yay; then
-        echo yay
-    elif have_cmd paru; then
-        echo paru
-    else
-        log_error "AUR install requested but neither yay nor paru is installed"
-        exit 1
-    fi
-}
-
-install_from_aur() {
-    local helper
-    helper="$(aur_helper)"
-    log_info "Installing AUR packages sequentially with $helper (simapi first)"
-    "$helper" -S --needed simapi-git
-    "$helper" -S --needed simd-git
-    "$helper" -S --needed monocoque-git
-
-    if [ "$SKIP_BRIDGES" -eq 0 ]; then
-        install_bridges
-    fi
-    setup_configs
-    create_launcher_scripts
-    setup_systemd_services
-    install_udev_rules
-    verify_install
-    print_next_steps
-}
-
 git_clone_or_update() {
     local url="$1"
     local dest="$2"
@@ -434,19 +374,19 @@ prepare_sources() {
     cd "$INSTALL_DIR"
 
     if [ -n "$LOCAL_SRC" ]; then
-        log_info "Using local monocoque source: $LOCAL_SRC"
-        mkdir -p "$INSTALL_DIR/monocoque"
+        log_info "Using local cargopit source: $LOCAL_SRC"
+        mkdir -p "$INSTALL_DIR/cargopit"
         tar -C "$LOCAL_SRC" --exclude='./build' --exclude='./.git' -cf - . \
-            | tar -C "$INSTALL_DIR/monocoque" -xf -
-        MONOCOQUE_SRC="$INSTALL_DIR/monocoque"
+            | tar -C "$INSTALL_DIR/cargopit" -xf -
+        CARGOPIT_SRC="$INSTALL_DIR/cargopit"
     else
-        git_clone_or_update "$CARGOPIT_GIT_URL" "$INSTALL_DIR/monocoque" 1
-        MONOCOQUE_SRC="$INSTALL_DIR/monocoque"
+        git_clone_or_update "$CARGOPIT_GIT_URL" "$INSTALL_DIR/cargopit" 1
+        CARGOPIT_SRC="$INSTALL_DIR/cargopit"
     fi
 
-    local simapi_submodule="$MONOCOQUE_SRC/src/monocoque/simulatorapi/simapi"
+    local simapi_submodule="$CARGOPIT_SRC/src/cargopit/simulatorapi/simapi"
     if [ ! -f "$simapi_submodule/simapi/simdata.h" ]; then
-        log_error "simapi submodule is missing under $MONOCOQUE_SRC"
+        log_error "simapi submodule is missing under $CARGOPIT_SRC"
         log_info "Run: git submodule update --init --recursive"
         exit 1
     fi
@@ -455,7 +395,7 @@ prepare_sources() {
         exit 1
     fi
 
-    # simd must come from the same simapi tree monocoque compiles against so both
+    # simd must come from the same simapi tree cargopit compiles against so both
     # share one SimData layout for /dev/shm/SIMAPI.DAT (do not clone simapi master).
     log_info "Using pinned simapi submodule for simd"
     rm -rf "$INSTALL_DIR/simapi"
@@ -509,17 +449,17 @@ build_simd() {
     log_success "simd built"
 }
 
-build_monocoque() {
-    log_info "Building monocoque..."
-    mkdir -p "$MONOCOQUE_SRC/build"
-    cmake -S "$MONOCOQUE_SRC" -B "$MONOCOQUE_SRC/build"
-    cmake --build "$MONOCOQUE_SRC/build" -j"$(nproc)"
-    MONOCOQUE_BIN="$MONOCOQUE_SRC/build/monocoque"
-    if [ ! -x "$MONOCOQUE_BIN" ]; then
-        log_error "monocoque binary was not produced"
+build_cargopit() {
+    log_info "Building cargopit..."
+    mkdir -p "$CARGOPIT_SRC/build"
+    cmake -S "$CARGOPIT_SRC" -B "$CARGOPIT_SRC/build"
+    cmake --build "$CARGOPIT_SRC/build" -j"$(nproc)"
+    CARGOPIT_BIN="$CARGOPIT_SRC/build/cargopit"
+    if [ ! -x "$CARGOPIT_BIN" ]; then
+        log_error "cargopit binary was not produced"
         exit 1
     fi
-    log_success "monocoque built"
+    log_success "cargopit built"
 }
 
 install_prebuilt_bridges() {
@@ -564,7 +504,7 @@ install_bridges() {
 
 setup_configs() {
     log_info "Setting up configuration files..."
-    mkdir -p "$CONFIG_DIR/simd" "$CONFIG_DIR/monocoque"
+    mkdir -p "$CONFIG_DIR/simd" "$CONFIG_DIR/cargopit"
 
     if [ ! -f "$CONFIG_DIR/simd/simd.config" ]; then
         if [ -f "$INSTALL_DIR/simapi/simd/conf/simd.config" ]; then
@@ -578,19 +518,19 @@ setup_configs() {
     fi
 
     local example_src=""
-    if [ -f "$MONOCOQUE_SRC/conf/monocoque.config" ]; then
-        example_src="$MONOCOQUE_SRC/conf/monocoque.config"
-    elif [ -f "$INSTALL_DIR/monocoque/conf/monocoque.config" ]; then
-        example_src="$INSTALL_DIR/monocoque/conf/monocoque.config"
+    if [ -f "$CARGOPIT_SRC/conf/cargopit.config" ]; then
+        example_src="$CARGOPIT_SRC/conf/cargopit.config"
+    elif [ -f "$INSTALL_DIR/cargopit/conf/cargopit.config" ]; then
+        example_src="$INSTALL_DIR/cargopit/conf/cargopit.config"
     fi
     if [ -n "$example_src" ]; then
-        cp "$example_src" "$CONFIG_DIR/monocoque/monocoque.config.example"
+        cp "$example_src" "$CONFIG_DIR/cargopit/cargopit.config.example"
     fi
 
-    if [ ! -f "$CONFIG_DIR/monocoque/monocoque.config" ]; then
-        cat > "$CONFIG_DIR/monocoque/monocoque.config" << 'EOF'
+    if [ ! -f "$CONFIG_DIR/cargopit/cargopit.config" ]; then
+        cat > "$CONFIG_DIR/cargopit/cargopit.config" << 'EOF'
 // Starter config — add only devices you actually have.
-// Full examples: ~/.config/monocoque/monocoque.config.example
+// Full examples: ~/.config/cargopit/cargopit.config.example
 // Device docs: https://spacefreak18.github.io/simapi/
 configs = (
     {
@@ -627,9 +567,9 @@ configs = (
     }
 );
 EOF
-        log_success "Created $CONFIG_DIR/monocoque/monocoque.config"
+        log_success "Created $CONFIG_DIR/cargopit/cargopit.config"
     else
-        log_info "monocoque config already exists, skipping"
+        log_info "cargopit config already exists, skipping"
     fi
 }
 
@@ -640,11 +580,11 @@ resolve_binaries() {
     if [ -z "${SIMD_BIN}" ] && have_cmd simd; then
         SIMD_BIN="$(command -v simd)"
     fi
-    if [ -z "${MONOCOQUE_BIN}" ] && [ -x "$INSTALL_DIR/monocoque/build/monocoque" ]; then
-        MONOCOQUE_BIN="$INSTALL_DIR/monocoque/build/monocoque"
+    if [ -z "${CARGOPIT_BIN}" ] && [ -x "$INSTALL_DIR/cargopit/build/cargopit" ]; then
+        CARGOPIT_BIN="$INSTALL_DIR/cargopit/build/cargopit"
     fi
-    if [ -z "${MONOCOQUE_BIN}" ] && have_cmd monocoque; then
-        MONOCOQUE_BIN="$(command -v monocoque)"
+    if [ -z "${CARGOPIT_BIN}" ] && have_cmd cargopit; then
+        CARGOPIT_BIN="$(command -v cargopit)"
     fi
 }
 
@@ -665,34 +605,34 @@ exec "\$BIN" "\$@"
 EOF
     chmod +x "$BIN_DIR/start-simd"
 
-    cat > "$BIN_DIR/start-monocoque" << EOF
+    cat > "$BIN_DIR/start-cargopit" << EOF
 #!/bin/bash
-BIN="${MONOCOQUE_BIN:-monocoque}"
+BIN="${CARGOPIT_BIN:-cargopit}"
 if [ ! -x "\$BIN" ]; then
-    echo "monocoque not found at \$BIN" >&2
+    echo "cargopit not found at \$BIN" >&2
     exit 1
 fi
 exec "\$BIN" play "\$@"
 EOF
-    chmod +x "$BIN_DIR/start-monocoque"
+    chmod +x "$BIN_DIR/start-cargopit"
 
-    cat > "$BIN_DIR/test-monocoque" << EOF
+    cat > "$BIN_DIR/test-cargopit" << EOF
 #!/bin/bash
-BIN="${MONOCOQUE_BIN:-monocoque}"
+BIN="${CARGOPIT_BIN:-cargopit}"
 if [ ! -x "\$BIN" ]; then
-    echo "monocoque not found at \$BIN" >&2
+    echo "cargopit not found at \$BIN" >&2
     exit 1
 fi
 exec "\$BIN" test -vv "\$@"
 EOF
-    chmod +x "$BIN_DIR/test-monocoque"
+    chmod +x "$BIN_DIR/test-cargopit"
 
     local search_paths=(
-        "$INSTALL_DIR/monocoque/tools/monocoque-manager"
-        "$INSTALL_DIR/monocoque/monocoque-manager"
-        "${MONOCOQUE_SRC:-}/tools/monocoque-manager"
-        "${SCRIPT_DIR:-}/tools/monocoque-manager"
-        "${SCRIPT_DIR:-}/monocoque-manager"
+        "$INSTALL_DIR/cargopit/tools/cargopit-manager"
+        "$INSTALL_DIR/cargopit/cargopit-manager"
+        "${CARGOPIT_SRC:-}/tools/cargopit-manager"
+        "${SCRIPT_DIR:-}/tools/cargopit-manager"
+        "${SCRIPT_DIR:-}/cargopit-manager"
     )
     local manager=""
     local path
@@ -705,18 +645,18 @@ EOF
     done
     if [ -z "$manager" ]; then
         mkdir -p "$INSTALL_DIR"
-        if curl -fsSL -o "$INSTALL_DIR/monocoque-manager" \
-            "${CARGOPIT_RAW_MASTER_URL}/tools/monocoque-manager"; then
-            manager="$INSTALL_DIR/monocoque-manager"
-            log_info "Downloaded monocoque-manager from GitHub"
+        if curl -fsSL -o "$INSTALL_DIR/cargopit-manager" \
+            "${CARGOPIT_RAW_MASTER_URL}/tools/cargopit-manager"; then
+            manager="$INSTALL_DIR/cargopit-manager"
+            log_info "Downloaded cargopit-manager from GitHub"
         fi
     fi
     if [ -n "$manager" ]; then
-        cp "$manager" "$BIN_DIR/monocoque-manager"
-        chmod +x "$BIN_DIR/monocoque-manager"
-        log_success "Installed monocoque-manager from $manager"
+        cp "$manager" "$BIN_DIR/cargopit-manager"
+        chmod +x "$BIN_DIR/cargopit-manager"
+        log_success "Installed cargopit-manager from $manager"
     else
-        log_warn "monocoque-manager not found (looked in cloned tree, not the directory you launched install.sh from)"
+        log_warn "cargopit-manager not found (looked in cloned tree, not the directory you launched install.sh from)"
     fi
 
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -763,23 +703,23 @@ EOF
         if systemctl --user enable --now simd.service 2>/dev/null; then
             log_success "Enabled simd.service (starts at login)"
         else
-            log_warn "Could not enable simd.service; monocoque will start simd when you run it"
+            log_warn "Could not enable simd.service; cargopit will start simd when you run it"
         fi
     fi
 }
 
 install_udev_rules() {
     local rules=""
-    if [ -f "${MONOCOQUE_SRC:-}/udev/69-monocoque.rules" ]; then
-        rules="$MONOCOQUE_SRC/udev/69-monocoque.rules"
-    elif [ -f "$INSTALL_DIR/monocoque/udev/69-monocoque.rules" ]; then
-        rules="$INSTALL_DIR/monocoque/udev/69-monocoque.rules"
+    if [ -f "${CARGOPIT_SRC:-}/udev/69-cargopit.rules" ]; then
+        rules="$CARGOPIT_SRC/udev/69-cargopit.rules"
+    elif [ -f "$INSTALL_DIR/cargopit/udev/69-cargopit.rules" ]; then
+        rules="$INSTALL_DIR/cargopit/udev/69-cargopit.rules"
     fi
     if [ -z "$rules" ]; then
         log_warn "No udev rules found in the source tree"
         return 0
     fi
-    if run_root mkdir -p /etc/udev/rules.d && run_root cp "$rules" /etc/udev/rules.d/69-monocoque.rules; then
+    if run_root mkdir -p /etc/udev/rules.d && run_root cp "$rules" /etc/udev/rules.d/69-cargopit.rules; then
         run_root udevadm control --reload-rules 2>/dev/null || true
         log_success "Installed udev rules (some Arduino matches are serial-specific; edit if needed)"
         log_info "Serial/HID access usually needs group membership:"
@@ -794,10 +734,10 @@ verify_install() {
     log_info "Verifying installation..."
     resolve_binaries
     local ok=1
-    if [ -n "${MONOCOQUE_BIN}" ] && [ -x "$MONOCOQUE_BIN" ]; then
-        log_success "monocoque: $MONOCOQUE_BIN"
+    if [ -n "${CARGOPIT_BIN}" ] && [ -x "$CARGOPIT_BIN" ]; then
+        log_success "cargopit: $CARGOPIT_BIN"
     else
-        log_error "monocoque binary missing"
+        log_error "cargopit binary missing"
         ok=0
     fi
     if [ -n "${SIMD_BIN}" ] && [ -x "$SIMD_BIN" ]; then
@@ -806,10 +746,10 @@ verify_install() {
         log_error "simd binary missing"
         ok=0
     fi
-    if [ -f "$BIN_DIR/monocoque-manager" ]; then
-        log_success "manager: $BIN_DIR/monocoque-manager"
+    if [ -f "$BIN_DIR/cargopit-manager" ]; then
+        log_success "manager: $BIN_DIR/cargopit-manager"
     else
-        log_warn "monocoque-manager was not installed"
+        log_warn "cargopit-manager was not installed"
     fi
     if [ "$ok" -ne 1 ]; then
         exit 1
@@ -823,46 +763,47 @@ print_next_steps() {
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
     echo "Install dir:  $INSTALL_DIR"
-    echo "Config:       $CONFIG_DIR/simd  $CONFIG_DIR/monocoque"
+    echo "Config:       $CONFIG_DIR/simd  $CONFIG_DIR/cargopit"
     echo "Launchers:    $BIN_DIR"
     echo ""
     echo "This installer does not configure Steam, Pulse/PipeWire sinks, or devices."
     echo ""
     echo "Launchers:"
     echo "  start-simd"
-    echo "  start-monocoque"
-    echo "  test-monocoque"
-    echo "  monocoque-manager"
+    echo "  start-cargopit"
+    echo "  test-cargopit"
+    echo "  cargopit-manager"
     echo ""
     echo "Confirm telemetry after the session is live:"
     echo "  hexdump /dev/shm/SIMAPI.DAT | head"
     echo "  hexdump /dev/shm/acpmf_physics | head     # AC / ACC"
     echo ""
-    echo "Start:         start-monocoque   (or monocoque-manager)"
+    echo "Start:         start-cargopit   (or cargopit-manager)"
     echo "simd is started automatically if it is not already running."
     echo "You will only be asked to act if simd is not installed."
     echo ""
-    echo "Edit devices:  $CONFIG_DIR/monocoque/monocoque.config"
-    echo "Examples:      $CONFIG_DIR/monocoque/monocoque.config.example"
-    echo "Test devices:  test-monocoque"
-    echo "TUI:           monocoque-manager"
+    echo "Edit devices:  $CONFIG_DIR/cargopit/cargopit.config"
+    echo "Examples:      $CONFIG_DIR/cargopit/cargopit.config.example"
+    echo "Test devices:  test-cargopit"
+    echo "TUI:           cargopit-manager"
     echo ""
     echo "Game setup:    https://spacefreak18.github.io/simapi/simd_usage"
     echo "Docs:          https://spacefreak18.github.io/simapi/"
+    echo "Packages:      $CARGOPIT_RELEASES_URL"
     echo ""
 }
 
 run_distrobox() {
     if have_cmd distrobox; then
-        log_info "Creating Arch distrobox 'monocoque' (if needed)..."
-        distrobox create --name monocoque --image archlinux:latest --yes || true
+        log_info "Creating Arch distrobox 'cargopit' (if needed)..."
+        distrobox create --name cargopit --image archlinux:latest --yes || true
         local script_arg="bash -c 'curl -fsSL ${CARGOPIT_RAW_MASTER_URL}/install.sh | bash -s -- --from-source'"
         if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/install.sh" ]; then
             script_arg="bash \"$SCRIPT_DIR/install.sh\" --from-source"
         fi
         log_info "Running installer inside distrobox..."
         # shellcheck disable=SC2086
-        distrobox enter monocoque -- $script_arg
+        distrobox enter cargopit -- $script_arg
         return 0
     fi
     print_immutable_help
@@ -872,8 +813,11 @@ run_distrobox() {
 parse_args() {
     while [ $# -gt 0 ]; do
         case "$1" in
-            --from-source) MODE="from-source" ;;
-            --aur) MODE="aur" ;;
+            --from-source) ;;
+            --aur)
+                log_error "$AUR_INSTALL_UNAVAILABLE_MSG"
+                exit 1
+                ;;
             --distrobox) DO_DISTROBOX=1 ;;
             --build-bridges) BUILD_BRIDGES=1 ;;
             --skip-bridges) SKIP_BRIDGES=1 ;;
@@ -918,13 +862,6 @@ main() {
         exit 1
     fi
 
-    if [ "$MODE" = "aur" ]; then
-        install_dependencies
-        check_requirements
-        install_from_aur
-        exit 0
-    fi
-
     install_dependencies
     check_requirements
 
@@ -933,16 +870,11 @@ main() {
         exit 0
     fi
 
-    if maybe_install_aur; then
-        install_from_aur
-        exit 0
-    fi
-
     log_info "Building from source (this may take a few minutes)..."
     prepare_sources
     build_simapi
     build_simd
-    build_monocoque
+    build_cargopit
     install_bridges
     setup_configs
     create_launcher_scripts

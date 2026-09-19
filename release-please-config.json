@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "package-name": "monocoque",
+      "package-name": "cargopit",
 
       "//": "The 79 existing tags are bare semver (0.3.6), not v0.3.6, and there is only one package here. Both flags keep release-please tagging in that same series instead of starting a parallel one.",
       "include-component-in-tag": false,

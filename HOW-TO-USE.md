@@ -1,4 +1,4 @@
-# Monocoque User Setup Guide
+# Cargopit User Setup Guide
 
 Game/bridge details live in the [simapi docs](https://spacefreak18.github.io/simapi/simd_usage). This page is the short path after the binaries exist.
 
@@ -6,8 +6,8 @@ Game/bridge details live in the [simapi docs](https://spacefreak18.github.io/sim
 
 Prefer the method for your distro in the [README](README.md#quick-install). A packaged or `./install.sh` install should give you:
 
-* `start-simd`, `start-monocoque`, `test-monocoque` in `~/.local/bin`
-* configs in `~/.config/simd/` and `~/.config/monocoque/`
+* `start-simd`, `start-cargopit`, `test-cargopit` in `~/.local/bin`
+* configs in `~/.config/simd/` and `~/.config/cargopit/`
 * optional user unit `~/.config/systemd/user/simd.service`
 
 To compile by hand instead:
@@ -16,15 +16,15 @@ To compile by hand instead:
 * build [simd](https://github.com/Spacefreak18/simapi/tree/master/simd) (needs simapi installed first, including `simdata.h`)
 * get [simshmbridge](https://github.com/spacefreak18/simshmbridge) compatibility EXEs ([releases](https://github.com/spacefreak18/simshmbridge/releases)) unless you only use UDP titles
 
-## Configure SIMD & Monocoque
+## Configure SIMD & Cargopit
 
 * `~/.config/simd/simd.config` — [example](https://github.com/Spacefreak18/simapi/blob/master/simd/conf/simd.config) (usually fine as-is)
-* `~/.config/monocoque/monocoque.config` — start from the installer stub or [conf/monocoque.config](https://github.com/M4X1K02/cargopit/blob/master/conf/monocoque.config)
+* `~/.config/cargopit/cargopit.config` — start from the installer stub or [conf/cargopit.config](https://github.com/M4X1K02/cargopit/blob/master/conf/cargopit.config)
     * Keep only devices you have plugged in
     * [Bass shaker config](https://spacefreak18.github.io/simapi/shakers)
-    * Test with `test-monocoque` or `./monocoque test -vv`
+    * Test with `test-cargopit` or `./cargopit test -vv`
 
-Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, plus the udev rules from `udev/69-monocoque.rules`.
+Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, plus the udev rules from `udev/69-cargopit.rules`.
 
 ## Steam & Game Config
 
@@ -33,7 +33,7 @@ Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, pl
 Shared-memory titles (Assetto Corsa, ACC, AMS2, PCars2, …) need a simshmbridge EXE in the **same Proton prefix** as the game. Set a launch option such as:
 
 ```bash
-SIMD_BRIDGE_EXE=/home/YOU/.local/share/monocoque/simshmbridge/assets/acbridge.exe %command%
+SIMD_BRIDGE_EXE=/home/YOU/.local/share/cargopit/simshmbridge/assets/acbridge.exe %command%
 ```
 
 Exact EXE names and more examples: [simd usage](https://spacefreak18.github.io/simapi/simd_usage) and [simshmbridge](https://github.com/spacefreak18/simshmbridge?tab=readme-ov-file#basic-mapping-examples).
@@ -49,11 +49,11 @@ Activate Shared Memory and set the protocol to Project CARS 2, then restart the 
 
 #### Assetto Corsa & Assetto Corsa Competizione (ACC)
 
-No extra in-game telemetry toggle. You still need the AC/ACC bridge EXE in the Steam launch command; monocoque starts simd.
+No extra in-game telemetry toggle. You still need the AC/ACC bridge EXE in the Steam launch command; cargopit starts simd.
 
 ## Run
 
-Start a session with `start-monocoque`, `monocoque play`, or `monocoque-manager`. Monocoque starts simd itself when it is not already running. Launch the game from Steam as usual.
+Start a session with `start-cargopit`, `cargopit play`, or `cargopit-manager`. Cargopit starts simd itself when it is not already running. Launch the game from Steam as usual.
 
 If simd is not installed, that is the one case that needs a human: install simd and try again.
 
@@ -66,5 +66,5 @@ Shared-memory titles still need the bridge EXE in the Steam launch command (`SIM
 * AC/ACC: `hexdump /dev/shm/acpmf_physics | head` — non-zero while on track
 * AMS2: look for `/dev/shm/$pcars2$`
 * confirm the bridge EXE is actually running (`ps aux | grep -i bridge`)
-* if simd sees the game but monocoque shows no RPM/gear, re-check [game settings](#steam--game-config)
-* `monocoque-manager` can start/stop the two processes if `~/.local/bin` is on `PATH`
+* if simd sees the game but cargopit shows no RPM/gear, re-check [game settings](#steam--game-config)
+* `cargopit-manager` can start/stop the two processes if `~/.local/bin` is on `PATH`

@@ -2,27 +2,27 @@
 # After a source install, prove play mode starts simd without a human launch order.
 set -euo pipefail
 
-INSTALL_DIR="${MONOCOQUE_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/monocoque}"
+INSTALL_DIR="${CARGOPIT_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cargopit}"
 BIN_DIR="${HOME}/.local/bin"
 PLAY_TIMEOUT_SEC=12
 MISSING_TIMEOUT_SEC=6
 SIMD_REQUIRED_MSG="simd is required but is not installed"
-# Keep in sync with simd_find_binary() in src/monocoque/helper/ensure_simd.c
+# Keep in sync with simd_find_binary() in src/cargopit/helper/ensure_simd.c
 SIMD_PATH_USR_LOCAL="/usr/local/bin/simd"
 SIMD_PATH_USR_BIN="/usr/bin/simd"
 
 export PATH="$BIN_DIR:$PATH"
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/usr/local/lib:/usr/local/lib64"
 
-MONOCOQUE_BIN="${MONOCOQUE_BIN:-}"
-if [ -z "$MONOCOQUE_BIN" ] && [ -x "$INSTALL_DIR/monocoque/build/monocoque" ]; then
-    MONOCOQUE_BIN="$INSTALL_DIR/monocoque/build/monocoque"
+CARGOPIT_BIN="${CARGOPIT_BIN:-}"
+if [ -z "$CARGOPIT_BIN" ] && [ -x "$INSTALL_DIR/cargopit/build/cargopit" ]; then
+    CARGOPIT_BIN="$INSTALL_DIR/cargopit/build/cargopit"
 fi
-if [ -z "$MONOCOQUE_BIN" ] && command -v monocoque >/dev/null 2>&1; then
-    MONOCOQUE_BIN="$(command -v monocoque)"
+if [ -z "$CARGOPIT_BIN" ] && command -v cargopit >/dev/null 2>&1; then
+    CARGOPIT_BIN="$(command -v cargopit)"
 fi
-if [ -z "$MONOCOQUE_BIN" ] || [ ! -x "$MONOCOQUE_BIN" ]; then
-    echo "monocoque binary not found" >&2
+if [ -z "$CARGOPIT_BIN" ] || [ ! -x "$CARGOPIT_BIN" ]; then
+    echo "cargopit binary not found" >&2
     exit 1
 fi
 
@@ -41,9 +41,9 @@ sleep 1
 if has_packaged_simd; then
     echo "SKIP missing simd probe: packaged simd is present after install"
 else
-    isolated="$(mktemp -d /tmp/monocoque-startup-missing-XXXXXX)"
-    mkdir -p "$isolated/.config/monocoque" "$isolated/.cache/monocoque"
-    cat > "$isolated/.config/monocoque/monocoque.config" << 'EOF'
+    isolated="$(mktemp -d /tmp/cargopit-startup-missing-XXXXXX)"
+    mkdir -p "$isolated/.config/cargopit" "$isolated/.cache/cargopit"
+    cat > "$isolated/.config/cargopit/cargopit.config" << 'EOF'
 configs = (
     {
         sim = "default";
@@ -63,7 +63,7 @@ EOF
             PATH="/bin:/usr/bin" \
             TERM=dumb \
             timeout --signal=TERM --kill-after=2 "$MISSING_TIMEOUT_SEC" \
-            "$MONOCOQUE_BIN" play --disable_audio 2>&1
+            "$CARGOPIT_BIN" play --disable_audio 2>&1
     )"
     set -e
     rm -rf "$isolated"
@@ -78,12 +78,12 @@ fi
 
 set +e
 timeout --signal=TERM --kill-after=2 "$PLAY_TIMEOUT_SEC" \
-    "$MONOCOQUE_BIN" play --disable_audio >/tmp/monocoque-startup-play.log 2>&1
+    "$CARGOPIT_BIN" play --disable_audio >/tmp/cargopit-startup-play.log 2>&1
 set -e
 
 if ! pgrep -x simd >/dev/null 2>&1; then
     echo "FAIL: play mode did not start simd" >&2
-    tail -n 80 /tmp/monocoque-startup-play.log >&2 || true
+    tail -n 80 /tmp/cargopit-startup-play.log >&2 || true
     exit 1
 fi
 echo "PASS play mode started simd"

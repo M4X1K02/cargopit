@@ -6,23 +6,23 @@ on:
     paths:
       - install.sh
       - tools/uninstall.sh
-      - tools/monocoque-manager
+      - tools/cargopit-manager
       - tools/distro/**
       - README.md
       - HOW-TO-USE.md
       - udev/**
-      - conf/monocoque.config
+      - conf/cargopit.config
       - .github/workflows/installer.yml
   push:
     paths:
       - install.sh
       - tools/uninstall.sh
-      - tools/monocoque-manager
+      - tools/cargopit-manager
       - tools/distro/**
       - README.md
       - HOW-TO-USE.md
       - udev/**
-      - conf/monocoque.config
+      - conf/cargopit.config
       - .github/workflows/installer.yml
 
 permissions:
@@ -34,7 +34,7 @@ permissions:
 # fallback tools/distro/test-install-containers.sh uses when INSTALLER_LOG_DIR
 # and TMPDIR are unset.
 env:
-  INSTALLER_LOG_DIR: /tmp/monocoque-install-tests
+  INSTALLER_LOG_DIR: /tmp/cargopit-install-tests
 
 jobs:
   syntax:

@@ -1,9 +1,9 @@
 #!/bin/bash
-# Monocoque Distrobox Installer
+# Cargopit Distrobox Installer
 # For immutable Linux distributions (Bazzite, Silverblue, etc.)
 # where native package managers are unavailable.
 #
-# Installs monocoque and dependencies inside an Arch Linux distrobox container,
+# Installs cargopit and dependencies inside an Arch Linux distrobox container,
 # with wrapper scripts on the host for transparent access.
 
 set -euo pipefail
@@ -12,7 +12,9 @@ SCRIPT_VERSION="1.0.0"
 CONTAINER="simracing"
 INSTALL_DIR="$HOME/.local/share/simracing"
 BIN_DIR="$HOME/.local/bin"
-CONFIG_DIR="$HOME/.config/monocoque"
+CONFIG_DIR="$HOME/.config/cargopit"
+CARGOPIT_GITHUB_REPO="M4X1K02/cargopit"
+CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 
 # Color output
 RED='\033[0;31m'
@@ -40,7 +42,7 @@ log_error() {
 print_header() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════╗"
-    echo "║          Monocoque Distrobox Installer v${SCRIPT_VERSION}        ║"
+    echo "║          Cargopit Distrobox Installer v${SCRIPT_VERSION}        ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 }
@@ -89,7 +91,7 @@ if [ ! -f "$UDEV_RULE" ]; then
         echo ""
         log_warn "ModemManager is running on your system."
         echo "  Moza wheel bases use USB serial devices that ModemManager may claim,"
-        echo "  preventing monocoque from communicating with the wheel."
+        echo "  preventing cargopit from communicating with the wheel."
         echo ""
         echo "  A udev rule can tell ModemManager to ignore Moza devices (vendor 346e)."
         echo "  This only affects Moza USB devices — other modems will work normally."
@@ -97,7 +99,7 @@ if [ ! -f "$UDEV_RULE" ]; then
         read -rp "Install udev rule to prevent ModemManager from grabbing Moza devices? [Y/n]: " mm_confirm
         if [[ "$mm_confirm" =~ ^[Nn]$ ]]; then
             echo ""
-            log_info "Skipped udev rule. If monocoque can't talk to your wheel, run:"
+            log_info "Skipped udev rule. If cargopit can't talk to your wheel, run:"
             echo "  sudo tee $UDEV_RULE <<< 'ACTION==\"add|change\", SUBSYSTEM==\"usb\", ATTR{idVendor}==\"346e\", ENV{ID_MM_DEVICE_IGNORE}=\"1\"'"
             echo "  sudo udevadm control --reload-rules && sudo udevadm trigger"
             echo ""
@@ -132,7 +134,7 @@ fi
 
 # Install packages inside the container
 log_info "Installing packages inside container (this may take a few minutes)..."
-distrobox enter --root "$CONTAINER" -- bash -c '
+distrobox enter --root "$CONTAINER" -- env CARGOPIT_GIT_URL="$CARGOPIT_GIT_URL" bash -c '
     set -euo pipefail
 
     # Enable the multilib repo for 32-bit runtime support — Proton bridge
@@ -161,7 +163,7 @@ PACMANCONF_EOF
     # commands — installing the package is just the simplest reliable way
     # to get every lib32-* dependency it needs without hand-picking each
     # one).
-    sudo pacman -Syu --needed --noconfirm base-devel git mingw-w64-gcc wine lib32-glibc
+    sudo pacman -Syu --needed --noconfirm base-devel git cmake mingw-w64-gcc wine lib32-glibc libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 procps-ng
 
     # Install yay (AUR helper) if not present
     if ! command -v yay &>/dev/null; then
@@ -174,15 +176,35 @@ PACMANCONF_EOF
         rm -rf "$TMPDIR"
     fi
 
-    # Install AUR packages sequentially (simd depends on simapi, monocoque depends on both)
+    # simapi and simd from AUR; cargopit has no AUR package yet
     echo "Installing AUR packages..."
     yay -S --needed --noconfirm simapi-git
     yay -S --needed --noconfirm simd-git
-    yay -S --needed --noconfirm monocoque-git
 
     # Build simshmbridge (not on AUR)
     INSTALL_DIR="$HOME/.local/share/simracing"
     mkdir -p "$INSTALL_DIR"
+
+    if [ -z "${CARGOPIT_GIT_URL:-}" ]; then
+        echo "CARGOPIT_GIT_URL is not set" >&2
+        exit 1
+    fi
+    CARGOPIT_SRC="$INSTALL_DIR/cargopit"
+    echo "Building cargopit from source..."
+    if [ ! -d "$CARGOPIT_SRC/.git" ]; then
+        git clone --recurse-submodules "$CARGOPIT_GIT_URL" "$CARGOPIT_SRC"
+    else
+        git -C "$CARGOPIT_SRC" pull --ff-only || true
+        git -C "$CARGOPIT_SRC" submodule update --init --recursive
+    fi
+    cmake -S "$CARGOPIT_SRC" -B "$CARGOPIT_SRC/build"
+    cmake --build "$CARGOPIT_SRC/build" -j"$(nproc)"
+    if [ ! -x "$CARGOPIT_SRC/build/cargopit" ]; then
+        echo "cargopit binary was not produced" >&2
+        exit 1
+    fi
+    sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit" /usr/local/bin/cargopit
+
     cd "$INSTALL_DIR"
     if [ ! -d "simshmbridge" ]; then
         echo "Cloning simshmbridge..."
@@ -211,25 +233,25 @@ exec distrobox enter --root simracing -- simd "$@"
 EOF
 chmod +x "$BIN_DIR/start-simd"
 
-cat > "$BIN_DIR/start-monocoque" << 'EOF'
+cat > "$BIN_DIR/start-cargopit" << 'EOF'
 #!/usr/bin/env bash
-exec distrobox enter --root simracing -- monocoque play "$@"
+exec distrobox enter --root simracing -- cargopit play "$@"
 EOF
-chmod +x "$BIN_DIR/start-monocoque"
+chmod +x "$BIN_DIR/start-cargopit"
 
-cat > "$BIN_DIR/test-monocoque" << 'EOF'
+cat > "$BIN_DIR/test-cargopit" << 'EOF'
 #!/usr/bin/env bash
-exec distrobox enter --root simracing -- monocoque test -vv "$@"
+exec distrobox enter --root simracing -- cargopit test -vv "$@"
 EOF
-chmod +x "$BIN_DIR/test-monocoque"
+chmod +x "$BIN_DIR/test-cargopit"
 
 log_success "Wrapper scripts installed"
 
-# Setup monocoque config
+# Setup cargopit config
 mkdir -p "$CONFIG_DIR"
-if [ ! -f "$CONFIG_DIR/monocoque.config" ]; then
-    log_info "Creating monocoque config template..."
-    cat > "$CONFIG_DIR/monocoque.config" << 'EOF'
+if [ ! -f "$CONFIG_DIR/cargopit.config" ]; then
+    log_info "Creating cargopit config template..."
+    cat > "$CONFIG_DIR/cargopit.config" << 'EOF'
 configs = (
     {
         sim = "default";
@@ -245,7 +267,7 @@ configs = (
     }
 );
 EOF
-    log_success "Config created at $CONFIG_DIR/monocoque.config"
+    log_success "Config created at $CONFIG_DIR/cargopit.config"
 else
     log_info "Config already exists, skipping"
 fi
@@ -256,24 +278,25 @@ echo "╔═══════════════════════�
 echo "║                  Installation Complete!                          ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 echo ""
-log_success "Monocoque (distrobox) installed!"
+log_success "Cargopit (distrobox) installed!"
 echo ""
 echo "  Installed:"
-echo "    AUR packages:  simapi-git, simd-git, monocoque-git (in '$CONTAINER' container)"
+echo "    AUR packages:  simapi-git, simd-git (in '$CONTAINER' container)"
+echo "    Cargopit:      built from source in the container"
 echo "    Bridge:        $INSTALL_DIR/simshmbridge/"
-echo "    Config:        $CONFIG_DIR/monocoque.config"
-echo "    Commands:      start-monocoque, test-monocoque (simd starts with monocoque)"
+echo "    Config:        $CONFIG_DIR/cargopit.config"
+echo "    Commands:      start-cargopit, test-cargopit (simd starts with cargopit)"
 echo ""
 echo "  Next steps:"
-echo "    1. Set your device path in $CONFIG_DIR/monocoque.config"
+echo "    1. Set your device path in $CONFIG_DIR/cargopit.config"
 echo "       (replace CHANGE_ME_TO_YOUR_MOZA_BASE with your device from /dev/serial/by-id/)"
-echo "    2. Test with: test-monocoque"
+echo "    2. Test with: test-cargopit"
 echo "    3. Set Steam launch options for titles that need a shared-memory bridge:"
 echo "       In Steam > Game Properties > Launch Options, add:"
 echo "         SIMD_BRIDGE_EXE=<bridge_path> %command%"
 echo "       For example, for Assetto Corsa:"
 echo "         SIMD_BRIDGE_EXE=$INSTALL_DIR/simshmbridge/assets/acbridge.exe %command%"
-echo "       Then start the game and run start-monocoque (simd starts with it)."
+echo "       Then start the game and run start-cargopit (simd starts with it)."
 echo ""
 echo "  For tools that automate steps 1 and 3 (Moza auto-detection, Steam launch"
 echo "  option configuration, unified game launcher), visit:"

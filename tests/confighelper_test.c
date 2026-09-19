@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../src/monocoque/helper/confighelper.h"
+#include "../src/cargopit/helper/confighelper.h"
 
 static int failures = 0;
 

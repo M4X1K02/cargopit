@@ -1,7 +1,7 @@
-[submodule "src/monocoque/simulatorapi/simapi"]
-	path = src/monocoque/simulatorapi/simapi
+[submodule "src/cargopit/simulatorapi/simapi"]
+	path = src/cargopit/simulatorapi/simapi
 	url = https://github.com/spacefreak18/simapi
 	# url = git@github.com:spacefreak18/simapi # ssh is better but Microsoft requires an account
-[submodule "src/monocoque/mgui/nappgui_src"]
-	path = src/monocoque/mgui/nappgui_src
+[submodule "src/cargopit/mgui/nappgui_src"]
+	path = src/cargopit/mgui/nappgui_src
 	url = https://github.com/frang75/nappgui_src

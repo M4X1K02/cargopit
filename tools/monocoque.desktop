@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Monocoque
-Comment=Launch Monocoque
-Exec=gmonocoque
-Icon=monocoque
-Terminal=false
-Categories=Game;Development;

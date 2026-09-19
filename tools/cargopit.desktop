@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Cargopit
+Comment=Launch Cargopit
+Exec=gcargopit
+Icon=monocoque
+Terminal=false
+Categories=Game;Development;

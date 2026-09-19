@@ -10,11 +10,11 @@ Goal: **every setting a user currently has to edit outside the TUI becomes edita
 
 | Tab | What it does today |
 | --- | --- |
-| Dashboard | simd / monocoque / `SIMAPI.DAT` status; Start / Test / Restart / Stop |
+| Dashboard | simd / cargopit / `SIMAPI.DAT` status; Start / Test / Restart / Stop |
 | Devices | Switch `configs[]` entries with `[` / `]`; list devices; add / edit / delete; Enter opens a **stub** tuning page |
-| Logs | Tail `~/.cache/monocoque/*.log` plus child stdout/stderr |
+| Logs | Tail `~/.cache/cargopit/*.log` plus child stdout/stderr |
 
-The device editor (`tui/src/form.rs`) is a single vertical field list. Visible fields depend on class (`USB` / `Sound` / `Serial`) and type. Save rewrites `~/.config/monocoque/monocoque.config` through the Rust libconfig subset (`tui/src/libconfig.rs`).
+The device editor (`tui/src/form.rs`) is a single vertical field list. Visible fields depend on class (`USB` / `Sound` / `Serial`) and type. Save rewrites `~/.config/cargopit/cargopit.config` through the Rust libconfig subset (`tui/src/libconfig.rs`).
 
 That is **not** full configuration. Users still leave the TUI for simd, Lua, tach XML, tyre diameters, CLI flags, and several device keys the C loader already understands.
 
@@ -22,9 +22,9 @@ That is **not** full configuration. Users still leave the TUI for simd, Lua, tac
 
 Anything in this list that remains “open `$EDITOR`” is a gap.
 
-### 1. `monocoque.config`
+### 1. `cargopit.config`
 
-Path: `$XDG_CONFIG_HOME/monocoque/monocoque.config` (today hardcoded in `tui/src/paths.rs`).
+Path: `$XDG_CONFIG_HOME/cargopit/cargopit.config` (today hardcoded in `tui/src/paths.rs`).
 
 Top-level `configs` array. Each entry:
 
@@ -36,7 +36,7 @@ Top-level `configs` array. Each entry:
 | `devices` | Device list | Add / edit / delete |
 | unknown keys | Preserved in `SimConfig.extra` | Not shown, not editable |
 
-C selects the matching `configs[]` entry at play time (`getconfigtouse*` in `src/monocoque/helper/confighelper.c`). Multiple profiles are the intended way to have different device sets per sim/car. The TUI can **switch** them but cannot **create, rename, copy, or delete** them.
+C selects the matching `configs[]` entry at play time (`getconfigtouse*` in `src/cargopit/helper/confighelper.c`). Multiple profiles are the intended way to have different device sets per sim/car. The TUI can **switch** them but cannot **create, rename, copy, or delete** them.
 
 ### 2. Device keys the C loader reads
 
@@ -64,7 +64,7 @@ C selects the matching `configs[]` entry at play time (`getconfigtouse*` in `src
 | `granularity` | Tachometer (`1`, `2`, `4` — not `3`) | Tachometer |
 | `volume` / `streamVolume` | Sound; C prefers `streamVolume`, falls back to `volume`, clamp `0..100` | Volume (nudge writes both) |
 | `pan` / `channels` / `noise` | Sound | Yes |
-| `value0` / `value1` | Present in `conf/monocoque.config` CSL Elite examples | **No**, and **C never reads them** (colours are hardcoded in `cslelitev3.c`) |
+| `value0` / `value1` | Present in `conf/cargopit.config` CSL Elite examples | **No**, and **C never reads them** (colours are hardcoded in `cslelitev3.c`) |
 
 USB hardware list in `USB_HARDWARE_SUBTYPES` is also incomplete versus `strtodevsubsubtype()`: missing `SIMAGICGTNEO` and the `MozaR9` alias (`MozaNew`).
 
@@ -72,7 +72,7 @@ USB hardware list in `USB_HARDWARE_SUBTYPES` is also incomplete versus `strtodev
 
 | File | Who consumes it | TUI today |
 | --- | --- | --- |
-| Lua (`conf/*.lua`, user copies under `~/.config/monocoque/`) | Serial Simleds / Custom (`config = "..."`) | Path field missing except on tach |
+| Lua (`conf/*.lua`, user copies under `~/.config/cargopit/`) | Serial Simleds / Custom (`config = "..."`) | Path field missing except on tach |
 | Revburner XML | USB Tachometer | Path string only; no calibration wizard |
 | Tyre-diameter libconfig (`cars` list: `car`, `sim`, `tyre0..3`) | Haptic slip when the sim does not supply diameters (`loadtyreconfig` / `savetyreconfig`) | None |
 
@@ -80,15 +80,15 @@ USB hardware list in `USB_HARDWARE_SUBTYPES` is also incomplete versus `strtodev
 
 `~/.config/simd/simd.config` is created by the installer and is **required** for play. HOW-TO-USE currently says “usually fine as-is”, which is exactly the kind of file that must still be inspectable and editable in the TUI.
 
-Optional: user unit `~/.config/systemd/user/simd.service` (enable / disable / status). Do not invent a second process supervisor; Dashboard already starts simd via `monocoque play`.
+Optional: user unit `~/.config/systemd/user/simd.service` (enable / disable / status). Do not invent a second process supervisor; Dashboard already starts simd via `cargopit play`.
 
 ### 5. Runtime flags the C CLI already has
 
-`monocoque play` / `test` accept verbosity, `--disable_audio`, `--udp`, `--fps`, `--config-file`, `--log`. The TUI always spawns bare `play` / `test`. Those flags are configuration. They belong in a Settings page and should be passed through on spawn.
+`cargopit play` / `test` accept verbosity, `--disable_audio`, `--udp`, `--fps`, `--config-file`, `--log`. The TUI always spawns bare `play` / `test`. Those flags are configuration. They belong in a Settings page and should be passed through on spawn.
 
 ### 6. Calibration utilities
 
-`monocoque config tachometer -m <max_revs> -g <granularity> -s <xml>` is a first-class C action. The TUI has no path to it.
+`cargopit config tachometer -m <max_revs> -g <granularity> -s <xml>` is a first-class C action. The TUI has no path to it.
 
 ## Design principles
 
@@ -130,11 +130,11 @@ Do not require opening the editor to disable a device. `enabled` is already in t
 
 Everything that is not a device:
 
-- Path to `monocoque.config` (default XDG; override persisted in TUI state)
+- Path to `cargopit.config` (default XDG; override persisted in TUI state)
 - Path to `simd.config`; structured editor for that file
 - Play/test flags: verbosity (`-v` / `-vv`), `disable_audio`, `udp`, global fps, log file
 - Lua library: list scripts under the config dir + bundled `conf/*.lua`; open a constrained editor or copy-from-template
-- Tachometer calibration: max revs, granularity, output XML path; spawn `monocoque config tachometer`
+- Tachometer calibration: max revs, granularity, output XML path; spawn `cargopit config tachometer`
 - Tyre-diameter store: list/add/edit `cars[]` entries
 - Diagnostics: groups (`input`, `dialout`, `uucp`), udev rule present, simd binary found, `SIMAPI.DAT` size/non-zero
 
@@ -192,18 +192,18 @@ Fail closed:
 - Frequency modulation requires `frequencyMax > frequency` (match C)
 - `type` legal for `device` class (the C `strtodevsubtype` switch has a fall-through bug USB→Serial; do not copy that)
 
-Show the C-side error text when `monocoque test` is run from the form (`t` already exists; wire it to test **after save**, and later to a single-device test if the C CLI gains `--device-index`).
+Show the C-side error text when `cargopit test` is run from the form (`t` already exists; wire it to test **after save**, and later to a single-device test if the C CLI gains `--device-index`).
 
 ### Save behaviour
 
-- Atomic write (temp file + rename) so a crash does not truncate `monocoque.config`.
+- Atomic write (temp file + rename) so a crash does not truncate `cargopit.config`.
 - Keep unknown device keys.
 - Comments will still be lost (the Rust renderer does not round-trip comments). Accept that for v1; do not try to be a comment-preserving libconfig pretty-printer until the schema is complete. If users rely on comments, the Settings “raw view” shows the last on-disk file *before* save.
 - After save, if play is running, prompt “Restart to apply?” rather than silently diverging from the live process.
 
 ### Templates
 
-The sample `conf/monocoque.config` is a kitchen sink. New users should not copy it. Offer named templates that insert *sets* of devices:
+The sample `conf/cargopit.config` is a kitchen sink. New users should not copy it. Offer named templates that insert *sets* of devices:
 
 - Sound: Engine + Gear on one sink
 - Sound: four-corner TyreSlip and/or TyreLock
@@ -219,7 +219,7 @@ Templates only insert; they never wipe the profile without confirm.
 
 **Step A — offline tune (no new C API):** the tune page is the same schema as the editor, focused on haptic/sound numbers, with larger nudges and a live preview of the *saved* values. Save still goes to disk. “Apply” restarts play if it was running.
 
-**Step B — live apply:** only after the C loop can reload one `DeviceSettings` without tearing down every device. Do **not** parse `monocoque.config` from the 60 fps thread. Preferred shape:
+**Step B — live apply:** only after the C loop can reload one `DeviceSettings` without tearing down every device. Do **not** parse `cargopit.config` from the 60 fps thread. Preferred shape:
 
 - Unix socket or a documented command pipe owned by the play process
 - TUI sends a single device replacement (`confignum`, `devicenum`, fields)
@@ -227,7 +227,7 @@ Templates only insert; they never wipe the profile without confirm.
 
 Until that socket exists, do not fake live tuning by killing and restarting on every keystroke.
 
-Per-device **test** from the old NAppGUI window (`mgui/testaction.c`: synthetic `SimData`, one device) is worth restoring as `t` on the editor. That needs a C CLI flag (e.g. `monocoque test --config-index N --device-index M`) rather than the TUI reimplementing the game loop.
+Per-device **test** from the old NAppGUI window (`mgui/testaction.c`: synthetic `SimData`, one device) is worth restoring as `t` on the editor. That needs a C CLI flag (e.g. `cargopit test --config-index N --device-index M`) rather than the TUI reimplementing the game loop.
 
 ## simd.config
 
@@ -249,7 +249,7 @@ Ship in PRs that each leave the TUI usable. Do not wait for live IPC.
    - `ampfactor`, `numlights`, Lua `config` on Simleds/Custom, `SIMAGICGTNEO`, `MozaR9`
    - USB identity ≠ serial ports
    - Validation + atomic save
-   - Tests: parse `conf/monocoque.config`; round-trip every catalog key; reject bad granularity / volume
+   - Tests: parse `conf/cargopit.config`; round-trip every catalog key; reject bad granularity / volume
 
 2. **Device list operations**
    - Toggle enabled, duplicate, reorder
@@ -258,7 +258,7 @@ Ship in PRs that each leave the TUI usable. Do not wait for live IPC.
    - Profile add / edit / delete / duplicate
 
 3. **Settings tab**
-   - Play flags persisted (XDG state file, not stuffed into `monocoque.config`)
+   - Play flags persisted (XDG state file, not stuffed into `cargopit.config`)
    - simd.config editor
    - Lua picker + copy bundled templates into the user config dir
    - Tachometer calibration form that shells out to the existing C action
@@ -274,11 +274,11 @@ Slice 1 is the minimum that makes “I can configure every device key without na
 
 ## Testing
 
-- Keep existing `tui` unit tests (`parse_monocoque`, round-trip, libconfig comments/semicolons).
-- Add a table: for each `FieldId` / catalog entry, a fixture writes the key and `confighelper` C tests (or a `monocoque test --dry-parse` if added) accept it.
+- Keep existing `tui` unit tests (`parse_cargopit`, round-trip, libconfig comments/semicolons).
+- Add a table: for each `FieldId` / catalog entry, a fixture writes the key and `confighelper` C tests (or a `cargopit test --dry-parse` if added) accept it.
 - Do **not** put hardware-interactive tests in `tests/`; discovery helpers should accept injected lists (serial/hid/pulse) so unit tests stay offline.
 - After Settings spawn-flag work, a test that `process::spawn_play` argument vector contains the selected flags (mock `Command`).
-- Manual: add a Sound device from an empty profile, save, `monocoque test --disable_audio` still loads the rest.
+- Manual: add a Sound device from an empty profile, save, `cargopit test --disable_audio` still loads the rest.
 
 ## Non-goals
 
@@ -297,7 +297,7 @@ Slice 1 is the minimum that makes “I can configure every device key without na
 | Screens | `tui/src/app.rs`, `tui/src/ui.rs` (split by tab) |
 | Config IO | `tui/src/config.rs`, `tui/src/libconfig.rs`, `tui/src/paths.rs` |
 | Spawn flags | `tui/src/process.rs` |
-| Single-device test / reload | `src/monocoque/helper/parameters.c`, `src/monocoque/monocoque-cli.c`, `src/monocoque/gameloop/` |
+| Single-device test / reload | `src/cargopit/helper/parameters.c`, `src/cargopit/cargopit-cli.c`, `src/cargopit/gameloop/` |
 | Docs | `HOW-TO-USE.md` (TUI can edit config; stop implying hand-edits are required) |
 
 C `save_device_config()` is **not** the TUI write path today (the TUI writes the whole file itself). If live reload needs a shared writer, extract one C library or keep Rust as the writer and teach C only to *read*. Do not maintain two incomplete writers (`save_device_config` currently skips subtype for USB, motors, lua path, granularity, `numlights`, `devpath` vs `devid` correctly in all cases). Prefer fixing or deleting the C writer if nothing else calls it after NAppGUI removal.

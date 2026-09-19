@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "../src/monocoque/helper/ensure_simd.h"
+#include "../src/cargopit/helper/ensure_simd.h"
 
 static int failures = 0;
 
@@ -19,7 +19,7 @@ static void fail(const char* msg)
 
 static char* make_temp_dir(void)
 {
-    char tmpl[] = "/tmp/monocoque-simd-test-XXXXXX";
+    char tmpl[] = "/tmp/cargopit-simd-test-XXXXXX";
     char* dir = mkdtemp(tmpl);
     if (dir == NULL)
     {

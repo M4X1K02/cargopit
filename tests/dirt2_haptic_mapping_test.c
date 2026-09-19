@@ -2,9 +2,9 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "../src/monocoque/simulatorapi/dr2_haptic_telemetry.h"
-#include "../src/monocoque/simulatorapi/simapi/simapi/simapi.h"
-#include "../src/monocoque/simulatorapi/simapi/simapi/simdata.h"
+#include "../src/cargopit/simulatorapi/dr2_haptic_telemetry.h"
+#include "../src/cargopit/simulatorapi/simapi/simapi/simapi.h"
+#include "../src/cargopit/simulatorapi/simapi/simapi/simdata.h"
 
 #define DR2_TEST_EPS 0.0001
 #define DR2_WHEEL_COUNT 4

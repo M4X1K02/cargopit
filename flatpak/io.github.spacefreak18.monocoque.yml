@@ -1,36 +1,36 @@
-# Flatpak manifest for monocoque -- NOT submitted anywhere (Flathub or
+# Flatpak manifest for cargopit -- NOT submitted anywhere (Flathub or
 # otherwise) yet. Built 2026-08-30 on the patterns proven working for the
 # sibling typiql-tauri/typiql project's own Flatpak pipeline (see this
 # repo's .github/workflows/flatpak.yml header for the full list of bugs
-# found and fixed here, monocoque-specific beyond what that sibling project
+# found and fixed here, cargopit-specific beyond what that sibling project
 # already covered). VERIFIED LOCALLY end-to-end: built, installed, and ran
-# both `monocoque --help` and `gmonocoque` from the resulting bundle. Not
+# both `cargopit --help` and `gcargopit` from the resulting bundle. Not
 # yet verified against real CI or real hardware (HID/serial/USB device
 # access under the sandbox).
 #
-# org.freedesktop.Platform, not org.gnome.Platform: monocoque's GUI
-# (gmonocoque) only needs GTK3, which freedesktop.Platform//25.08 already
+# org.freedesktop.Platform, not org.gnome.Platform: cargopit's GUI
+# (gcargopit) only needs GTK3, which freedesktop.Platform//25.08 already
 # ships -- no need for the heavier GNOME runtime typiql needs for WebKitGTK.
 # simd is NOT bundled. It is a separate daemon with its own packaging, and
-# monocoque does not need it inside the sandbox to use it: simapi_get_sim()
+# cargopit does not need it inside the sandbox to use it: simapi_get_sim()
 # checks /dev/shm/SIMAPI.DAT before it ever scans /proc, so a simd running on
 # the host -- however it was installed -- publishes telemetry this sandbox
 # reads directly. That is what --device=shm below is for, and it is the only
 # thing this manifest needs in order to work with simd.
 #
-# simapi itself is still present, but only as monocoque's own statically
+# simapi itself is still present, but only as cargopit's own statically
 # linked submodule, exactly as upstream's CMakeLists builds it. There is no
 # separate simapi module here.
 app-id: io.github.spacefreak18.monocoque
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
-command: gmonocoque
+command: gcargopit
 finish-args:
-  # --socket=x11, not fallback-x11: nappgui (the GUI toolkit gmonocoque uses)
+  # --socket=x11, not fallback-x11: nappgui (the GUI toolkit gcargopit uses)
   # goes to X11 even when a Wayland display is available. fallback-x11 is
   # deliberately inactive whenever Wayland works, so under a Wayland session
-  # DISPLAY stayed empty and gmonocoque died with `cannot open display` --
+  # DISPLAY stayed empty and gcargopit died with `cannot open display` --
   # confirmed on a real launch, with WAYLAND_DISPLAY=wayland-0 present and the
   # socket visible inside the sandbox. Granting real X11 routes it through
   # XWayland instead. --socket=wayland is kept so the toolkit can use it
@@ -47,32 +47,32 @@ finish-args:
   # successful build.
   - --device=all
   # Retained, but not for the reason first written here: the GraphQL API on
-  # port 9000 is served by typiql's own Rust backend, not by monocoque --
-  # monocoque has no network code of its own, and the only libcurl in the
+  # port 9000 is served by typiql's own Rust backend, not by cargopit --
+  # cargopit has no network code of its own, and the only libcurl in the
   # binary is vendored nappgui's HTTP module, which nothing here calls. The
-  # two programs talk through ~/.config/monocoque and the process table, not
+  # two programs talk through ~/.config/cargopit and the process table, not
   # a socket. This flag can probably be dropped.
   - --share=network
-  # monocoque builds its paths from $HOME directly (e.g.
-  # "%s/.config/monocoque/diameters.config" in monocoque-cli.c), not from
+  # cargopit builds its paths from $HOME directly (e.g.
+  # "%s/.config/cargopit/diameters.config" in cargopit-cli.c), not from
   # XDG_CONFIG_HOME, so it reads and writes the host's real directories.
   # Without these grants a real launch failed with
-  #   Failed to read config file '/home/david/.config/monocoque/monocoque.config'
-  #   slog_open_file: Failed to open file: /home/david/.cache/monocoque/...log
+  #   Failed to read config file '/home/david/.config/cargopit/cargopit.config'
+  #   slog_open_file: Failed to open file: /home/david/.cache/cargopit/...log
   # -- the manifest previously granted no filesystem access at all. Sharing
-  # the real config directory is also what makes a Flatpak monocoque and a
+  # the real config directory is also what makes a Flatpak cargopit and a
   # native one agree, and what lets typiql configure it.
-  - --filesystem=xdg-config/monocoque:create
-  - --filesystem=xdg-cache/monocoque:create
+  - --filesystem=xdg-config/cargopit:create
+  - --filesystem=xdg-cache/cargopit:create
   # Host /dev/shm, where a host simd publishes telemetry as POSIX shared memory
   # (/dev/shm/SIMAPI.DAT, mapped in simapi's simmapper.c). This is the flag
-  # that makes a Flatpak monocoque work with a simd installed on the host, so
+  # that makes a Flatpak cargopit work with a simd installed on the host, so
   # it matters more now that simd is not bundled, not less.
   #
   # shm is its own device option and is NOT implied by --device=all above --
   # measured, with simd running: `ls /dev/shm` inside this sandbox returned 0
   # entries against 18 on the host. The failure it caused is silent rather
-  # than loud: `monocoque play` started, read its config, connected
+  # than loud: `cargopit play` started, read its config, connected
   # pulseaudio, and then sat at "setting initial app state" forever, never
   # logging "Opening universal shared memory api", because simd looked absent.
   # The identical run with this flag reached that line one second in.
@@ -106,7 +106,7 @@ modules:
       - -DCMAKE_C_FLAGS=-Wno-error=implicit-function-declaration
       # add_library(argtable2 ...) has no explicit STATIC/SHARED, so it
       # defaults to CMake's global BUILD_SHARED_LIBS (off by default -> a
-      # static .a). monocoque's own target_link_libraries() lists argtable2
+      # static .a). cargopit's own target_link_libraries() lists argtable2
       # before helper (which needs its symbols, e.g. arg_end/arg_parse in
       # parameters.c) -- fine for a shared library (all symbols always
       # available regardless of link-line position, which is what real
@@ -122,7 +122,7 @@ modules:
       - -DBUILD_SHARED_LIBS=ON
     # This CMake port has no install() rules at all (confirmed: no
     # CMakeLists.txt in the tree calls install()), so the default
-    # cmake-ninja `ninja install` step silently does nothing -- monocoque's
+    # cmake-ninja `ninja install` step silently does nothing -- cargopit's
     # own build then fails on a missing argtable2.h. build-commands here
     # replace the default install step: `ninja` still does the real
     # compile, then copy the header and whatever library form actually got
@@ -147,7 +147,7 @@ modules:
   - name: lua5.4
     # Lua's own Makefile, not CMake/autotools. `posix` (not `linux`) avoids
     # a readline dependency only needed for the interactive REPL binary,
-    # which monocoque doesn't use -- only the library.
+    # which cargopit doesn't use -- only the library.
     buildsystem: simple
     build-commands:
       - make posix MYCFLAGS=-fPIC
@@ -187,7 +187,7 @@ modules:
       # Same CMake-minimum-version issue as libconfig/argtable2, despite
       # this otherwise being a current, actively maintained release.
       - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-      # monocoque links hidapi-hidraw specifically -- no need for the
+      # cargopit links hidapi-hidraw specifically -- no need for the
       # libusb-backed variant, which would pull in an extra dependency.
       - -DHIDAPI_WITH_LIBUSB=OFF
       - -DHIDAPI_WITH_HIDRAW=ON
@@ -216,7 +216,7 @@ modules:
         url: https://github.com/libuv/libuv/archive/refs/tags/v1.49.2.tar.gz
         sha256: 388ffcf3370d4cf7c4b3a3205504eea06c4be5f9e80d2ab32d19f8235accc1cf
 
-  - name: monocoque
+  - name: cargopit
     buildsystem: cmake-ninja
     config-opts:
       - -DBUILD_GUI=on
@@ -239,7 +239,7 @@ modules:
     sources:
       # One level up from flatpak/manifest.yml is the repo root -- unlike
       # typiql-tauri/typiql's dual-checkout ($GITHUB_WORKSPACE containing
-      # two separate repos side by side, needing an extra level), monocoque
+      # two separate repos side by side, needing an extra level), cargopit
       # is checked out on its own with the standard single-repo layout, so
       # this doesn't need the same `../..`/`../../..` juggling that session
       # got wrong twice before finding the right depth for that project.
@@ -254,8 +254,8 @@ modules:
         # and why a local build right after `git submodule update --init`
         # breaks. Skipping makes it work either way.
         skip:
-          - src/monocoque/simulatorapi/simapi
-          - src/monocoque/mgui/nappgui_src
+          - src/cargopit/simulatorapi/simapi
+          - src/cargopit/mgui/nappgui_src
       # Two git submodules, each pinned to the exact commit .gitmodules/the
       # tree tracks -- confirmed via a failed local build that the `dir`
       # source above doesn't pull submodule content in (same class of issue
@@ -263,20 +263,20 @@ modules:
       - type: git
         url: https://github.com/spacefreak18/simapi
         commit: 50fd181681862256780b2a0f74ef4bc459ed631a
-        dest: src/monocoque/simulatorapi/simapi
-      # nappgui_src is add_subdirectory()'d directly into monocoque's own
-      # CMake tree (src/monocoque/mgui/CMakeLists.txt), not a separately
+        dest: src/cargopit/simulatorapi/simapi
+      # nappgui_src is add_subdirectory()'d directly into cargopit's own
+      # CMake tree (src/cargopit/mgui/CMakeLists.txt), not a separately
       # installed library -- so it's a source here, not its own flatpak
       # module.
       - type: git
         url: https://github.com/frang75/nappgui_src
         commit: 29c7bd3e0243eb38aa9a7e2eafe6cf74830c4ee8
-        dest: src/monocoque/mgui/nappgui_src
+        dest: src/cargopit/mgui/nappgui_src
       - type: file
         path: io.github.spacefreak18.monocoque.desktop
       - type: file
         path: io.github.spacefreak18.monocoque.metainfo.xml
-      # Icon comes from tools/monocoque.svg via the `dir` source above (no
+      # Icon comes from tools/cargopit.svg via the `dir` source above (no
       # separate file source needed). That file is a square 100x100 copy of
       # the upstream artwork -- the published monocoque.svg the deb job
       # downloads is 100x50, which Flatpak's export rejects outright, while
@@ -288,13 +288,13 @@ modules:
       # This package's own licence, the vendored nappgui's (a source rather
       # than a module, so the per-module collection above misses it), and the
       # notices file naming every bundled dependency's origin.
-      - install -Dm644 LICENSE.rst /app/share/licenses/monocoque/LICENSE.rst
+      - install -Dm644 LICENSE.rst /app/share/licenses/cargopit/LICENSE.rst
       # The Debian copyright file is upstream's own account of what is in this
       # source tree and under what terms -- slog (MIT), nappgui (MIT), simapi
       # (LGPL) -- which a bundle has to carry because it distributes all of
       # them, unlike a .deb whose dependencies are separate packages. Shipped
       # verbatim rather than restated.
-      - install -Dm644 tools/distro/debian/dpkg/copyright /app/share/licenses/monocoque/copyright
+      - install -Dm644 tools/distro/debian/dpkg/copyright /app/share/licenses/cargopit/copyright
       # lua and glu ship no licence file in their tarballs -- Lua's MIT text
       # lives in doc/readme.html, glu's SGI Free B only in source headers -- so
       # checked-in copies are installed from here, where the repo is the build
@@ -302,7 +302,7 @@ modules:
       # out-of-tree, so their source directory is not the working directory.)
       - install -Dm644 packaging/licenses/lua-5.4-LICENSE.txt /app/share/licenses/lua5.4/LICENSE
       - install -Dm644 packaging/licenses/glu-LICENSE.txt /app/share/licenses/glu/LICENSE
-      - install -Dm644 src/monocoque/mgui/nappgui_src/LICENSE /app/share/licenses/nappgui/LICENSE
+      - install -Dm644 src/cargopit/mgui/nappgui_src/LICENSE /app/share/licenses/nappgui/LICENSE
       - sh -c 'python3 tools/generate-third-party-notices.py flatpak/io.github.spacefreak18.monocoque.yml > /tmp/notices.md && install -Dm644 /tmp/notices.md /app/share/licenses/THIRD-PARTY-NOTICES.md'
     # Confirmed via a failed local build that flatpak-builder's cmake-ninja
     # buildsystem runs the automatic build+install step regardless of
@@ -312,9 +312,9 @@ modules:
     # CMakeLists.txt bug unrelated to Flatpak) had to be commenting it out
     # at the source, not overriding the build here. With that gone, the
     # automatic build+install (using this repo's own new install() rules)
-    # already installs monocoque/gmonocoque correctly; these build-commands
+    # already installs cargopit/gcargopit correctly; these build-commands
     # only need to add the extra files CMake doesn't know about.
     build-commands:
       - install -Dm644 io.github.spacefreak18.monocoque.desktop /app/share/applications/io.github.spacefreak18.monocoque.desktop
       - install -Dm644 io.github.spacefreak18.monocoque.metainfo.xml /app/share/metainfo/io.github.spacefreak18.monocoque.metainfo.xml
-      - install -Dm644 tools/monocoque.svg /app/share/icons/hicolor/scalable/apps/io.github.spacefreak18.monocoque.svg
+      - install -Dm644 tools/cargopit.svg /app/share/icons/hicolor/scalable/apps/io.github.spacefreak18.monocoque.svg

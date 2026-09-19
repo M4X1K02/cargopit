@@ -1,21 +1,21 @@
 cmake_minimum_required(VERSION 3.18)
-# detect if Monocoque is being used as a sub-project of another CMake project
+# detect if Cargopit is being used as a sub-project of another CMake project
 if(NOT DEFINED PROJECT_NAME)
-    set(MONOCOQUE_SUBPROJECT OFF)
+    set(CARGOPIT_SUBPROJECT OFF)
 else()
-    set(MONOCOQUE_SUBPROJECT ON)
+    set(CARGOPIT_SUBPROJECT ON)
 endif()
 
 
-SET_SOURCE_FILES_PROPERTIES( src/monocoque.c PROPERTIES LANGUAGE C)
+SET_SOURCE_FILES_PROPERTIES( src/cargopit.c PROPERTIES LANGUAGE C)
 #set(CMAKE_BUILD_TYPE Debug)
 
 option(BUILD_GUI "Build GUI support" OFF)
-option(BUILD_SHARED "Build monocoque shared library" OFF)
+option(BUILD_SHARED "Build cargopit shared library" OFF)
 option(ENABLE_TESTS "Build test suite" OFF)
 
 
-project(monocoque)
+project(cargopit)
 
 set(CMAKE_EXE_LINKER_FLAGS "-Wl,--no-as-needed -ldl")
 set(LIBUSB_INCLUDE_DIR /usr/include/libusb-1.0)
@@ -55,15 +55,15 @@ set(HIDAPI_WITH_LIBUSB FALSE) # surely will be used only on Linux
 set(BUILD_SHARED_LIBS TRUE) # HIDAPI as static library on all platforms
 
 if(BUILD_SHARED)
-    add_library(monocoque SHARED src/monocoque/monocoque.c)
+    add_library(cargopit SHARED src/cargopit/cargopit.c)
 else()
-    add_library(monocoque STATIC src/monocoque/monocoque.c)
+    add_library(cargopit STATIC src/cargopit/cargopit.c)
 endif()
-add_executable(monocoque-cli src/monocoque/monocoque-cli.c)
-set_target_properties(monocoque-cli PROPERTIES OUTPUT_NAME monocoque)
+add_executable(cargopit-cli src/cargopit/cargopit-cli.c)
+set_target_properties(cargopit-cli PROPERTIES OUTPUT_NAME cargopit)
 if(BUILD_GUI)
-    add_executable(monocoque-gui src/monocoque/monocoque-gui.c)
-    set_target_properties(monocoque-gui PROPERTIES OUTPUT_NAME gmonocoque)
+    add_executable(cargopit-gui src/cargopit/cargopit-gui.c)
+    set_target_properties(cargopit-gui PROPERTIES OUTPUT_NAME gcargopit)
 endif()
 
 find_package(PkgConfig REQUIRED)
@@ -97,20 +97,20 @@ endif()
 message("Using pulseaudio backend...")
 add_compile_definitions(USE_PULSEAUDIO=true)
 
-add_subdirectory(src/monocoque/gameloop)
-add_subdirectory(src/monocoque/simulatorapi)
-add_subdirectory(src/monocoque/helper)
-add_subdirectory(src/monocoque/devices)
-add_subdirectory(src/monocoque/slog)
+add_subdirectory(src/cargopit/gameloop)
+add_subdirectory(src/cargopit/simulatorapi)
+add_subdirectory(src/cargopit/helper)
+add_subdirectory(src/cargopit/devices)
+add_subdirectory(src/cargopit/slog)
 
-target_link_libraries(monocoque m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
-target_include_directories(monocoque PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
-target_link_libraries(monocoque-cli m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
-target_include_directories(monocoque-cli PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
+target_link_libraries(cargopit m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
+target_include_directories(cargopit PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
+target_link_libraries(cargopit-cli m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
+target_include_directories(cargopit-cli PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
 if(BUILD_GUI)
-    add_subdirectory(src/monocoque/mgui)
-    target_link_libraries(monocoque-gui m hidapi-hidraw pulse serialport xml2 argtable2 config mgui gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
-    target_include_directories(monocoque-gui PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
+    add_subdirectory(src/cargopit/mgui)
+    target_link_libraries(cargopit-gui m hidapi-hidraw pulse serialport xml2 argtable2 config mgui gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
+    target_include_directories(cargopit-gui PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
 endif()
 
 
@@ -120,11 +120,11 @@ endif()
 include(CheckCXXCompilerFlag)
 
 function(enable_cxx_compiler_flag_if_supported flag)
-    message(STATUS "[monocoque] Checking if compiler supports warning flag '${flag}'")
+    message(STATUS "[cargopit] Checking if compiler supports warning flag '${flag}'")
     check_cxx_compiler_flag("${flag}" flag_supported)
     if(flag_supported)
-        message(STATUS "[monocoque] Enabling warning flag '${flag}'")
-        target_compile_options(monocoque INTERFACE "${flag}")
+        message(STATUS "[cargopit] Enabling warning flag '${flag}'")
+        target_compile_options(cargopit INTERFACE "${flag}")
     endif()
     unset(flag_supported CACHE)
 endfunction()
@@ -147,7 +147,7 @@ else() # GCC/Clang warning option
 
     if(analyze)
         message("-- Analyzer is on")
-        target_compile_options(monocoque PRIVATE -fanalyzer -Wno-analyzer-possible-null-argument -Wno-analyzer-possible-null-dereference -fsanitize=address -g -fno-omit-frame-pointer)
+        target_compile_options(cargopit PRIVATE -fanalyzer -Wno-analyzer-possible-null-argument -Wno-analyzer-possible-null-dereference -fsanitize=address -g -fno-omit-frame-pointer)
     endif()
 
     enable_cxx_compiler_flag_if_supported("-Wall")
@@ -177,14 +177,14 @@ endif()
 
 # library
 # unit tests --only enable if requested AND we're not building as a sub-project
-if(ENABLE_TESTS AND NOT MONOCOQUE_SUBPROJECT)
-    message(STATUS "[monocoque] Unit Tests Enabled")
+if(ENABLE_TESTS AND NOT CARGOPIT_SUBPROJECT)
+    message(STATUS "[cargopit] Unit Tests Enabled")
     enable_testing()
     add_subdirectory(tests)
 endif()
 
-install(TARGETS monocoque-cli RUNTIME DESTINATION bin)
+install(TARGETS cargopit-cli RUNTIME DESTINATION bin)
 if(BUILD_GUI)
-    install(TARGETS monocoque-gui RUNTIME DESTINATION bin)
+    install(TARGETS cargopit-gui RUNTIME DESTINATION bin)
 endif()
-install(FILES tools/monocoque.desktop DESTINATION share/applications)
+install(FILES tools/cargopit.desktop DESTINATION share/applications)
