@@ -192,10 +192,10 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 | --- | --- | --- |
 | cargopit (this fork) | GPL-3.0-or-later | `LICENSE.rst` |
 | slog | MIT | `src/cargopit/slog/slog.h` |
-| NAppGUI (optional GUI) | MIT | `src/cargopit/mgui/nappgui_src/LICENSE`, `packaging/licenses/nappgui-LICENSE.txt` |
+| NAppGUI | MIT | `src/cargopit/mgui/nappgui_src/LICENSE`, `packaging/licenses/nappgui-LICENSE.txt` |
 | simapi (submodule) | LGPL-3.0 | https://github.com/Spacefreak18/simapi |
 | Lua 5.4 | MIT | `packaging/licenses/lua-5.4-LICENSE.txt` |
-| GLU (optional GUI) | SGI Free B 2.0 | `packaging/licenses/glu-LICENSE.txt` |
+| GLU | SGI Free B 2.0 | `packaging/licenses/glu-LICENSE.txt` |
 
 ## ToDo
 
