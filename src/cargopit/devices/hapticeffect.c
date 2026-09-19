@@ -252,6 +252,24 @@ static int car_is_moving_for_tyres(const SimData* simdata)
     return 1;
 }
 
+static int sim_provides_slip_ratio(const SimData* simdata)
+{
+    int i;
+
+    if (simdata->simapi == SIMULATORAPI_DIRT_RALLY_2)
+    {
+        return 1;
+    }
+    for (i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        if (fabs(simdata->tyreslipratio[i]) != 0.0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static double sum_slip_beyond(
     const double* wheelslip,
     CargopitTyreIdentifier tyre,
@@ -521,17 +539,7 @@ double slipeffect(SimData* simdata, HapticEffect* h, int useconfig, int* configc
     wheelslip[2] = 0;
     wheelslip[3] = 0;
 
-    int sim_slip_ratio = 0;
-    for (int i = 0; i < 4; i++)
-    {
-        if (fabs(simdata->tyreslipratio[i]) != 0.0)
-        {
-            sim_slip_ratio = 1;
-            break;
-        }
-    }
-
-    if(sim_slip_ratio == 0)
+    if (!sim_provides_slip_ratio(simdata))
     {
         //slogt("wheel vibration calculation with wheel config set to %i configchecked %i configfile %s car %s sim %i", useconfig, *configcheck, configfile, simdata->car, simdata->simexe);
 

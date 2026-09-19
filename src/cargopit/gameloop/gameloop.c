@@ -66,6 +66,14 @@ static void map_live_simdata(SimData* simdata, SimMap* simmap,
     dr2_apply_haptic_telemetry(simdata);
 }
 
+static SimInfo get_live_siminfo(SimData* simdata, SimMap* simmap,
+                                bool force_udp, int (*setup_udp)(int))
+{
+    SimInfo siminfo = simapi_get_sim(simdata, simmap, force_udp, setup_udp, false);
+    dr2_apply_haptic_siminfo(&siminfo);
+    return siminfo;
+}
+
 static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin_was_raw)
 {
     *stdin_was_raw = 0;
@@ -645,7 +653,7 @@ void datacheckcallback(uv_timer_t* handle)
 
     if ( appstate == 1 )
     {
-        f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, false);
+        f->siminfo = get_live_siminfo(simdata, simmap, f->ms->force_udp_mode, startudp);
 
         if(f->ms->force_udp_mode == true)
         {
@@ -679,7 +687,7 @@ void datacheckcallback(uv_timer_t* handle)
         }
         if(appstate == 2)
         {
-            f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, NULL, false);
+            f->siminfo = get_live_siminfo(simdata, simmap, f->ms->force_udp_mode, NULL);
             if(f->siminfo.isSimOn == false)
             {
                 appstate = 1;
