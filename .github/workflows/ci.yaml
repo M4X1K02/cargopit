@@ -58,7 +58,7 @@ jobs:
     steps:
     # Must come before actions/checkout: these images are minimal and ship
     # no git, so checkout would fall back to a tarball download and silently
-    # skip submodules -- simapi and nappgui_src are both required to build.
+    # skip submodules -- simapi is required to build.
     # No sudo either; container jobs already run as root.
     - name: Install build dependencies
       run: |
@@ -66,10 +66,9 @@ jobs:
         apt-get install -y --no-install-recommends \
           ca-certificates curl git \
           build-essential cmake pkg-config \
-          libgtk-3-dev libuv1-dev libargtable2-dev libserialport-dev \
+          libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev libcurl4-openssl-dev \
-          libglu1-mesa-dev
+          libxml2-dev libpulse-dev libproc2-dev
 
     - uses: actions/checkout@v4
       with:
@@ -92,7 +91,6 @@ jobs:
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
-        -DBUILD_GUI=on
         -DCMAKE_CXX_COMPILER=g++
         -DCMAKE_C_COMPILER=gcc
         -DCMAKE_BUILD_TYPE=Release
@@ -149,7 +147,6 @@ jobs:
         sed -i "s/^Version:.*/Version: ${{ steps.pkgver.outputs.version }}/" ./PKG_SOURCE/DEBIAN/control
         cp ./tools/distro/debian/dpkg/copyright ./PKG_SOURCE/DEBIAN/copyright
         cp ./build/cargopit ./PKG_SOURCE/usr/bin/cargopit
-        cp ./build/gcargopit ./PKG_SOURCE/usr/bin/gcargopit
         cp ./tools/cargopit.desktop ./PKG_SOURCE/usr/share/applications/cargopit.desktop
         dpkg-deb --build PKG_SOURCE cargopit-${{ matrix.os }}.deb
         echo "--- control as packaged ---"
@@ -193,9 +190,7 @@ jobs:
       contents: write
       deployments: write
     steps:
-    # The -devel list is the one fedora.spec's own header comment documents,
-    # plus gtk3/libcurl/mesa-libGLU to match its `Requires:` line -- the spec
-    # configures with -DBUILD_GUI=on, so the GUI's deps are build deps too.
+    # The -devel list is the one fedora.spec's own header comment documents.
     #
     # Retried because this pulls openh264 from Fedora's third-party Cisco
     # repo (ciscobinary.openh264.org), which is a single-mirror CDN outside
@@ -214,8 +209,7 @@ jobs:
             rpm-build cmake gcc gcc-c++ make git curl \
             pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel \
             libserialport-devel lua-devel libuv-devel libxdg-basedir-devel \
-            libxml2-devel procps-ng-devel gtk3-devel libcurl-devel \
-            mesa-libGLU-devel && exit 0
+            libxml2-devel procps-ng-devel && exit 0
           echo "dnf install failed (attempt $attempt), retrying in 15s..."
           sleep 15
         done
@@ -224,9 +218,7 @@ jobs:
 
     # submodules: recursive is new here. It didn't matter while %prep cloned
     # upstream and ran `git submodule update` itself; now that the staged
-    # checkout is what gets built, an empty nappgui_src fails configure with
-    # "does not contain a CMakeLists.txt file". Missed by the local fedora:44
-    # rehearsal, which mounted a working tree that already had its submodules.
+    # checkout is what gets built, an empty simapi submodule fails configure.
     - uses: actions/checkout@v4
       with:
         submodules: recursive
@@ -328,20 +320,17 @@ jobs:
       with:
         submodules: recursive
 
-    # librsvg2-common and libgtk-3-bin are for linuxdeploy's gtk plugin, not
-    # the build itself -- it needs an svg pixbuf loader and
-    # gtk-update-icon-cache to assemble a self-contained GTK runtime.
+    # desktop-file-utils, file, patchelf, wget are for linuxdeploy, not the
+    # C build.
     - name: Install build dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           build-essential cmake pkg-config \
-          libgtk-3-dev libuv1-dev libargtable2-dev libserialport-dev \
+          libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev libcurl4-openssl-dev \
-          libglu1-mesa-dev \
-          desktop-file-utils file patchelf wget \
-          librsvg2-common libgtk-3-bin
+          libxml2-dev libpulse-dev libproc2-dev \
+          desktop-file-utils file patchelf wget
 
     # -std=gnu2x for the C23 enum syntax above: GCC 13 implements it but
     # still defaults to gnu17, unlike GCC 15+ (which the container-based
@@ -349,7 +338,7 @@ jobs:
     # than c2x so GNU extensions stay on -- simapi also relies on asprintf.
     - name: Build
       run: |
-        cmake -B build -DBUILD_GUI=on -DCMAKE_BUILD_TYPE=Release \
+        cmake -B build -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_FLAGS=-std=gnu2x -S .
         cmake --build build --config Release
 
@@ -390,8 +379,7 @@ jobs:
         echo "packaging as $OUTPUT"
 
         wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-        wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/raw/master/linuxdeploy-plugin-gtk.sh
-        chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh
+        chmod +x linuxdeploy-x86_64.AppImage
 
         # Deploy dependencies first, without packaging, so there is a populated
         # AppDir to take licences from -- an AppImage distributes every library
@@ -399,7 +387,6 @@ jobs:
         # needs none of this because its dependencies stay separate packages.
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
           --appdir AppDir \
-          --plugin gtk \
           --desktop-file AppDir/usr/share/applications/cargopit.desktop \
           --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/monocoque.svg
 
@@ -409,7 +396,6 @@ jobs:
         # than installed from packages, so dpkg cannot account for them.
         install -Dm644 LICENSE.rst AppDir/usr/share/doc/cargopit/LICENSE.rst
         install -Dm644 tools/distro/debian/dpkg/copyright AppDir/usr/share/doc/cargopit/copyright
-        install -Dm644 src/cargopit/mgui/nappgui_src/LICENSE AppDir/usr/share/doc/nappgui/LICENSE
 
         # Now package the AppDir, licences included.
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
@@ -456,8 +442,8 @@ jobs:
       contents: write
       deployments: write
     steps:
-      # No submodules: recursive here -- the manifest fetches simapi and
-      # nappgui_src itself as explicit `type: git` sources (pinned commits,
+      # No submodules: recursive here -- the manifest fetches simapi
+      # itself as an explicit `type: git` source (pinned commit,
       # reproducible regardless of what's checked out on disk). Confirmed
       # via a failed CI run: recursive submodule checkout populates those
       # paths with real .git files first, which then collides with
