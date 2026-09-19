@@ -30,6 +30,33 @@ int strcicmp(char const *a, char const *b)
     }
 }
 
+static uint32_t lookup_pipewire_stream_volume(const config_setting_t* device_settings)
+{
+    int value;
+
+    if (device_settings == NULL)
+    {
+        return SOUND_STREAM_VOLUME_UNITY;
+    }
+    value = SOUND_STREAM_VOLUME_UNITY;
+    if (config_setting_lookup_int(device_settings, "streamVolume", &value) == CONFIG_FALSE)
+    {
+        if (config_setting_lookup_int(device_settings, "volume", &value) == CONFIG_FALSE)
+        {
+            return SOUND_STREAM_VOLUME_UNITY;
+        }
+    }
+    if (value < SOUND_STREAM_VOLUME_MIN)
+    {
+        return SOUND_STREAM_VOLUME_MIN;
+    }
+    if (value > SOUND_STREAM_VOLUME_UNITY)
+    {
+        return SOUND_STREAM_VOLUME_UNITY;
+    }
+    return (uint32_t)value;
+}
+
 int strtoeffecttype(const char* effect, DeviceSettings* ds)
 {
     ds->is_valid = false;
@@ -93,7 +120,8 @@ int strtodevsubsubtype(const char* device_subsubtype, DeviceSettings* ds)
         ds->dev_subsubtype = SIMDEVSUBTYPE_CAMMUSC12;
         devfound = true;
     }
-    if (strcicmp(device_subsubtype, "MozaNew") == 0)
+    if (strcicmp(device_subsubtype, "MozaNew") == 0
+        || strcicmp(device_subsubtype, "MozaR9") == 0)
     {
         ds->dev_subsubtype = SIMDEVSUBTYPE_MOZA_NEW;
         devfound = true;
@@ -684,6 +712,24 @@ int configcheck(const char* config_file_str, int confignum, int* devices)
     return 0;
     //return cfg;
 }
+#define DEVICE_CONFIG_ENABLED_DEFAULT 1
+
+static void device_settings_read_enabled(const config_setting_t* device_settings, DeviceSettings* ds)
+{
+    ds->enabled = true;
+    if (device_settings == NULL)
+    {
+        return;
+    }
+
+    int enabled = DEVICE_CONFIG_ENABLED_DEFAULT;
+    if (config_setting_lookup_bool(device_settings, "enabled", &enabled) != CONFIG_TRUE)
+    {
+        return;
+    }
+    ds->enabled = (enabled != 0);
+}
+
 static int config_get_device(const config_setting_t *entry, DeviceSettings *ds)
 {
     const char *value = NULL;
@@ -730,6 +776,7 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
     ds->fps = 60;
     config_setting_lookup_int(device_settings, "fps", &ds->fps);
     config_get_device(device_settings, ds);
+    device_settings_read_enabled(device_settings, ds);
 
     if (ds->dev_subtype == SIMDEVTYPE_TACHOMETER)
     {
@@ -831,8 +878,8 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
         slogi("reading configured haptic effect settings");
         ds->hapticsettings.frequency = 0;
         ds->hapticsettings.frequencyMax = 0;
-        ds->hapticsettings.amplitude = 50;
-        ds->hapticsettings.amplitudeMax = 50;
+        ds->hapticsettings.amplitude = HAPTIC_AMPLITUDE_UNITY;
+        ds->hapticsettings.amplitudeMax = HAPTIC_AMPLITUDE_UNITY;
         if (ds->hapticsettings.effect_type == EFFECT_GEARSHIFT)
         {
             ds->hapticsettings.duration = .125;
@@ -890,18 +937,16 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
         if (ds->dev_type == SIMDEV_SOUND)
         {
             slogi("reading configured sound device settings");
-            ds->sounddevsettings.volume = 0;
+            ds->hapticsettings.amplitude = HAPTIC_AMPLITUDE_UNITY;
+            ds->hapticsettings.amplitudeMax = HAPTIC_AMPLITUDE_UNITY;
+            ds->sounddevsettings.volume = SOUND_STREAM_VOLUME_UNITY;
             ds->sounddevsettings.pan = 0;
             ds->sounddevsettings.channels = 1;
             ds->sounddevsettings.noise = 0;
-            if (ds->hapticsettings.effect_type == EFFECT_GEARSHIFT)
-            {
-                ds->hapticsettings.duration = .125;
-            }
             if (device_settings != NULL)
             {
 
-                config_setting_lookup_int(device_settings, "volume", &ds->sounddevsettings.volume);
+                ds->sounddevsettings.volume = lookup_pipewire_stream_volume(device_settings);
                 config_setting_lookup_int(device_settings, "pan", &ds->sounddevsettings.pan);
                 config_setting_lookup_int(device_settings, "channels", &ds->sounddevsettings.channels);
                 config_setting_lookup_int(device_settings, "noise", &ds->sounddevsettings.noise);
@@ -1179,6 +1224,21 @@ static int set_int(config_setting_t *parent, const char *name, int value)
     return config_setting_set_int(setting, value);
 }
 
+static int set_bool(config_setting_t *parent, const char *name, int value)
+{
+    config_setting_t *setting;
+
+    setting = config_setting_lookup(parent, name);
+
+    if (setting == NULL)
+        setting = config_setting_add(parent, name, CONFIG_TYPE_BOOL);
+
+    if (setting == NULL)
+        return 0;
+
+    return config_setting_set_bool(setting, value);
+}
+
 int set_float(config_setting_t *parent, const char *name, double value)
 {
     config_setting_t *setting;
@@ -1368,6 +1428,8 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
         return 0;
 
     set_string(device_entry, "device", device_type_to_string(ds->dev_type));
+
+    set_bool(device_entry, "enabled", ds->enabled ? 1 : 0);
     
     set_int(device_entry, "fps", ds->fps);
 
@@ -1404,7 +1466,7 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
 
             const SoundDeviceSettings *ss = &ds->sounddevsettings;
 
-            set_int(device_entry, "volume", ss->volume);
+            set_int(device_entry, "streamVolume", ss->volume);
             set_int(device_entry, "pan", ss->pan);
             set_int(device_entry, "channels", ss->channels);
             set_int(device_entry, "noise", ss->noise);

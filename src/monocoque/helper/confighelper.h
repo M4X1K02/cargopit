@@ -198,6 +198,10 @@ typedef struct
 }
 SoundDeviceSettings;
 
+#define SOUND_STREAM_VOLUME_MIN 0
+#define SOUND_STREAM_VOLUME_UNITY 100
+#define HAPTIC_AMPLITUDE_UNITY 100
+
 typedef struct
 {
     uint32_t frequency;
@@ -224,6 +228,7 @@ USBDeviceSettings;
 typedef struct
 {
     bool is_valid;
+    bool enabled;
 
     DeviceType dev_type;
     DeviceSubType dev_subtype;
