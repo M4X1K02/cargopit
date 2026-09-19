@@ -201,7 +201,7 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 
 - frequency cap (low-pass filter) for sound haptic effects
 - road and kerb sound haptic effects
-- richer TUI device management (see `docs/tui-device-management.md`)
+- richer TUI device management
 - Windows port
 - more memory testing
 - cleanup tests which are copies of upstream examples
