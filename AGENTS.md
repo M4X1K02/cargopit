@@ -1,0 +1,98 @@
+# AGENTS.md
+
+Guidance for coding agents working in this repository.
+
+Cargopit is a hard fork of [monocoque](https://github.com/Spacefreak18/monocoque): a C device manager for driving and flight simulators (USB HID, serial/Arduino, haptic shakers, tachometers, wheels, and pedals). It reads live sim data through the [simapi](https://github.com/spacefreak18/simapi) shared-memory API.
+
+User-facing docs: [README.md](README.md), [HOW-TO-USE.md](HOW-TO-USE.md), and [spacefreak18.github.io/simapi](https://spacefreak18.github.io/simapi/).
+
+## Coding rules
+
+Follow these on every change:
+
+1. **Don't nest functions more than 3 levels.** Flatten control flow with early returns, helper functions, or named locals instead of deeper nesting.
+2. **DRY: Don't repeat yourself. Reuse code whenever possible.** Extract shared helpers rather than copying device, config, or install logic.
+3. **Inverse programming; exceptions and edge cases first.** Validate inputs and handle errors at the top of a function, then the happy path.
+4. **No magic strings and no magic numbers.** Use named constants, enums, or `#define`s (see `src/monocoque/helper/confighelper.h` and `src/monocoque/helper/parameters.h`).
+
+## Layout
+
+| Path | Role |
+| --- | --- |
+| `src/monocoque/` | Main C sources: CLI (`monocoque-cli.c`), GUI (`monocoque-gui.c`), library (`monocoque.c`) |
+| `src/monocoque/devices/` | USB, serial, sound, haptic, wheel, tachometer backends |
+| `src/monocoque/gameloop/` | 60 fps update loop |
+| `src/monocoque/helper/` | Config, CLI parameters, paths, simd startup |
+| `src/monocoque/mgui/` | NAppGUI UI (optional, `-DBUILD_GUI=on`) |
+| `src/arduino/` | Sample sketches (shift lights, simwind, simhaptic, custom Lua serial) |
+| `conf/` | Example `monocoque.config` |
+| `tests/` | Automated tests (`ENABLE_TESTS=ON`). Hardware/interactive tools in `tests/manual/` |
+| `tools/` | Installer helpers, distro packaging, `monocoque-manager` |
+| `udev/` | `69-monocoque.rules` |
+| `.github/workflows/` | PR build (`pr-build.yaml`), installer CI (`installer.yml`), release packages (`ci.yaml`) |
+
+## Submodules
+
+Initialize before building:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+| Path | Upstream | Notes |
+| --- | --- | --- |
+| `src/monocoque/simulatorapi/simapi` | [spacefreak18/simapi](https://github.com/spacefreak18/simapi) | Shared-memory headers (`simdata.h`). Do not vendor copies. |
+| `src/monocoque/mgui/nappgui_src` | [frang75/nappgui_src](https://github.com/frang75/nappgui_src) | GUI toolkit. Required when `BUILD_GUI` is on. |
+
+Do not edit submodule trees in this repo unless the task is explicitly to bump a submodule pin.
+
+## Build
+
+From a source checkout:
+
+```bash
+git submodule update --init --recursive
+cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+```
+
+Useful CMake options: `BUILD_GUI`, `ENABLE_TESTS`, `BUILD_SHARED`. GCC 13+ is required (simapi uses C23 enum-with-underlying-type). Debian 12 / GCC 12 cannot compile current simapi.
+
+End-user source install (compiles simapi, simd, and this tree; does not configure Steam, audio, or wheel firmware):
+
+```bash
+./install.sh --from-source
+```
+
+## Tests
+
+PR CI (`.github/workflows/pr-build.yaml`) configures with `-DENABLE_TESTS=ON` and runs:
+
+```bash
+ctest --test-dir build --output-on-failure --timeout 30
+```
+
+Automated tests live in `tests/` (`confighelper_test`, `ensure_simd_test`, `startup_play.sh`). Do not add hardware-dependent or interactive tools there; those belong in `tests/manual/`.
+
+Device-level check with real hardware (config must list only connected devices):
+
+```bash
+./monocoque test -vv
+```
+
+Installer changes should keep `.github/workflows/installer.yml` green. Local container checks:
+
+```bash
+bash tools/distro/test-install-containers.sh detect|mocks|immutable|full <distro>
+```
+
+Logs: `~/.cache/monocoque/*.log`. Valgrind: see README (`cd build && valgrind ... --suppressions=../.valgrindrc`).
+
+## Conventions
+
+- Prefer existing enums (`DeviceType`, `DeviceSubType`, `ProgramAction`, `VibrationEffectType`, …) over new stringly-typed switches.
+- New USB/serial devices go under `src/monocoque/devices/` and are wired through `confighelper` type maps. Sample Arduino sketches stay in `src/arduino/`.
+- Keep `LICENSE.rst` intact (GPL-3.0-or-later). Packaging copyright inventory: `tools/distro/debian/dpkg/copyright`.
+- Do not commit build artifacts (`/build`, `*.flatpak`, `flatpak/repo/`).
+- Public usage documentation for sims, bridges, and devices lives at spacefreak18.github.io/simapi, not in this tree. Keep README / HOW-TO-USE pointers accurate; do not duplicate that site here.

@@ -28,10 +28,13 @@ on:
 permissions:
   contents: read
 
-# TMPDIR is what the test script uses to place LOGDIR when INSTALLER_LOG_DIR is unset.
+# `runner` is a job/step context. Putting `${{ runner.temp }}` in workflow-level
+# env made GitHub reject the file ("Unrecognized named-value: 'runner'") so
+# every installer run finished in 0s with zero jobs. This path is the same
+# fallback tools/distro/test-install-containers.sh uses when INSTALLER_LOG_DIR
+# and TMPDIR are unset.
 env:
-  TMPDIR: ${{ runner.temp }}
-  INSTALLER_LOG_DIR: ${{ runner.temp }}/monocoque-install-tests
+  INSTALLER_LOG_DIR: /tmp/monocoque-install-tests
 
 jobs:
   syntax:
