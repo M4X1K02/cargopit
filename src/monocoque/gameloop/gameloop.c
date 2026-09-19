@@ -13,6 +13,7 @@
 #include "gameloop.h"
 #include "loopdata.h"
 #include "../helper/confighelper.h"
+#include "../helper/ensure_simd.h"
 #include "../devices/simdevice.h"
 #include "../devices/hapticeffect.h"
 #include "../simulatorapi/simapi/simapi/simdata.h"
@@ -35,6 +36,18 @@ loop_data* baton;
 device_loop_data* test_baton;
 SimDevice* test_simdevice;
 SimInfo* test_siminfo;
+
+static int require_simd(void)
+{
+    SimdEnsureStatus simd_status = ensure_simd();
+    if (simd_status == SIMD_OK)
+    {
+        return 0;
+    }
+    return (simd_status == SIMD_NOT_INSTALLED)
+           ? MONOCOQUE_ERROR_SIMD_REQUIRED
+           : MONOCOQUE_ERROR_UNKNOWN;
+}
 
 
 uv_idle_t idler;
@@ -799,6 +812,12 @@ int monocoque_mainloop_stop(MonocoqueSettings* ms)
 
 int start_loop(MonocoqueSettings* ms)
 {
+    int simd_error = require_simd();
+    if (simd_error != 0)
+    {
+        return simd_error;
+    }
+
     loop = malloc(sizeof(uv_loop_t));
 
     if (loop == NULL)
@@ -873,6 +892,11 @@ const char* get_simd_onoff(void)
 
 int monocoque_mainloop(MonocoqueSettings* ms)
 {
+    int simd_error = require_simd();
+    if (simd_error != 0)
+    {
+        return simd_error;
+    }
 
     simdata = malloc(sizeof(SimData));
     simmap = simapi_simmap_create();

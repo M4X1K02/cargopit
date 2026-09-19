@@ -754,13 +754,15 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
+    log_success "Wrote $systemd_dir/simd.service"
     if have_cmd systemctl; then
         systemctl --user daemon-reload 2>/dev/null || true
+        if systemctl --user enable --now simd.service 2>/dev/null; then
+            log_success "Enabled simd.service (starts at login)"
+        else
+            log_warn "Could not enable simd.service; monocoque will start simd when you run it"
+        fi
     fi
-    log_success "Wrote $systemd_dir/simd.service"
-    log_info "Enable with: systemctl --user enable --now simd.service"
-    log_info "If it should start at login while not logged in graphically:"
-    echo "    loginctl enable-linger \$USER"
 }
 
 install_udev_rules() {
@@ -833,8 +835,9 @@ print_next_steps() {
     echo "  hexdump /dev/shm/SIMAPI.DAT | head"
     echo "  hexdump /dev/shm/acpmf_physics | head     # AC / ACC"
     echo ""
-    echo "Enable simd at login:"
-    echo "  systemctl --user enable --now simd.service"
+    echo "Start:         start-monocoque   (or monocoque-manager)"
+    echo "simd is started automatically if it is not already running."
+    echo "You will only be asked to act if simd is not installed."
     echo ""
     echo "Edit devices:  $CONFIG_DIR/monocoque/monocoque.config"
     echo "Examples:      $CONFIG_DIR/monocoque/monocoque.config.example"

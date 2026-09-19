@@ -49,11 +49,13 @@ Activate Shared Memory and set the protocol to Project CARS 2, then restart the 
 
 #### Assetto Corsa & Assetto Corsa Competizione (ACC)
 
-No extra in-game telemetry toggle. You still need the AC/ACC bridge EXE in the Steam launch command.
+No extra in-game telemetry toggle. You still need the AC/ACC bridge EXE in the Steam launch command; monocoque starts simd.
 
 ## Run
 
-Launchers after a packaged or `./install.sh` install: `start-simd`, `start-monocoque`, `test-monocoque`, or `monocoque-manager`. Start the game from Steam as usual.
+Start a session with `start-monocoque`, `monocoque play`, or `monocoque-manager`. Monocoque starts simd itself when it is not already running. Launch the game from Steam as usual.
+
+If simd is not installed, that is the one case that needs a human: install simd and try again.
 
 Shared-memory titles still need the bridge EXE in the Steam launch command (`SIMD_BRIDGE_EXE=... %command%`). The installer can also enable `simd.service` so mapping is ready at login. If the simd binary was installed under `/usr/local`, the launcher already sets `LD_LIBRARY_PATH`.
 
