@@ -18,7 +18,6 @@
 #define maxbrake     0
 #define maxthrottle  0
 #define maxXvelocity 0.001
-#define minYvelocity 0
 #define maxZvelocity 1
 #define HAPTIC_WHEEL_COUNT 4
 #define HAPTIC_BRAKE_APPLIED_FRAC 0.05
@@ -242,7 +241,7 @@ static int throttle_is_applied(const SimData* simdata)
 
 static int car_is_moving_for_tyres(const SimData* simdata)
 {
-    if (simdata->Yvelocity <= minYvelocity)
+    if (!haptic_chassis_is_rolling(simdata))
     {
         return 0;
     }
