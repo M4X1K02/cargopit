@@ -4,10 +4,6 @@
 #include <stdbool.h>
 #include "../simulatorapi/simapi/simapi/simapi.h"
 
-#define PROGRAM_NAME "cargopit"
-#define PROGRAM_CONFIG_FILENAME PROGRAM_NAME ".config"
-#define PROGRAM_LOG_FILENAME PROGRAM_NAME ".log"
-
 typedef struct
 {
     int   program_action;
@@ -54,7 +50,6 @@ ConfigError;
 
 int freeparams(Parameters* p);
 ConfigError getParameters(int argc, char** argv, Parameters* p);
-void display_banner(void);
 
 struct _errordesc
 {

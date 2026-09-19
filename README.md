@@ -32,19 +32,19 @@ https://santeri.pikarinen.com/pages/usb_hid_reverse_engineering/
 
 ## Quick Install
 
-Prefer a packaged build of cargopit when one exists. This fork is installed from source (`./install.sh --from-source`). The source installer compiles simapi, simd, and cargopit; it does **not** configure Steam, audio devices, or wheel firmware.
+Prefer a packaged build of upstream monocoque when one exists. This fork is installed from source (`./install.sh --from-source`). The source installer compiles simapi, simd, and cargopit; it does **not** configure Steam, audio devices, or wheel firmware.
 
-**Arch Linux (AUR)** — install simapi first, then simd, then cargopit:
+**Arch Linux (AUR)** — install simapi first, then simd, then monocoque:
 ```bash
 yay -S simapi-git
 yay -S simd-git
-yay -S cargopit-git
+yay -S monocoque-git
 ```
 simshmbridge is not in AUR; use the [prebuilt compatibility EXEs](https://github.com/spacefreak18/simshmbridge/releases).
 
-**Fedora / Nobara** — use the RPM for your Fedora version from [Releases](https://github.com/M4X1K02/cargopit/releases), plus matching [simapi/simd packages](https://github.com/Spacefreak18/simapi/releases). Nobara is Fedora-based; do not expect a separate installer flavour.
+**Fedora / Nobara** — use the RPM for your Fedora version from [Releases](https://github.com/Spacefreak18/monocoque/releases), plus matching [simapi/simd packages](https://github.com/Spacefreak18/simapi/releases). Nobara is Fedora-based; do not expect a separate installer flavour.
 
-**Debian / Ubuntu / Mint** — use the `.deb` that matches your release from [Releases](https://github.com/M4X1K02/cargopit/releases). Linux Mint often still needs the `libconfig9` (older SONAME) package; if `dpkg` complains about `libconfig`, try the other `.deb` on the same release page.
+**Debian / Ubuntu / Mint** — use the `.deb` that matches your release from [Releases](https://github.com/Spacefreak18/monocoque/releases). Linux Mint often still needs the `libconfig9` (older SONAME) package; if `dpkg` complains about `libconfig`, try the other `.deb` on the same release page.
 
 **Bazzite / Silverblue / Steam Deck (immutable)** — do not layer this with `rpm-ostree`. Use the distrobox helper:
 ```bash
@@ -112,7 +112,7 @@ apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-
 ```
 Use `liblua5.3-dev` if 5.4 is not in the repo. `libyder-dev` is similarly optional; the installer can build yder.
 
-Debian 12 (bookworm) ships GCC 12, which cannot compile current simapi. Use the [release .deb](https://github.com/M4X1K02/cargopit/releases), Ubuntu 24.04, or a newer GCC.
+Debian 12 (bookworm) ships GCC 12, which cannot compile current simapi. Use the [release .deb](https://github.com/Spacefreak18/monocoque/releases), Ubuntu 24.04, or a newer GCC.
 
 This code depends on the shared memory data headers in the simapi [repo](https://github.com/spacefreak18/simapi). When pulling lastest if the submodule does not download run:
 ```

@@ -2,7 +2,6 @@
 
 #include "ensure_simd.h"
 #include "dirhelper.h"
-#include "parameters.h"
 
 #include "../simulatorapi/simapi/simapi/simapi.h"
 #include "../slog/slog.h"
@@ -154,11 +153,11 @@ char* simd_find_binary(void)
 
     if (xdg_data != NULL && xdg_data[0] != '\0')
     {
-        asprintf(&xdg_simd, "%s/%s/simapi/simd/build/simd", xdg_data, PROGRAM_NAME);
+        asprintf(&xdg_simd, "%s/cargopit/simapi/simd/build/simd", xdg_data);
     }
     if (home != NULL)
     {
-        asprintf(&home_simd, "%s/.local/share/%s/simapi/simd/build/simd", home, PROGRAM_NAME);
+        asprintf(&home_simd, "%s/.local/share/cargopit/simapi/simd/build/simd", home);
         asprintf(&local_bin, "%s/.local/bin/simd", home);
     }
 

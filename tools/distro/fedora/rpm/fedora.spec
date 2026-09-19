@@ -5,7 +5,7 @@ Version: 0.0.5
 Release: 1
 License: GPLv3+
 Group: Applications/Sound
-Source: https://github.com/M4X1K02/cargopit
+Source: https://github.com/monocoque
 URL: https://spacefreak18.github.io/simapi
 Distribution: Fedora Linux
 Vendor: spacefreak18

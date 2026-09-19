@@ -15,6 +15,17 @@
 #include "simulatorapi/simapi/simapi/simdata.h"
 #include "slog/slog.h"
 
+#define PROGRAM_NAME "cargopit"
+
+void display_banner()
+{
+    printf("______  ______________   ___________________________________  ___________\n");
+    printf("___   |/  /_  __ \\__  | / /_  __ \\_  ____/_  __ \\_  __ \\_  / / /__  ____/\n");
+    printf("__  /|_/ /_  / / /_   |/ /_  / / /  /    _  / / /  / / /  / / /__  __/   \n");
+    printf("_  /  / / / /_/ /_  /|  / / /_/ // /___  / /_/ // /_/ // /_/ / _  /___   \n");
+    printf("/_/  /_/  \\____/ /_/ |_/  \\____/ \\____/  \\____/ \\___\\_\\\\____/  /_____/   \n");
+}
+
 void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* configdir_str, char* cachedir_str)
 {
 
@@ -26,11 +37,11 @@ void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* config
     {
         if(p->user_specified_config_dir == true && does_directory_exist(p->config_dirpath))
         {
-            asprintf(&ms->config_str, "%s/%s", p->config_dirpath, PROGRAM_CONFIG_FILENAME);
+            asprintf(&ms->config_str, "%s/%s", p->config_dirpath, "cargopit.config");
         }
         else
         {
-            asprintf(&ms->config_str, "%s%s", configdir_str, PROGRAM_CONFIG_FILENAME);
+            asprintf(&ms->config_str, "%s%s", configdir_str, "cargopit.config");
         }
     }
 
@@ -42,7 +53,7 @@ void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* config
     else
     {
         ms->log_dirname_str = strdup(cachedir_str);
-        ms->log_filename_str = strdup(PROGRAM_LOG_FILENAME);
+        ms->log_filename_str = strdup("cargopit.log");
     }
 
     ms->fps = p->fps;
@@ -129,7 +140,7 @@ int main(int argc, char** argv)
     fprintf(stderr, "settings applied\n");
 
   
-    slog_init(PROGRAM_NAME, SLOG_FLAGS_ALL, 1);
+    slog_init("cargopit", SLOG_FLAGS_ALL, 1);
     slog_config_t slgCfg;
     slog_config_get(&slgCfg);
     slgCfg.eColorFormat = SLOG_COLORING_TAG;
@@ -155,7 +166,7 @@ int main(int argc, char** argv)
 
     slogi("checking for diameters config");
     char* diameters_file_str;
-    asprintf(&diameters_file_str, "%s/.config/%s/diameters.config", home_dir_str, PROGRAM_NAME);
+    asprintf(&diameters_file_str, "%s/.config/cargopit/diameters.config", home_dir_str);
     ms->tyre_diameter_config = strdup(diameters_file_str);
     free(diameters_file_str);
 

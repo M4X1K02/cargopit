@@ -7,7 +7,7 @@ else()
 endif()
 
 
-SET_SOURCE_FILES_PROPERTIES( src/cargopit/cargopit.c PROPERTIES LANGUAGE C)
+SET_SOURCE_FILES_PROPERTIES( src/cargopit.c PROPERTIES LANGUAGE C)
 #set(CMAKE_BUILD_TYPE Debug)
 
 option(BUILD_GUI "Build GUI support" OFF)

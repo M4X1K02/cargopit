@@ -11,15 +11,6 @@
 
 static const char BUG_REPORT_URL[] = "github.com/M4X1K02/cargopit";
 
-void display_banner(void)
-{
-    printf("___   |/  /____________________________________ ____  ______ \n");
-    printf("__  /|_/ /_  __ \\_  __ \\  __ \\  ___/  __ \\  __ `/  / / /  _ \\\n");
-    printf("_  /  / / / /_/ /  / / / /_/ / /__ / /_/ / /_/ // /_/ //  __/\n");
-    printf("/_/  /_/  \\____//_/ /_/\\____/\\___/ \\____/\\__, / \\__,_/ \\___/ \n");
-    printf("                                           /_/\n");
-}
-
 int freeparams(Parameters* p)
 {
 
@@ -65,7 +56,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     p->user_specified_config_dir = false;
 
     // setup argument handling structures
-    const char* progname = PROGRAM_NAME;
+    const char* progname = "cargopit";
 
     struct arg_lit* arg_verbosity1   = arg_litn("v","verbose", 0, 2, "increase logging verbosity");
     struct arg_lit* arg_verbosity2   = arg_litn("v","verbose", 0, 2, "increase logging verbosity");

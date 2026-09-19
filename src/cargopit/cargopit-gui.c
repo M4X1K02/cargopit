@@ -23,6 +23,8 @@
 #include <nappgui.h>
 #include <gui/guiall.h>
 
+
+#define PROGRAM_NAME "cargopit"
 CargopitSettings ms;
 Parameters* p;
 
@@ -41,11 +43,11 @@ void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* config
     {
         if(p->user_specified_config_dir == true && does_directory_exist(p->config_dirpath))
         {
-            asprintf(&ms->config_str, "%s/%s", p->config_dirpath, PROGRAM_CONFIG_FILENAME);
+            asprintf(&ms->config_str, "%s/%s", p->config_dirpath, "cargopit.config");
         }
         else
         {
-            asprintf(&ms->config_str, "%s%s", configdir_str, PROGRAM_CONFIG_FILENAME);
+            asprintf(&ms->config_str, "%s%s", configdir_str, "cargopit.config");
         }
     }
 
@@ -57,7 +59,7 @@ void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* config
     else
     {
         ms->log_dirname_str = strdup(cachedir_str);
-        ms->log_filename_str = strdup(PROGRAM_LOG_FILENAME);
+        ms->log_filename_str = strdup("cargopit.log");
     }
 
     ms->fps = p->fps;
@@ -140,7 +142,7 @@ int cargopit_initialize(int argc, char** argv)
         free(configdir_str);
     }
   
-    slog_init(PROGRAM_NAME, SLOG_FLAGS_ALL, 1);
+    slog_init("cargopit", SLOG_FLAGS_ALL, 1);
     slog_config_t slgCfg;
     slog_config_get(&slgCfg);
     slgCfg.eColorFormat = SLOG_COLORING_TAG;

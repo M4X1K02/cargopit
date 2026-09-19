@@ -67,7 +67,7 @@ Usage: $(basename "${BASH_SOURCE[0]:-install.sh}") [options]
 
 Options:
   --from-source     Build simapi, simd, and cargopit from source (default)
-  --aur             Install simapi-git, simd-git, then cargopit-git from AUR
+  --aur             Install simapi-git, simd-git, then monocoque-git from AUR
   --distrobox       Print (and run, if distrobox exists) immutable-distro setup
   --build-bridges   Cross-compile simshmbridge with mingw instead of prebuilts
   --skip-bridges    Do not download or build simshmbridge compatibility EXEs
@@ -374,7 +374,7 @@ maybe_install_aur() {
     fi
     echo ""
     echo "You can install packaged builds from AUR instead of compiling:"
-    echo "  yay -S simapi-git && yay -S simd-git && yay -S cargopit-git"
+    echo "  yay -S simapi-git && yay -S simd-git && yay -S monocoque-git"
     echo ""
     local use_aur=""
     read -r -p "Install from AUR? [y/N]: " use_aur
@@ -398,7 +398,7 @@ install_from_aur() {
     log_info "Installing AUR packages sequentially with $helper (simapi first)"
     "$helper" -S --needed simapi-git
     "$helper" -S --needed simd-git
-    "$helper" -S --needed cargopit-git
+    "$helper" -S --needed monocoque-git
 
     if [ "$SKIP_BRIDGES" -eq 0 ]; then
         install_bridges

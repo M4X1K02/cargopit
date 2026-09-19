@@ -174,11 +174,11 @@ PACMANCONF_EOF
         rm -rf "$TMPDIR"
     fi
 
-    # Install AUR packages sequentially (simd depends on simapi, cargopit depends on both)
+    # Install AUR packages sequentially (simd depends on simapi, monocoque depends on both)
     echo "Installing AUR packages..."
     yay -S --needed --noconfirm simapi-git
     yay -S --needed --noconfirm simd-git
-    yay -S --needed --noconfirm cargopit-git
+    yay -S --needed --noconfirm monocoque-git
 
     # Build simshmbridge (not on AUR)
     INSTALL_DIR="$HOME/.local/share/simracing"
@@ -259,7 +259,7 @@ echo ""
 log_success "Cargopit (distrobox) installed!"
 echo ""
 echo "  Installed:"
-echo "    AUR packages:  simapi-git, simd-git, cargopit-git (in '$CONTAINER' container)"
+echo "    AUR packages:  simapi-git, simd-git, monocoque-git (in '$CONTAINER' container)"
 echo "    Bridge:        $INSTALL_DIR/simshmbridge/"
 echo "    Config:        $CONFIG_DIR/cargopit.config"
 echo "    Commands:      start-cargopit, test-cargopit (simd starts with cargopit)"
