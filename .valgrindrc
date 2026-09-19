@@ -120,13 +120,3 @@
    ...
    obj:*/lib*/lib*.so.*
 }
-{
-   nappgui_gbind_uninitialized
-   Memcheck:Cond
-   fun:_gbind_update_control
-}
-{
-   gtk_pango_uninitialized
-   Memcheck:Cond
-   fun:_pango_is_Vowel_Dependent
-}

@@ -187,12 +187,12 @@ manual_dep_hint() {
 Required build packages (names vary by distro):
   git cmake gcc make pkg-config
   libuv argtable libserialport libconfig hidapi lua libxdg-basedir libxml2 libpulse
-  yder (simd), python3
+  yder (simd), python3, rustc/cargo (cargopit-tui)
   optional: mingw-w64 (only with --build-bridges)
 
-Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 python yder
-Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config python3
-Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config python3
+Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 python yder rust
+Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config python3 rust cargo
+Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config python3 curl
 EOF
 }
 
@@ -246,7 +246,7 @@ install_yder_from_source() {
 
 install_deps_arch() {
     local deps=(
-        git cmake make gcc pkgconf python curl unzip
+        git cmake make gcc pkgconf python curl unzip rust
         libuv argtable libserialport libconfig hidapi lua54
         libpulse libxdg-basedir libxml2 yder procps-ng
     )
@@ -259,7 +259,7 @@ install_deps_arch() {
 
 install_deps_fedora() {
     local deps=(
-        git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates
+        git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates rust cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
         pulseaudio-libs-devel procps-ng-devel
@@ -306,11 +306,13 @@ install_deps_debian() {
     if ! run_root apt-get install -y libyder-dev; then
         install_yder_from_source
     fi
+    run_root apt-get install -y rustc cargo || true
 }
 
 install_deps_opensuse() {
     local deps=(
         git cmake gcc gcc-c++ make pkg-config python3 curl unzip
+        rust cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
         libpulse-devel procps-devel
@@ -351,6 +353,33 @@ check_requirements() {
     done
     if [ "${#missing[@]}" -ne 0 ]; then
         log_error "Missing required commands after dependency install: ${missing[*]}"
+        exit 1
+    fi
+}
+
+rustc_new_enough() {
+    have_cmd rustc || return 1
+    have_cmd cargo || return 1
+    local ver major minor
+    ver="$(rustc --version | awk '{print $2}')"
+    major="${ver%%.*}"
+    minor="${ver#*.}"
+    minor="${minor%%.*}"
+    [ "$major" -gt 1 ] || { [ "$major" -eq 1 ] && [ "$minor" -ge 88 ]; }
+}
+
+ensure_rust() {
+    export PATH="$HOME/.cargo/bin:$PATH"
+    if rustc_new_enough; then
+        log_info "Rust OK: $(rustc --version)"
+        return 0
+    fi
+    log_info "Installing Rust 1.88 via rustup (needed for cargopit-tui)"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+    # shellcheck disable=SC1090
+    . "$HOME/.cargo/env"
+    if ! rustc_new_enough; then
+        log_error "cargo/rustc 1.88+ is required to build cargopit-tui"
         exit 1
     fi
 }
@@ -511,6 +540,7 @@ build_simd() {
 
 build_monocoque() {
     log_info "Building monocoque..."
+    ensure_rust
     mkdir -p "$MONOCOQUE_SRC/build"
     cmake -S "$MONOCOQUE_SRC" -B "$MONOCOQUE_SRC/build"
     cmake --build "$MONOCOQUE_SRC/build" -j"$(nproc)"
@@ -687,36 +717,24 @@ exec "\$BIN" test -vv "\$@"
 EOF
     chmod +x "$BIN_DIR/test-monocoque"
 
-    local search_paths=(
-        "$INSTALL_DIR/monocoque/tools/monocoque-manager"
-        "$INSTALL_DIR/monocoque/monocoque-manager"
-        "${MONOCOQUE_SRC:-}/tools/monocoque-manager"
-        "${SCRIPT_DIR:-}/tools/monocoque-manager"
-        "${SCRIPT_DIR:-}/monocoque-manager"
+    local tui_src=""
+    local tui_candidates=(
+        "$MONOCOQUE_SRC/build/tui/release/cargopit-tui"
+        "$MONOCOQUE_SRC/build/tui/debug/cargopit-tui"
     )
-    local manager=""
-    local path
-    for path in "${search_paths[@]}"; do
-        [ -n "$path" ] || continue
-        if [ -f "$path" ]; then
-            manager="$path"
+    local tui_path
+    for tui_path in "${tui_candidates[@]}"; do
+        if [ -x "$tui_path" ]; then
+            tui_src="$tui_path"
             break
         fi
     done
-    if [ -z "$manager" ]; then
-        mkdir -p "$INSTALL_DIR"
-        if curl -fsSL -o "$INSTALL_DIR/monocoque-manager" \
-            "${CARGOPIT_RAW_MASTER_URL}/tools/monocoque-manager"; then
-            manager="$INSTALL_DIR/monocoque-manager"
-            log_info "Downloaded monocoque-manager from GitHub"
-        fi
-    fi
-    if [ -n "$manager" ]; then
-        cp "$manager" "$BIN_DIR/monocoque-manager"
-        chmod +x "$BIN_DIR/monocoque-manager"
-        log_success "Installed monocoque-manager from $manager"
+    if [ -n "$tui_src" ]; then
+        cp "$tui_src" "$BIN_DIR/cargopit-tui"
+        chmod +x "$BIN_DIR/cargopit-tui"
+        log_success "Installed cargopit-tui from $tui_src"
     else
-        log_warn "monocoque-manager not found (looked in cloned tree, not the directory you launched install.sh from)"
+        log_warn "cargopit-tui was not built"
     fi
 
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -806,10 +824,10 @@ verify_install() {
         log_error "simd binary missing"
         ok=0
     fi
-    if [ -f "$BIN_DIR/monocoque-manager" ]; then
-        log_success "manager: $BIN_DIR/monocoque-manager"
+    if [ -f "$BIN_DIR/cargopit-tui" ]; then
+        log_success "tui: $BIN_DIR/cargopit-tui"
     else
-        log_warn "monocoque-manager was not installed"
+        log_warn "cargopit-tui was not installed"
     fi
     if [ "$ok" -ne 1 ]; then
         exit 1
@@ -832,20 +850,20 @@ print_next_steps() {
     echo "  start-simd"
     echo "  start-monocoque"
     echo "  test-monocoque"
-    echo "  monocoque-manager"
+    echo "  cargopit-tui"
     echo ""
     echo "Confirm telemetry after the session is live:"
     echo "  hexdump /dev/shm/SIMAPI.DAT | head"
     echo "  hexdump /dev/shm/acpmf_physics | head     # AC / ACC"
     echo ""
-    echo "Start:         start-monocoque   (or monocoque-manager)"
+    echo "Start:         start-monocoque   (or cargopit-tui)"
     echo "simd is started automatically if it is not already running."
     echo "You will only be asked to act if simd is not installed."
     echo ""
     echo "Edit devices:  $CONFIG_DIR/monocoque/monocoque.config"
     echo "Examples:      $CONFIG_DIR/monocoque/monocoque.config.example"
     echo "Test devices:  test-monocoque"
-    echo "TUI:           monocoque-manager"
+    echo "TUI:           cargopit-tui"
     echo ""
     echo "Game setup:    https://spacefreak18.github.io/simapi/simd_usage"
     echo "Docs:          https://spacefreak18.github.io/simapi/"

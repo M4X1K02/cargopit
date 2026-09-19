@@ -6,7 +6,7 @@
 # A .deb declares only what it ships, because its dependencies remain separate
 # packages carrying their own copyright files. An AppImage carries those
 # libraries inside it, so their notices have to travel with it -- and most of
-# them here are LGPL (GTK, glib, pango and friends), where the obligation also
+# them here are LGPL (libpulse, glibc helpers, and friends), where the obligation also
 # covers saying where the corresponding source can be had.
 #
 # The mapping is mechanical rather than researched: every bundled library came

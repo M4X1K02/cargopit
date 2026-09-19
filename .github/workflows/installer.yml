@@ -6,7 +6,7 @@ on:
     paths:
       - install.sh
       - tools/uninstall.sh
-      - tools/monocoque-manager
+      - tui/**
       - tools/distro/**
       - README.md
       - HOW-TO-USE.md
@@ -17,7 +17,7 @@ on:
     paths:
       - install.sh
       - tools/uninstall.sh
-      - tools/monocoque-manager
+      - tui/**
       - tools/distro/**
       - README.md
       - HOW-TO-USE.md
@@ -28,14 +28,14 @@ on:
 permissions:
   contents: read
 
-# TMPDIR is what the test script uses to place LOGDIR when INSTALLER_LOG_DIR is unset.
-env:
-  TMPDIR: ${{ runner.temp }}
-  INSTALLER_LOG_DIR: ${{ runner.temp }}/monocoque-install-tests
-
 jobs:
   syntax:
     runs-on: ubuntu-latest
+    # runner.* is job-scoped; GitHub rejects it in workflow-level env.
+    # TMPDIR is what the test script uses to place LOGDIR when INSTALLER_LOG_DIR is unset.
+    env: &installer_log_env
+      TMPDIR: ${{ runner.temp }}
+      INSTALLER_LOG_DIR: ${{ runner.temp }}/monocoque-install-tests
     steps:
       - uses: actions/checkout@v4
       - name: Shell syntax
@@ -44,6 +44,7 @@ jobs:
   detect:
     needs: syntax
     runs-on: ubuntu-latest
+    env: *installer_log_env
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +65,7 @@ jobs:
   detect-edge:
     needs: syntax
     runs-on: ubuntu-latest
+    env: *installer_log_env
     steps:
       - uses: actions/checkout@v4
       - name: Nobara / Mint / Bazzite os-release mocks
@@ -82,6 +84,7 @@ jobs:
   install:
     needs: syntax
     runs-on: ubuntu-latest
+    env: *installer_log_env
     strategy:
       fail-fast: false
       matrix:

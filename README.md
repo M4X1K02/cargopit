@@ -52,7 +52,7 @@ bash tools/distro/distrobox/install-distrobox.sh
 ```
 This creates an Arch Linux container, installs packages via AUR, and sets up wrapper scripts (`start-simd`, `start-monocoque`, `test-monocoque`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
 
-**Build from source** (any supported distro). Download the script and run it in a terminal so prompts work (`curl | bash` cannot answer the AUR question and cannot find `monocoque-manager` next to itself):
+**Build from source** (any supported distro). Download the script and run it in a terminal so prompts work (`curl | bash` cannot answer the AUR question):
 ```bash
 git clone https://github.com/M4X1K02/cargopit.git
 cd cargopit
@@ -64,7 +64,7 @@ Options: `--aur`, `--skip-bridges`, `--build-bridges`, `--deps-only`. See `./ins
 
 Installer CI (`.github/workflows/installer.yml`) runs these checks in containers: `bash tools/distro/test-install-containers.sh detect|mocks|immutable|full <distro>`.
 
-After install, run `start-monocoque` or `monocoque-manager`. simd is started automatically if it is not already running; you will only be asked to act if simd is not installed. Game and bridge setup: [simd usage](https://spacefreak18.github.io/simapi/simd_usage). Full docs: [spacefreak18.github.io/simapi](https://spacefreak18.github.io/simapi/).
+After install, run `start-monocoque` or `cargopit-tui`. simd is started automatically if it is not already running; you will only be asked to act if simd is not installed. Game and bridge setup: [simd usage](https://spacefreak18.github.io/simapi/simd_usage). Full docs: [spacefreak18.github.io/simapi](https://spacefreak18.github.io/simapi/).
 
 For a manual walkthrough, see [HOW-TO-USE.md](HOW-TO-USE.md).
 
@@ -86,29 +86,26 @@ On Linux some titles need a compatibility exe from simshmbridge. Follow the link
 - xdg-basedir
 - lua
 - libproc2
-- libcurl4
-- libgtk3
-- libglu1-mesa
 - [simapi](https://github.com/spacefreak18/simapi)
 - [slog](https://github.com/kala13x/slog) (static)
-- [nappgui](https://github.com/frang75/nappgui_src) (static) (for GUI)
+- rustc / cargo (for `cargopit-tui`; rustc 1.88 or later)
 (sorta optional)
 - [simshmbridge](https://github.com/spacefreak18/simshmbridge) - for sims that need shared memory mapping like AC and Project Cars related.
 
 **Arch**
 ```
-pacman -S --needed git cmake base-devel pulse-native-provider libxdg-basedir libserialport libconfig libuv argtable hidapi lua54 libxml2 pkgconf procps-ng
+pacman -S --needed git cmake base-devel pulse-native-provider libxdg-basedir libserialport libconfig libuv argtable hidapi lua54 libxml2 pkgconf procps-ng rust
 ```
 
 **Fedora / Nobara**
 ```
-dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config procps-ng-devel
+dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config procps-ng-devel rust cargo
 ```
 `yder-devel` (needed to build simd) is often missing from Fedora repos. `install.sh` builds yder from source when the package is absent. Extra packages: https://repo.spacefreak18.xyz/Packages/Fedora/43/
 
 **Debian / Ubuntu / Mint**
 ```
-apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config libproc2-dev
+apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config libproc2-dev curl
 ```
 Use `liblua5.3-dev` if 5.4 is not in the repo. `libyder-dev` is similarly optional; the installer can build yder.
 
@@ -165,10 +162,8 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 | --- | --- | --- |
 | cargopit (this fork) | GPL-3.0-or-later | `LICENSE.rst` |
 | slog | MIT | `src/monocoque/slog/slog.h` |
-| NAppGUI | MIT | `src/monocoque/mgui/nappgui_src/LICENSE`, `packaging/licenses/nappgui-LICENSE.txt` |
 | simapi (submodule) | LGPL-3.0 | https://github.com/Spacefreak18/simapi |
 | Lua 5.4 | MIT | `packaging/licenses/lua-5.4-LICENSE.txt` |
-| GLU | SGI Free B 2.0 | `packaging/licenses/glu-LICENSE.txt` |
 
 ## ToDo
  - add frequency cap (low pass filter) to sound haptic effects
