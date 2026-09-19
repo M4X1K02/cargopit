@@ -1,4 +1,9 @@
-# Monocoque
+# Cargopit
+
+Cargopit is a hard fork of [monocoque](https://github.com/Spacefreak18/monocoque).
+This source was modified in 2026. Original copyright 2022 Paul Jones.
+The program remains GNU GPL v3 or later; see [License](#license).
+
 ```
 ___   |/  /____________________________________ ____  ______ 
 __  /|_/ /_  __ \_  __ \  __ \  ___/  __ \  __ `/  / / /  _ \
@@ -27,7 +32,7 @@ https://santeri.pikarinen.com/pages/usb_hid_reverse_engineering/
 
 ## Quick Install
 
-Prefer a packaged build when one exists. The source installer (`install.sh`) compiles simapi, simd, and monocoque; it does **not** configure Steam, audio devices, or wheel firmware.
+Prefer a packaged build of upstream monocoque when one exists. This fork is installed from source (`./install.sh --from-source`). The source installer compiles simapi, simd, and monocoque; it does **not** configure Steam, audio devices, or wheel firmware.
 
 **Arch Linux (AUR)** — install simapi first, then simd, then monocoque:
 ```bash
@@ -49,8 +54,8 @@ This creates an Arch Linux container, installs packages via AUR, and sets up wra
 
 **Build from source** (any supported distro). Download the script and run it in a terminal so prompts work (`curl | bash` cannot answer the AUR question and cannot find `monocoque-manager` next to itself):
 ```bash
-git clone https://github.com/Spacefreak18/monocoque.git
-cd monocoque
+git clone https://github.com/M4X1K02/cargopit.git
+cd cargopit
 git submodule update --init --recursive
 ./install.sh --from-source
 ```
@@ -149,6 +154,21 @@ See the dedicated [How To](HOW-TO-USE.md) for detailed instructions to set up an
 
 ## Join the Discussion
 [Sim Racing Matrix Space](https://matrix.to/#/#simracing:matrix.org)
+
+## License
+
+The program is GNU GPL v3 or later. Keep `LICENSE.rst` intact; that file is
+the GPL text. Debian-format inventory of this tree and bundled works:
+`tools/distro/debian/dpkg/copyright`.
+
+| Component | License | Where |
+| --- | --- | --- |
+| cargopit (this fork) | GPL-3.0-or-later | `LICENSE.rst` |
+| slog | MIT | `src/monocoque/slog/slog.h` |
+| NAppGUI | MIT | `src/monocoque/mgui/nappgui_src/LICENSE`, `packaging/licenses/nappgui-LICENSE.txt` |
+| simapi (submodule) | LGPL-3.0 | https://github.com/Spacefreak18/simapi |
+| Lua 5.4 | MIT | `packaging/licenses/lua-5.4-LICENSE.txt` |
+| GLU | SGI Free B 2.0 | `packaging/licenses/glu-LICENSE.txt` |
 
 ## ToDo
  - add frequency cap (low pass filter) to sound haptic effects

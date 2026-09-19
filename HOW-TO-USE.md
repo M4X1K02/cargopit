@@ -12,14 +12,14 @@ Prefer the method for your distro in the [README](README.md#quick-install). A pa
 
 To compile by hand instead:
 
-* build [monocoque](https://github.com/Spacefreak18/monocoque) — `git submodule update --init --recursive`, then `cmake` / `make`
+* build [cargopit](https://github.com/M4X1K02/cargopit) — `git submodule update --init --recursive`, then `cmake` / `make`
 * build [simd](https://github.com/Spacefreak18/simapi/tree/master/simd) (needs simapi installed first, including `simdata.h`)
 * get [simshmbridge](https://github.com/spacefreak18/simshmbridge) compatibility EXEs ([releases](https://github.com/spacefreak18/simshmbridge/releases)) unless you only use UDP titles
 
 ## Configure SIMD & Monocoque
 
 * `~/.config/simd/simd.config` — [example](https://github.com/Spacefreak18/simapi/blob/master/simd/conf/simd.config) (usually fine as-is)
-* `~/.config/monocoque/monocoque.config` — start from the installer stub or [conf/monocoque.config](https://github.com/Spacefreak18/monocoque/blob/master/conf/monocoque.config)
+* `~/.config/monocoque/monocoque.config` — start from the installer stub or [conf/monocoque.config](https://github.com/M4X1K02/cargopit/blob/master/conf/monocoque.config)
     * Keep only devices you have plugged in
     * [Bass shaker config](https://spacefreak18.github.io/simapi/shakers)
     * Test with `test-monocoque` or `./monocoque test -vv`

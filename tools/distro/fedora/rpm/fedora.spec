@@ -3,7 +3,7 @@ Summary: A device manager for racing sims
 Name: monocoque
 Version: 0.0.5
 Release: 1
-License: GPL
+License: GPLv3+
 Group: Applications/Sound
 Source: https://github.com/monocoque
 URL: https://spacefreak18.github.io/simapi
@@ -25,7 +25,7 @@ A device manager for Racing sims
 rm -rf $RPM_BUILD_DIR/monocoque
 if [ ! -d $RPM_SOURCE_DIR/monocoque ]; then
     cd $RPM_SOURCE_DIR
-    git clone https://github.com/spacefreak18/monocoque
+    git clone https://github.com/M4X1K02/cargopit monocoque
     cd monocoque
     git submodule update --init --recursive
     cd ..

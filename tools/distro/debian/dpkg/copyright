@@ -1,24 +1,132 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: monocoque
-Upstream-Contact: Paul Jones <paul@spacefreak18.xyz>
-Source: https://github.com/spacefreak18/monocoque
+Upstream-Name: cargopit
+Upstream-Contact: M4X1K02 <maxik.secure@tutanota.com>
+Source: https://github.com/M4X1K02/cargopit
+Comment:
+ Cargopit is a hard fork of https://github.com/Spacefreak18/monocoque
+ (copyright 2022 Paul Jones). This tree was modified in 2026.
+ The GNU GPL v3 text is in LICENSE.rst and must be kept intact.
 
-Files:
- *
+Files: *
 Copyright: 2022 Paul Jones
+           2026 M4X1K02
 License: GPL-3+
 
-Files:
- src/monocoque/slog/slog.?
-Copyright: 2015-2025  Sandro Kalatozishvili (s.kalatoz@gmail.com)
+Files: src/monocoque/slog/slog.?
+Copyright: 2015-2020 Sun Dro (f4tb0y@protonmail.com)
 License: MIT
+Comment:
+ The MIT notice in slog.h is the in-tree grant. An earlier packaging
+ file also named Sandro Kalatozishvili (s.kalatoz@gmail.com), 2015-2025.
 
-Files:
- src/monocoque/mgui/nappgui_src/*
+Files: src/monocoque/mgui/nappgui_src/*
 Copyright: 2021 Francisco García Collado
 License: MIT
+Comment: Full text in src/monocoque/mgui/nappgui_src/LICENSE (git submodule).
 
-Files:
- src/monocoque/simulatorapi/simapi/*
+Files: packaging/licenses/nappgui-LICENSE.txt
+Copyright: 2021 Francisco García Collado
+License: MIT
+Comment: Copy of the NAppGUI MIT license, kept when the submodule is not checked out.
+
+Files: src/monocoque/simulatorapi/simapi/*
 Copyright: 2022 Paul Jones
-License: LGPL
+License: LGPL-3
+Comment:
+ simapi is GNU LGPL v3.0, https://github.com/Spacefreak18/simapi
+ (git submodule src/monocoque/simulatorapi/simapi).
+
+Files: packaging/licenses/lua-5.4-LICENSE.txt
+Copyright: 1994-2026 Lua.org, PUC-Rio
+License: MIT
+Comment: License text for statically linked Lua 5.4.
+
+Files: packaging/licenses/glu-LICENSE.txt
+Copyright: 1991-2000 Silicon Graphics, Inc.
+License: SGI-B-2.0
+Comment: Full text in packaging/licenses/glu-LICENSE.txt.
+
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+ .
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+ .
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ .
+ The complete GNU GPL v3 text is in LICENSE.rst in this source tree.
+
+License: LGPL-3
+ This library is free software; you can redistribute it and/or
+ modify it under the terms of the GNU Lesser General Public License
+ as published by the Free Software Foundation; version 3 of the
+ License.
+ .
+ This library is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ Lesser General Public License for more details.
+ .
+ You should have received a copy of the GNU Lesser General Public
+ License along with this library.  If not, see
+ <https://www.gnu.org/licenses/>.
+ .
+ simapi is published as LGPL-3.0:
+ https://github.com/Spacefreak18/simapi
+
+License: MIT
+ Permission is hereby granted, free of charge, to any person obtaining
+ a copy of this software and associated documentation files (the
+ "Software"), to deal in the Software without restriction, including
+ without limitation the rights to use, copy, modify, merge, publish,
+ distribute, sublicense, and/or sell copies of the Software, and to
+ permit persons to whom the Software is furnished to do so, subject to
+ the following conditions:
+ .
+ The above copyright notice and this permission notice shall be
+ included in all copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+License: SGI-B-2.0
+ SGI FREE SOFTWARE LICENSE B (Version 2.0, Sept. 18, 2008)
+ .
+ Permission is hereby granted, free of charge, to any person obtaining
+ a copy of this software and associated documentation files (the
+ "Software"), to deal in the Software without restriction, including
+ without limitation the rights to use, copy, modify, merge, publish,
+ distribute, sublicense, and/or sell copies of the Software, and to
+ permit persons to whom the Software is furnished to do so, subject to
+ the following conditions:
+ .
+ The above copyright notice including the dates of first publication
+ and either this permission notice or a reference to
+ http://oss.sgi.com/projects/FreeB/ shall be included in all copies or
+ substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ IN NO EVENT SHALL SILICON GRAPHICS, INC. BE LIABLE FOR ANY CLAIM,
+ DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR
+ THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ .
+ Except as contained in this notice, the name of Silicon Graphics, Inc.
+ shall not be used in advertising or otherwise to promote the sale, use
+ or other dealings in this Software without prior written authorization
+ from Silicon Graphics, Inc.
+ .
+ The complete notice is in packaging/licenses/glu-LICENSE.txt.

@@ -5,7 +5,7 @@ pkgver=0.1.0r94
 pkgrel=2
 pkgdesc="Device Manager for Racing Sims"
 arch=('x86_64')
-url="https://github.com/spacefreak18/monocoque"
+url="https://github.com/M4X1K02/cargopit"
 license=('GPL3')
 depends=(
         hidapi
@@ -22,7 +22,7 @@ makedepends=(
   cmake
 )
 source=(
-  git+https://github.com/spacefreak18/monocoque
+  monocoque::git+https://github.com/M4X1K02/cargopit
 )
 sha256sums=(
   'SKIP'

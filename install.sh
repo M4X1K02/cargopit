@@ -9,6 +9,9 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}"
 BIN_DIR="${HOME}/.local/bin"
 SIMAPI_PREFIX="${SIMAPI_PREFIX:-/usr/local}"
 BRIDGE_RELEASE_URL="https://github.com/Spacefreak18/simshmbridge/releases/download/0.1.0/compatbinaries.zip"
+CARGOPIT_GITHUB_REPO="M4X1K02/cargopit"
+CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
+CARGOPIT_RAW_MASTER_URL="https://raw.githubusercontent.com/${CARGOPIT_GITHUB_REPO}/master"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -201,7 +204,7 @@ print_immutable_help() {
     echo ""
     echo "    distrobox create --name monocoque --image archlinux:latest"
     echo "    distrobox enter monocoque"
-    echo "    curl -fsSL https://raw.githubusercontent.com/Spacefreak18/monocoque/master/install.sh -o install.sh"
+    echo "    curl -fsSL ${CARGOPIT_RAW_MASTER_URL}/install.sh -o install.sh"
     echo "    bash install.sh --from-source"
     echo ""
     echo "Docs: https://spacefreak18.github.io/simapi/"
@@ -437,7 +440,7 @@ prepare_sources() {
             | tar -C "$INSTALL_DIR/monocoque" -xf -
         MONOCOQUE_SRC="$INSTALL_DIR/monocoque"
     else
-        git_clone_or_update https://github.com/Spacefreak18/monocoque.git "$INSTALL_DIR/monocoque" 1
+        git_clone_or_update "$CARGOPIT_GIT_URL" "$INSTALL_DIR/monocoque" 1
         MONOCOQUE_SRC="$INSTALL_DIR/monocoque"
     fi
 
@@ -703,7 +706,7 @@ EOF
     if [ -z "$manager" ]; then
         mkdir -p "$INSTALL_DIR"
         if curl -fsSL -o "$INSTALL_DIR/monocoque-manager" \
-            "https://raw.githubusercontent.com/Spacefreak18/monocoque/master/tools/monocoque-manager"; then
+            "${CARGOPIT_RAW_MASTER_URL}/tools/monocoque-manager"; then
             manager="$INSTALL_DIR/monocoque-manager"
             log_info "Downloaded monocoque-manager from GitHub"
         fi
@@ -853,7 +856,7 @@ run_distrobox() {
     if have_cmd distrobox; then
         log_info "Creating Arch distrobox 'monocoque' (if needed)..."
         distrobox create --name monocoque --image archlinux:latest --yes || true
-        local script_arg="bash -c 'curl -fsSL https://raw.githubusercontent.com/Spacefreak18/monocoque/master/install.sh | bash -s -- --from-source'"
+        local script_arg="bash -c 'curl -fsSL ${CARGOPIT_RAW_MASTER_URL}/install.sh | bash -s -- --from-source'"
         if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/install.sh" ]; then
             script_arg="bash \"$SCRIPT_DIR/install.sh\" --from-source"
         fi

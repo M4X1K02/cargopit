@@ -9,6 +9,8 @@
 #include <argtable2.h>
 #include <regex.h>
 
+static const char BUG_REPORT_URL[] = "github.com/M4X1K02/cargopit";
+
 int freeparams(Parameters* p)
 {
 
@@ -239,7 +241,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         arg_print_syntax(stdout,argtable2,"\n");
         printf("Usage 3: %s ", progname);
         arg_print_syntax(stdout,argtable3,"\n");
-        printf("\nReport bugs on the github github.com/spacefreak18/monocoque.\n");
+        printf("\nReport bugs on %s.\n", BUG_REPORT_URL);
         exitcode = E_SUCCESS_AND_EXIT;
         goto cleanup;
     }
