@@ -18,5 +18,5 @@ a.out
 
 /stage
 
-__pycache__/
-*.py[cod]
+# cargo's local target when developing inside tui/; CMake uses build/tui/.
+/tui/target

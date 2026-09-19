@@ -1,0 +1,12 @@
+[package]
+name = "cargopit-tui"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Terminal interface for Cargopit / monocoque process control and device configuration"
+publish = false
+
+[dependencies]
+anyhow = "1"
+crossterm = "0.28"
+ratatui = "0.29"

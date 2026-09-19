@@ -53,7 +53,7 @@ jobs:
     steps:
     # Must come before actions/checkout: these images are minimal and ship
     # no git, so checkout would fall back to a tarball download and silently
-    # skip submodules -- simapi and nappgui_src are both required to build.
+    # skip submodules -- simapi is required to build.
     # No sudo either; container jobs already run as root.
     - name: Install build dependencies
       run: |
@@ -61,14 +61,18 @@ jobs:
         apt-get install -y --no-install-recommends \
           ca-certificates curl git \
           build-essential cmake pkg-config \
-          libgtk-3-dev libuv1-dev libargtable2-dev libserialport-dev \
+          libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev libcurl4-openssl-dev \
-          libglu1-mesa-dev
+          libxml2-dev libpulse-dev libproc2-dev
 
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    - name: Install Rust
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
     # $GITHUB_WORKSPACE, not ${{ github.workspace }}: in a container job the
     # expression still renders the *host* path (/home/runner/work/...) while
@@ -87,7 +91,6 @@ jobs:
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
-        -DBUILD_GUI=on
         -DCMAKE_CXX_COMPILER=g++
         -DCMAKE_C_COMPILER=gcc
         -DCMAKE_BUILD_TYPE=Release
@@ -144,7 +147,7 @@ jobs:
         sed -i "s/^Version:.*/Version: ${{ steps.pkgver.outputs.version }}/" ./PKG_SOURCE/DEBIAN/control
         cp ./tools/distro/debian/dpkg/copyright ./PKG_SOURCE/DEBIAN/copyright
         cp ./build/monocoque ./PKG_SOURCE/usr/bin/monocoque
-        cp ./build/gmonocoque ./PKG_SOURCE/usr/bin/gmonocoque
+        cp ./build/tui/release/cargopit-tui ./PKG_SOURCE/usr/bin/cargopit-tui
         cp ./tools/monocoque.desktop ./PKG_SOURCE/usr/share/applications/monocoque.desktop
         dpkg-deb --build PKG_SOURCE monocoque-${{ matrix.os }}.deb
         echo "--- control as packaged ---"
@@ -183,9 +186,8 @@ jobs:
     permissions:
       contents: write
     steps:
-    # The -devel list is the one fedora.spec's own header comment documents,
-    # plus gtk3/libcurl/mesa-libGLU to match its `Requires:` line -- the spec
-    # configures with -DBUILD_GUI=on, so the GUI's deps are build deps too.
+    # The -devel list is the one fedora.spec's own header comment documents.
+    # cargopit-tui is built with cargo (see the Install Rust step).
     #
     # Retried because this pulls openh264 from Fedora's third-party Cisco
     # repo (ciscobinary.openh264.org), which is a single-mirror CDN outside
@@ -204,8 +206,7 @@ jobs:
             rpm-build cmake gcc gcc-c++ make git curl \
             pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel \
             libserialport-devel lua-devel libuv-devel libxdg-basedir-devel \
-            libxml2-devel procps-ng-devel gtk3-devel libcurl-devel \
-            mesa-libGLU-devel && exit 0
+            libxml2-devel procps-ng-devel rust cargo && exit 0
           echo "dnf install failed (attempt $attempt), retrying in 15s..."
           sleep 15
         done
@@ -214,12 +215,15 @@ jobs:
 
     # submodules: recursive is new here. It didn't matter while %prep cloned
     # upstream and ran `git submodule update` itself; now that the staged
-    # checkout is what gets built, an empty nappgui_src fails configure with
-    # "does not contain a CMakeLists.txt file". Missed by the local fedora:44
-    # rehearsal, which mounted a working tree that already had its submodules.
+    # checkout is what gets built, an empty simapi submodule fails configure.
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    - name: Install Rust
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
     - name: create rpmbuild dirs
       run: mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -313,20 +317,20 @@ jobs:
       with:
         submodules: recursive
 
-    # librsvg2-common and libgtk-3-bin are for linuxdeploy's gtk plugin, not
-    # the build itself -- it needs an svg pixbuf loader and
-    # gtk-update-icon-cache to assemble a self-contained GTK runtime.
     - name: Install build dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
-          build-essential cmake pkg-config \
-          libgtk-3-dev libuv1-dev libargtable2-dev libserialport-dev \
+          build-essential cmake pkg-config curl \
+          libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev libcurl4-openssl-dev \
-          libglu1-mesa-dev \
-          desktop-file-utils file patchelf wget \
-          librsvg2-common libgtk-3-bin
+          libxml2-dev libpulse-dev libproc2-dev \
+          desktop-file-utils file patchelf wget
+
+    - name: Install Rust
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
     # -std=gnu2x for the C23 enum syntax above: GCC 13 implements it but
     # still defaults to gnu17, unlike GCC 15+ (which the container-based
@@ -334,7 +338,7 @@ jobs:
     # than c2x so GNU extensions stay on -- simapi also relies on asprintf.
     - name: Build
       run: |
-        cmake -B build -DBUILD_GUI=on -DCMAKE_BUILD_TYPE=Release \
+        cmake -B build -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_C_FLAGS=-std=gnu2x -S .
         cmake --build build --config Release
 
@@ -374,8 +378,7 @@ jobs:
         echo "packaging as $OUTPUT"
 
         wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-        wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-gtk/raw/master/linuxdeploy-plugin-gtk.sh
-        chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-gtk.sh
+        chmod +x linuxdeploy-x86_64.AppImage
 
         # Deploy dependencies first, without packaging, so there is a populated
         # AppDir to take licences from -- an AppImage distributes every library
@@ -383,7 +386,6 @@ jobs:
         # needs none of this because its dependencies stay separate packages.
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
           --appdir AppDir \
-          --plugin gtk \
           --desktop-file AppDir/usr/share/applications/monocoque.desktop \
           --icon-file tools/monocoque.svg
 
@@ -393,7 +395,6 @@ jobs:
         # than installed from packages, so dpkg cannot account for them.
         install -Dm644 LICENSE.rst AppDir/usr/share/doc/monocoque/LICENSE.rst
         install -Dm644 tools/distro/debian/dpkg/copyright AppDir/usr/share/doc/monocoque/copyright
-        install -Dm644 src/monocoque/mgui/nappgui_src/LICENSE AppDir/usr/share/doc/nappgui/LICENSE
 
         # Now package the AppDir, licences included.
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
@@ -435,13 +436,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      # No submodules: recursive here -- the manifest fetches simapi and
-      # nappgui_src itself as explicit `type: git` sources (pinned commits,
-      # reproducible regardless of what's checked out on disk). Confirmed
-      # via a failed CI run: recursive submodule checkout populates those
-      # paths with real .git files first, which then collides with
-      # flatpak-builder's own git source trying to clone into the same spot
-      # ("cannot overwrite non-directory .git with directory").
+      # No submodules: recursive here -- the manifest fetches simapi itself
+      # as an explicit `type: git` source (pinned commit, reproducible
+      # regardless of what's checked out on disk). Confirmed via a failed CI
+      # run: recursive submodule checkout populates that path with a real
+      # .git file first, which then collides with flatpak-builder's own git
+      # source trying to clone into the same spot ("cannot overwrite
+      # non-directory .git with directory").
       - uses: actions/checkout@v4
 
       # ppa:flatpak/stable, not Ubuntu's own package: 22.04's flatpak-builder
@@ -454,7 +455,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+          sudo flatpak install -y --noninteractive flathub \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Build .flatpak
         working-directory: flatpak

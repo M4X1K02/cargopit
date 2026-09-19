@@ -53,7 +53,7 @@ No extra in-game telemetry toggle. You still need the AC/ACC bridge EXE in the S
 
 ## Run
 
-Start a session with `start-monocoque`, `monocoque play`, or `monocoque-manager`. Monocoque starts simd itself when it is not already running. Launch the game from Steam as usual.
+Start a session with `start-monocoque`, `monocoque play`, or `cargopit-tui`. Monocoque starts simd itself when it is not already running. Launch the game from Steam as usual.
 
 If simd is not installed, that is the one case that needs a human: install simd and try again.
 
@@ -67,4 +67,4 @@ Shared-memory titles still need the bridge EXE in the Steam launch command (`SIM
 * AMS2: look for `/dev/shm/$pcars2$`
 * confirm the bridge EXE is actually running (`ps aux | grep -i bridge`)
 * if simd sees the game but monocoque shows no RPM/gear, re-check [game settings](#steam--game-config)
-* `monocoque-manager` can start/stop the two processes if `~/.local/bin` is on `PATH`
+* `cargopit-tui` can start/stop the two processes, edit devices, and view logs if `~/.local/bin` is on `PATH`

@@ -49,7 +49,7 @@ need_grep() {
 need_exec "$BIN_DIR/start-monocoque"
 need_exec "$BIN_DIR/start-simd"
 need_exec "$BIN_DIR/test-monocoque"
-need_exec "$BIN_DIR/monocoque-manager"
+need_exec "$BIN_DIR/cargopit-tui"
 
 need_grep "$BIN_DIR/start-monocoque" 'play'
 

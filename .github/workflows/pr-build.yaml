@@ -15,13 +15,18 @@ jobs:
       - name: Update apt
         run: sudo apt update
       - name: Install dependencies
-        # Same list as ci.yaml's ubuntu-latest leg, minus the GUI-only deps
-        # (libgtk-3-dev, libglu1-mesa-dev) and libcurl4-openssl-dev — this
-        # workflow builds the CLI + test suite only, not the GUI.
-        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+        # Same list as ci.yaml's ubuntu-latest leg. cargopit-tui is built with
+        # cargo when BUILD_TUI is on (the default).
+        run: sudo apt install -y cmake pkg-config build-essential curl libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Configure CMake
         run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
       - name: Build
         run: cmake --build build --config Debug
       - name: Run tests
         run: ctest --test-dir build --output-on-failure --timeout 30
+      - name: Run TUI tests
+        run: cargo test --manifest-path tui/Cargo.toml

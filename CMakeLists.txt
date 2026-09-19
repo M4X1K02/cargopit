@@ -10,7 +10,7 @@ endif()
 SET_SOURCE_FILES_PROPERTIES( src/monocoque.c PROPERTIES LANGUAGE C)
 #set(CMAKE_BUILD_TYPE Debug)
 
-option(BUILD_GUI "Build GUI support" OFF)
+option(BUILD_TUI "Build cargopit-tui (ratatui)" ON)
 option(BUILD_SHARED "Build monocoque shared library" OFF)
 option(ENABLE_TESTS "Build test suite" OFF)
 
@@ -61,10 +61,6 @@ else()
 endif()
 add_executable(monocoque-cli src/monocoque/monocoque-cli.c)
 set_target_properties(monocoque-cli PROPERTIES OUTPUT_NAME monocoque)
-if(BUILD_GUI)
-    add_executable(monocoque-gui src/monocoque/monocoque-gui.c)
-    set_target_properties(monocoque-gui PROPERTIES OUTPUT_NAME gmonocoque)
-endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBPROCPS libprocps)
@@ -107,11 +103,6 @@ target_link_libraries(monocoque m hidapi-hidraw pulse serialport xml2 argtable2 
 target_include_directories(monocoque PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
 target_link_libraries(monocoque-cli m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
 target_include_directories(monocoque-cli PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
-if(BUILD_GUI)
-    add_subdirectory(src/monocoque/mgui)
-    target_link_libraries(monocoque-gui m hidapi-hidraw pulse serialport xml2 argtable2 config mgui gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
-    target_include_directories(monocoque-gui PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
-endif()
 
 
 
@@ -184,7 +175,38 @@ if(ENABLE_TESTS AND NOT MONOCOQUE_SUBPROJECT)
 endif()
 
 install(TARGETS monocoque-cli RUNTIME DESTINATION bin)
-if(BUILD_GUI)
-    install(TARGETS monocoque-gui RUNTIME DESTINATION bin)
+if(BUILD_TUI)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR "cargo is required to build cargopit-tui. Install Rust or pass -DBUILD_TUI=OFF.")
+    endif()
+
+    set(CARGOPIT_TUI_MANIFEST "${CMAKE_SOURCE_DIR}/tui/Cargo.toml")
+    set(CARGOPIT_TUI_TARGET_DIR "${CMAKE_BINARY_DIR}/tui")
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(CARGO_BUILD_FLAGS "")
+        set(CARGO_PROFILE_DIR "debug")
+    else()
+        set(CARGO_BUILD_FLAGS "--release")
+        set(CARGO_PROFILE_DIR "release")
+    endif()
+    set(CARGOPIT_TUI_BIN "${CARGOPIT_TUI_TARGET_DIR}/${CARGO_PROFILE_DIR}/cargopit-tui")
+
+    file(GLOB_RECURSE CARGOPIT_TUI_SOURCES
+        "${CMAKE_SOURCE_DIR}/tui/src/*.rs"
+        "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
+        "${CMAKE_SOURCE_DIR}/tui/Cargo.lock")
+
+    add_custom_command(
+        OUTPUT "${CARGOPIT_TUI_BIN}"
+        COMMAND "${CARGO_EXECUTABLE}" build ${CARGO_BUILD_FLAGS}
+            --manifest-path "${CARGOPIT_TUI_MANIFEST}"
+            --target-dir "${CARGOPIT_TUI_TARGET_DIR}"
+        DEPENDS ${CARGOPIT_TUI_SOURCES}
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tui"
+        COMMENT "Building cargopit-tui"
+        VERBATIM)
+    add_custom_target(cargopit-tui ALL DEPENDS "${CARGOPIT_TUI_BIN}")
+    install(PROGRAMS "${CARGOPIT_TUI_BIN}" DESTINATION bin)
 endif()
 install(FILES tools/monocoque.desktop DESTINATION share/applications)

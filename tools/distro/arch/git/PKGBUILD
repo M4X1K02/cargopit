@@ -20,6 +20,7 @@ depends=(
 makedepends=(
   git
   cmake
+  rust
 )
 source=(
   monocoque::git+https://github.com/M4X1K02/cargopit
@@ -44,4 +45,5 @@ package() {
 
   mkdir -p "${pkgdir}/usr/bin/"
   cp "$srcdir/$_reponame"/build/$_reponame "${pkgdir}/usr/bin/$_reponame"
+  cp "$srcdir/$_reponame"/build/tui/release/cargopit-tui "${pkgdir}/usr/bin/cargopit-tui"
 }
