@@ -24,7 +24,7 @@ Usage docs for sims, bridges, and hardware: [spacefreak18.github.io/simapi](http
 - Tachometers: Revburner only, including existing Revburner XML and `cargopit config tachometer` to write a calibration file.
 - Serial output to Arduino and ESP32. Sample sketches for shift lights, simwind, and motor haptics live in `src/arduino/`. Custom serial devices use a [Lua payload format](https://spacefreak18.github.io/simapi/serial_custom).
 - Wheels and pedals including Clubsport Elite V3, [Logitech G29](https://spacefreak18.github.io/simapi/logitechg29), Moza R3/R5/R8/R9/KS Pro, Cammus C5/C12, Simagic GT Neo / P1000, and Simnet. Full list: [third-party devices](https://spacefreak18.github.io/simapi/thirdpartydevices).
-- `cargopit-manager`: curses TUI to start, test, restart, and stop the stack. Optional NAppGUI app `gcargopit` when built with `-DBUILD_GUI=on`.
+- `cargopit-manager`: curses TUI to start, test, restart, and stop the stack.
 - Starts [simd](https://spacefreak18.github.io/simapi/simd_usage) automatically when it is installed and not already running.
 
 ## Adding More Devices
@@ -88,11 +88,11 @@ cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Useful CMake options: `BUILD_GUI` (NAppGUI app `gcargopit`), `ENABLE_TESTS`, `BUILD_SHARED`. Static analysis: `-Danalyze=on`.
+Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`. Static analysis: `-Danalyze=on`.
 
 ### Dependencies
 
-Vendored/static copies are listed so their licenses stay visible. PulseAudio is the sound backend (PortAudio is not linked). GTK, GLU, libcurl, and NAppGUI are only needed for `-DBUILD_GUI=on`.
+Vendored/static copies are listed so their licenses stay visible. PulseAudio is the sound backend.
 
 - libserialport — Arduino / serial devices
 - hidapi (hidraw) — USB HID
@@ -103,7 +103,6 @@ Vendored/static copies are listed so their licenses stay visible. PulseAudio is 
 - python3 — `cargopit-manager` and some tests
 - [simapi](https://github.com/spacefreak18/simapi) (submodule)
 - [slog](https://github.com/kala13x/slog) (static, in-tree)
-- [nappgui](https://github.com/frang75/nappgui_src) (submodule, GUI only) plus libgtk-3, libglu1-mesa, libcurl
 - [simshmbridge](https://github.com/spacefreak18/simshmbridge) — optional; shared-memory titles such as Assetto Corsa and Project CARS–related sims
 
 **Arch**
@@ -133,8 +132,6 @@ Use `liblua5.3-dev` if 5.4 is not in the repo, and `libprocps-dev` if `libproc2-
 ```bash
 zypper install git cmake gcc gcc-c++ make pkg-config python3 libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel
 ```
-
-GUI extra packages (only with `-DBUILD_GUI=on`): `libgtk-3-dev` `libglu1-mesa-dev` `libcurl4-openssl-dev` (Debian names; Fedora/Arch equivalents).
 
 End-user source install (compiles simapi, simd, and this tree):
 
@@ -192,10 +189,8 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 | --- | --- | --- |
 | cargopit (this fork) | GPL-3.0-or-later | `LICENSE.rst` |
 | slog | MIT | `src/cargopit/slog/slog.h` |
-| NAppGUI | MIT | `src/cargopit/mgui/nappgui_src/LICENSE`, `packaging/licenses/nappgui-LICENSE.txt` |
 | simapi (submodule) | LGPL-3.0 | https://github.com/Spacefreak18/simapi |
 | Lua 5.4 | MIT | `packaging/licenses/lua-5.4-LICENSE.txt` |
-| GLU | SGI Free B 2.0 | `packaging/licenses/glu-LICENSE.txt` |
 
 ## ToDo
 
