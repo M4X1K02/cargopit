@@ -15,9 +15,7 @@ jobs:
       - name: Update apt
         run: sudo apt update
       - name: Install dependencies
-        # Same list as ci.yaml's ubuntu-latest leg, minus the GUI-only deps
-        # (libgtk-3-dev, libglu1-mesa-dev) and libcurl4-openssl-dev — this
-        # workflow builds the CLI + test suite only, not the GUI.
+        # Same list as ci.yaml's ubuntu-latest leg.
         run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
       - name: Configure CMake
         run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug

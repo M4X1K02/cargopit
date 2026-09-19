@@ -26,9 +26,8 @@ $SUDO apt-get install -y --no-install-recommends \
     libpulse-dev libproc2-dev
 
 # --- Submodules -------------------------------------------------------------
-# simapi (shared-memory headers/mappers) and nappgui_src are both required to
-# configure and build; an empty submodule fails CMake with a missing
-# CMakeLists.txt error.
+# simapi (shared-memory headers/mappers) is required to configure and build;
+# an empty submodule fails CMake with a missing CMakeLists.txt error.
 git submodule update --init --recursive
 
 # --- Configure + build ------------------------------------------------------

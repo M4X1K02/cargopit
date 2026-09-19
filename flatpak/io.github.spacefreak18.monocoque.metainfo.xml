@@ -14,9 +14,8 @@
     </p>
   </description>
   <launchable type="desktop-id">io.github.spacefreak18.monocoque.desktop</launchable>
-  <provides>
+    <provides>
     <binary>cargopit</binary>
-    <binary>gcargopit</binary>
   </provides>
   <url type="homepage">https://spacefreak18.github.io/simapi/monocoque.html</url>
   <url type="vcs-browser">https://github.com/Spacefreak18/monocoque</url>

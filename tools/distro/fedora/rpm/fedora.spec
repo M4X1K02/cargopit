@@ -10,7 +10,7 @@ URL: https://spacefreak18.github.io/simapi
 Distribution: Fedora Linux
 Vendor: spacefreak18
 Packager: Paul Jones <paul@spacefreak18.xyz>
-Requires: pulseaudio-libs argtable libconfig hidapi libserialport libuv libxdg-basedir lua-libs libxml2 procps-ng gtk3 libcurl mesa-libGL
+Requires: pulseaudio-libs argtable libconfig hidapi libserialport libuv libxdg-basedir lua-libs libxml2 procps-ng
 
 %description
 A device manager for Racing sims
@@ -34,15 +34,13 @@ cp -r $RPM_SOURCE_DIR/cargopit $RPM_BUILD_DIR/
 
 %build
 cd $RPM_BUILD_DIR/cargopit
-cmake -B build -DBUILD_GUI=on
+cmake -B build
 cd build
 make
 
 %install
 mkdir -p $RPM_BUILD_ROOT/usr/bin
 cp $RPM_BUILD_DIR/cargopit/build/cargopit $RPM_BUILD_ROOT/usr/bin/cargopit
-cp $RPM_BUILD_DIR/cargopit/build/gcargopit $RPM_BUILD_ROOT/usr/bin/gcargopit
 
 %files
 /usr/bin/cargopit
-/usr/bin/gcargopit
