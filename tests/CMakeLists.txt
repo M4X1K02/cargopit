@@ -14,10 +14,20 @@ add_executable(ensure_simd_test ensure_simd_test.c)
 target_link_libraries(ensure_simd_test helper config slog xml2 simulatorapi m ${PROC_LIBS})
 add_test(NAME ensure_simd_test COMMAND ensure_simd_test)
 
+add_executable(dirt2_haptic_mapping_test dirt2_haptic_mapping_test.c)
+target_link_libraries(dirt2_haptic_mapping_test simulatorapi m ${PROC_LIBS})
+add_test(NAME dirt2_haptic_mapping_test COMMAND dirt2_haptic_mapping_test)
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME startup_play_missing_simd
         COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh missing $<TARGET_FILE:cargopit-cli>)
     add_test(NAME startup_play_starts_simd
         COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh starts $<TARGET_FILE:cargopit-cli>)
+endif()
+
+find_program(PYTHON_PROGRAM python3)
+if (PYTHON_PROGRAM)
+    add_test(NAME deployment_environments
+        COMMAND ${PYTHON_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/deployment_environments_test.py)
 endif()

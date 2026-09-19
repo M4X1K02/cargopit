@@ -46,9 +46,14 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.image }}
+    # GitHub deployment environment; name must exist in
+    # .github/deployment-environments.json (same string as matrix.os).
+    environment:
+      name: ${{ matrix.os }}
 
     permissions:
       contents: write
+      deployments: write
 
     steps:
     # Must come before actions/checkout: these images are minimal and ship
@@ -180,8 +185,13 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ${{ matrix.image }}
+    # GitHub deployment environment; name must exist in
+    # .github/deployment-environments.json (same string as matrix.os).
+    environment:
+      name: ${{ matrix.os }}
     permissions:
       contents: write
+      deployments: write
     steps:
     # The -devel list is the one fedora.spec's own header comment documents,
     # plus gtk3/libcurl/mesa-libGLU to match its `Requires:` line -- the spec
@@ -306,8 +316,13 @@ jobs:
     # on the standard flag). ubuntu-24.04 / GCC 13 is therefore the oldest
     # usable base, giving a glibc 2.39 floor.
     runs-on: ubuntu-24.04
+    # GitHub deployment environment; name must exist in
+    # .github/deployment-environments.json.
+    environment:
+      name: appimage
     permissions:
       contents: write
+      deployments: write
     steps:
     - uses: actions/checkout@v4
       with:
@@ -433,8 +448,13 @@ jobs:
     # jobs and upload regardless.
     runs-on: ubuntu-22.04
     continue-on-error: true
+    # GitHub deployment environment; name must exist in
+    # .github/deployment-environments.json.
+    environment:
+      name: flatpak
     permissions:
       contents: write
+      deployments: write
     steps:
       # No submodules: recursive here -- the manifest fetches simapi and
       # nappgui_src itself as explicit `type: git` sources (pinned commits,

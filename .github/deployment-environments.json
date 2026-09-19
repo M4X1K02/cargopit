@@ -1,0 +1,12 @@
+{
+  "environments": [
+    "production",
+    "ubuntu-latest",
+    "debian-latest",
+    "debian-stable",
+    "fedora-43",
+    "fedora-44",
+    "appimage",
+    "flatpak"
+  ]
+}

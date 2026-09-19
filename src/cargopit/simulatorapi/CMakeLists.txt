@@ -40,6 +40,8 @@ set(simulatorapi_source_files
   simapi/simapi/mapping/wreckfest2mapper.c
   simapi/simapi/mapping/forzamapper.c
   simapi/simapi/getpid.c
+  dr2_haptic_telemetry.c
+  dr2_haptic_telemetry.h
 )
 
 add_library(simulatorapi STATIC ${simulatorapi_source_files})
