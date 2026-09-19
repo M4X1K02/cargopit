@@ -28,6 +28,11 @@ on:
 permissions:
   contents: read
 
+# TMPDIR is what the test script uses to place LOGDIR when INSTALLER_LOG_DIR is unset.
+env:
+  TMPDIR: ${{ runner.temp }}
+  INSTALLER_LOG_DIR: ${{ runner.temp }}/monocoque-install-tests
+
 jobs:
   syntax:
     runs-on: ubuntu-latest
@@ -47,6 +52,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Distro family detection
         run: bash tools/distro/test-install-containers.sh detect ${{ matrix.name }}
+      - name: Upload container logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-detect-${{ matrix.name }}
+          path: ${{ env.INSTALLER_LOG_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
 
   detect-edge:
     needs: syntax
@@ -57,6 +70,14 @@ jobs:
         run: bash tools/distro/test-install-containers.sh mocks
       - name: Immutable distros refuse host install
         run: bash tools/distro/test-install-containers.sh immutable
+      - name: Upload container logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-detect-edge
+          path: ${{ env.INSTALLER_LOG_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
 
   install:
     needs: syntax
@@ -74,7 +95,15 @@ jobs:
       - name: Installer log on failure
         if: failure()
         run: |
-          log="${TMPDIR:-/tmp}/monocoque-install-tests/${{ matrix.name }}.full.log"
+          log="${INSTALLER_LOG_DIR}/${{ matrix.name }}.full.log"
           if [ -f "$log" ]; then
             tail -n 120 "$log"
           fi
+      - name: Upload installer logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-full-${{ matrix.name }}
+          path: ${{ env.INSTALLER_LOG_DIR }}
+          if-no-files-found: warn
+          retention-days: 7
