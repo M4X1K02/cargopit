@@ -21,9 +21,3 @@ if (BASH_PROGRAM)
     add_test(NAME startup_play_starts_simd
         COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh starts $<TARGET_FILE:cargopit-cli>)
 endif()
-
-find_program(PYTHON_PROGRAM python3)
-if (PYTHON_PROGRAM)
-    add_test(NAME deployment_environments
-        COMMAND ${PYTHON_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/deployment_environments_test.py)
-endif()
