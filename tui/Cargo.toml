@@ -2,6 +2,7 @@
 name = "cargopit-tui"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.88"
 license = "GPL-3.0-or-later"
 description = "Terminal UI for managing cargopit devices and processes"
 repository = "https://github.com/M4X1K02/cargopit"

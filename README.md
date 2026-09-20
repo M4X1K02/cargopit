@@ -128,6 +128,8 @@ apt install build-essential git cmake pkg-config python3 cargo rustc libuv1-dev 
 
 Use `liblua5.3-dev` if 5.4 is not in the repo, and `libprocps-dev` if `libproc2-dev` is absent. `libyder-dev` is similarly optional; the installer can build yder.
 
+Ubuntu 24.04's `cargo`/`rustc` packages are 1.75 and cannot build `cargopit-tui` (needs rustc 1.88+). `./install.sh` installs rustup when the distro toolchain is too old. For a manual cmake build, install [rustup](https://rustup.rs/) first.
+
 **openSUSE**
 
 ```bash

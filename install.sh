@@ -14,6 +14,11 @@ CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 CARGOPIT_RAW_MASTER_URL="https://raw.githubusercontent.com/${CARGOPIT_GITHUB_REPO}/master"
 CARGOPIT_RELEASES_URL="https://github.com/${CARGOPIT_GITHUB_REPO}/releases"
 AUR_INSTALL_UNAVAILABLE_MSG="AUR install is not offered yet; use --from-source"
+# Keep in sync with tui/Cargo.toml rust-version. Cargo.lock v4 needs cargo
+# 1.78+; ratatui's darling/instability crates need rustc 1.88+.
+TUI_MIN_RUSTC_MAJOR=1
+TUI_MIN_RUSTC_MINOR=88
+RUSTUP_INIT_URL="https://sh.rustup.rs"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -94,6 +99,75 @@ run_root() {
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
+}
+
+prepend_rustup_bin() {
+    local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+    case ":$PATH:" in
+        *":$cargo_bin:"*) ;;
+        *) export PATH="$cargo_bin:$PATH" ;;
+    esac
+}
+
+rustc_major_minor() {
+    local version
+    if ! have_cmd rustc; then
+        printf '%s\n' "0.0"
+        return 0
+    fi
+    version="$(rustc --version | awk '{print $2}')"
+    printf '%s\n' "${version%.*}"
+}
+
+tui_rustc_is_new_enough() {
+    local mm major minor
+    mm="$(rustc_major_minor)"
+    major="${mm%%.*}"
+    minor="${mm#*.}"
+    if [ "$major" -gt "$TUI_MIN_RUSTC_MAJOR" ]; then
+        return 0
+    fi
+    if [ "$major" -eq "$TUI_MIN_RUSTC_MAJOR" ] && [ "$minor" -ge "$TUI_MIN_RUSTC_MINOR" ]; then
+        return 0
+    fi
+    return 1
+}
+
+install_rustup_stable() {
+    local cargo_env="${CARGO_HOME:-$HOME/.cargo}/env"
+    log_info "Installing rustup (need rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ for cargopit-tui)"
+    if ! have_cmd curl; then
+        log_error "curl is required to install rustup"
+        exit 1
+    fi
+    export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+    curl --proto '=https' --tlsv1.2 -sSf "$RUSTUP_INIT_URL" | sh -s -- -y --profile minimal
+    if [ -f "$cargo_env" ]; then
+        # shellcheck disable=SC1090
+        . "$cargo_env"
+    fi
+    prepend_rustup_bin
+}
+
+ensure_tui_rust_toolchain() {
+    prepend_rustup_bin
+    if tui_rustc_is_new_enough; then
+        log_info "Using $(rustc --version) for cargopit-tui"
+        return 0
+    fi
+    if have_cmd rustup; then
+        log_info "Updating rustup stable (need rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+)"
+        rustup toolchain install stable
+        rustup default stable
+        prepend_rustup_bin
+    else
+        install_rustup_stable
+    fi
+    if ! tui_rustc_is_new_enough; then
+        log_error "rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ is required for cargopit-tui"
+        exit 1
+    fi
+    log_success "Using $(rustc --version) for cargopit-tui"
 }
 
 ensure_writable_dir() {
@@ -184,7 +258,7 @@ manual_dep_hint() {
 Required build packages (names vary by distro):
   git cmake gcc make pkg-config
   libuv argtable libserialport libconfig hidapi lua libxdg-basedir libxml2 libpulse
-  yder (simd), cargo/rustc
+  yder (simd), cargo/rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ (or rustup)
   optional: mingw-w64 (only with --build-bridges), python3 (tests)
 
 Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 rust python yder
@@ -856,6 +930,7 @@ main() {
 
     install_dependencies
     check_requirements
+    ensure_tui_rust_toolchain
 
     if [ "$DEPS_ONLY" -eq 1 ]; then
         log_success "Dependencies only; done"
