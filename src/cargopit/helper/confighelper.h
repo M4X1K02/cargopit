@@ -193,11 +193,24 @@ SerialDeviceSettings;
 typedef struct
 {
     uint32_t volume;
-    uint32_t pan;
+    uint32_t channelmask;
     uint32_t channels;
     uint32_t noise;
 }
 SoundDeviceSettings;
+
+#define SOUND_PAN_ALL_CHANNELS (-1)
+#define SOUND_CHANNEL_COUNT_MIN 1
+#define SOUND_CHANNEL_COUNT_MAX 8
+#define SOUND_CHANNELS_STEREO 2
+#define SOUND_CHANNELS_QUAD 4
+#define SOUND_CHANNELS_SURROUND_51 6
+#define SOUND_CHANNELS_SURROUND_71 8
+#define SOUND_CHANNEL_BIT(index) (1u << (unsigned)(index))
+
+uint32_t sound_channel_mask_all(int channels);
+uint32_t sound_resolve_channel_mask(int have_pan, int pan, int have_mask, int mask, int channels);
+int sound_first_channel(uint32_t mask);
 
 #define SOUND_STREAM_VOLUME_MIN 0
 #define SOUND_STREAM_VOLUME_UNITY 100

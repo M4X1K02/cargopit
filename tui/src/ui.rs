@@ -1,4 +1,4 @@
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Flex, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::app::{tune_fields, App, ConfirmKind, Screen, SettingsSub};
 use crate::config::DeviceEntry;
 use crate::consts;
-use crate::diagnostics::Diagnostics;
+use crate::diagnostics::{devices_healthy, health_score, Diagnostics, HealthScore};
 use crate::diagrams;
 use crate::logs;
 use crate::process::SessionKind;
@@ -26,11 +26,18 @@ pub fn draw(frame: &mut Frame, app: &App) {
         return;
     }
     let diag = app.diagnostics();
+    let hint = page_hint(&app.screen);
+    let hint_height = if hint.is_some() {
+        consts::LAYOUT_HINT_HEIGHT
+    } else {
+        0
+    };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(consts::LAYOUT_TAB_HEIGHT),
             Constraint::Min(1),
+            Constraint::Length(hint_height),
             Constraint::Length(consts::LAYOUT_STATUS_HEIGHT),
             Constraint::Length(consts::LAYOUT_HELP_HEIGHT),
         ])
@@ -52,8 +59,11 @@ pub fn draw(frame: &mut Frame, app: &App) {
         }
         Screen::SettingsSub(sub) => draw_settings_sub(frame, chunks[1], app, *sub),
     }
-    draw_status(frame, chunks[2], app, &diag);
-    draw_help(frame, chunks[3], app);
+    if let Some(text) = hint {
+        draw_page_hint(frame, chunks[2], text);
+    }
+    draw_status(frame, chunks[3], app, &diag);
+    draw_help(frame, chunks[4], app);
 }
 
 fn draw_too_small(frame: &mut Frame, area: Rect) {
@@ -116,34 +126,18 @@ fn bound_panel_title(base: &str, app: &App) -> String {
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
-    let configured = app.current_profile().map(|p| p.devices.len()).unwrap_or(0);
-    let ratio = if configured == 0 {
-        0.0
-    } else {
-        diag.connected as f64 / configured as f64
-    };
-    let device_style = if diag.missing == 0 && configured > 0 {
-        theme::style_ok()
-    } else if diag.connected > 0 {
-        theme::style_warn()
-    } else {
-        theme::style_error()
-    };
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(consts::STATUS_HEALTH_WIDTH),
+        ])
+        .split(area);
     let mut spans = vec![
         diagrams::led_span_compact(consts::BINARY_SIMD, app.status.simd_running),
         diagrams::led_span_compact(consts::BINARY_CARGOPIT, app.pipeline_pit()),
         diagrams::simapi_span_compact(diag.simapi_exists, diag.simapi_live),
         profile_pin_span(app),
-        Span::styled(
-            format!(
-                " {} {}/{} {} ",
-                consts::LABEL_DEVICES,
-                diag.connected,
-                configured,
-                theme::bar(ratio, consts::GAUGE_WIDTH)
-            ),
-            device_style,
-        ),
     ];
     if !app.message.is_empty() {
         spans.push(Span::styled(consts::STATUS_SEP, theme::style_muted()));
@@ -151,8 +145,56 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).style(theme::style_status_bar()),
-        area,
+        chunks[0],
     );
+    frame.render_widget(health_gauge(current_health(app, diag), true), chunks[1]);
+}
+
+fn page_hint(screen: &Screen) -> Option<&'static str> {
+    match screen {
+        Screen::DeviceTune => Some(consts::TUNING_OFFLINE_HINT),
+        Screen::SettingsSub(SettingsSub::Raw) => Some(consts::RAW_VIEW_HINT),
+        _ => None,
+    }
+}
+
+fn draw_page_hint(frame: &mut Frame, area: Rect, text: &str) {
+    frame.render_widget(Paragraph::new(text).style(theme::style_muted()), area);
+}
+
+fn current_health(app: &App, diag: &Diagnostics) -> HealthScore {
+    let configured = app.current_profile().map(|p| p.devices.len()).unwrap_or(0);
+    health_score(
+        app.status.simd_running,
+        app.pipeline_pit(),
+        diag.simapi_exists,
+        devices_healthy(configured, diag.missing),
+    )
+}
+
+fn health_gauge(score: HealthScore, status_bar: bool) -> Gauge<'static> {
+    let gauge = Gauge::default()
+        .ratio(score.ratio())
+        .label(score.label())
+        .use_unicode(consts::HEALTH_GAUGE_UNICODE)
+        .gauge_style(theme::style_health_gauge(score.all_met(), score.met > 0));
+    if status_bar {
+        return gauge.style(theme::style_status_bar());
+    }
+    gauge
+}
+
+fn health_check_line(app: &App, diag: &Diagnostics) -> Line<'static> {
+    let configured = app.current_profile().map(|p| p.devices.len()).unwrap_or(0);
+    Line::from(vec![
+        diagrams::led_span_compact(consts::BINARY_SIMD, app.status.simd_running),
+        diagrams::led_span_compact(consts::BINARY_CARGOPIT, app.pipeline_pit()),
+        diagrams::simapi_span_compact(diag.simapi_exists, diag.simapi_live),
+        diagrams::led_span_compact(
+            consts::LABEL_DEVICES,
+            devices_healthy(configured, diag.missing),
+        ),
+    ])
 }
 
 fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
@@ -165,6 +207,7 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
         Screen::DeviceForm => consts::HELP_FORM,
         Screen::DeviceTune => consts::HELP_TUNE,
         Screen::Confirm(_) => consts::HELP_CONFIRM,
+        Screen::TemplatePicker => consts::HELP_TEMPLATES,
         Screen::SettingsSub(sub) => settings_sub_help(sub),
         _ => consts::HELP_BACK,
     };
@@ -430,22 +473,29 @@ fn draw_dashboard_health(frame: &mut Frame, area: Rect, app: &App, diag: &Diagno
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(consts::LAYOUT_BORDER_LINES + 1),
+            Constraint::Length(
+                consts::LAYOUT_BORDER_LINES
+                    + consts::LAYOUT_HEALTH_GAUGE_HEIGHT
+                    + consts::LAYOUT_HEALTH_CHECKS_HEIGHT,
+            ),
             Constraint::Min(1),
         ])
         .split(area);
-    let configured = app.current_profile().map(|p| p.devices.len()).unwrap_or(0);
-    let ratio = if configured == 0 {
-        0.0
-    } else {
-        diag.connected as f64 / configured as f64
-    };
-    let gauge = Gauge::default()
-        .block(theme::panel(consts::DIAGRAM_TITLE_HEALTH))
-        .gauge_style(theme::style_gauge())
-        .percent(theme::percent(ratio))
-        .label(format!("{}/{}", diag.connected, configured));
-    frame.render_widget(gauge, chunks[0]);
+    let block = theme::panel(consts::DIAGRAM_TITLE_HEALTH);
+    let inner = block.inner(chunks[0]);
+    frame.render_widget(block, chunks[0]);
+    let health_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(consts::LAYOUT_HEALTH_GAUGE_HEIGHT),
+            Constraint::Length(consts::LAYOUT_HEALTH_CHECKS_HEIGHT),
+        ])
+        .split(inner);
+    frame.render_widget(
+        health_gauge(current_health(app, diag), false),
+        health_rows[0],
+    );
+    frame.render_widget(Paragraph::new(health_check_line(app, diag)), health_rows[1]);
     let mut lines = Vec::new();
     if let Some(profile) = app.current_profile() {
         for class in DeviceClass::all() {
@@ -766,73 +816,114 @@ fn draw_form_list(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
     } else {
         app.form.field_index
     };
-    let mut items = Vec::new();
+    let mut rows = Vec::new();
     for (index, field) in fields.iter().enumerate() {
-        let mut value = schema::display_value(&app.form.device, *field);
-        if !tune && app.form.edit_buffer.is_some() && index == app.form.field_index {
-            value = format!(
-                "{}{}",
-                app.form.edit_buffer.as_deref().unwrap_or(""),
-                consts::EDIT_CURSOR
-            );
-        } else if schema::is_identity(*field) {
-            let choices = app
-                .discovery
-                .choices_for(app.form.device.class(), *field == FieldId::Devpath);
-            if let Some(choice) = choices.iter().find(|c| c.value == value) {
-                value = choice.label.clone();
-            }
-        }
-        if value.is_empty() {
-            value = consts::FIELD_UNSET.to_string();
-        }
-        items.push(field_row(*field, &value, &app.form.device));
+        let value = form_field_value(app, *field, index, tune);
+        rows.push(field_table_row(
+            *field,
+            &value,
+            &app.form.device,
+            app.form.output_slot,
+            *field == FieldId::Pan && index == selected,
+        ));
     }
     if let Some(err) = &app.form.error {
-        items.push(ListItem::new(err.clone()).style(theme::style_error()));
-    }
-    if tune {
-        items.push(ListItem::new(consts::TUNING_OFFLINE_HINT).style(theme::style_muted()));
+        rows.push(form_notice_row(err.clone(), theme::style_error()));
     }
     let title = if tune {
         consts::TITLE_TUNE
     } else {
         consts::TITLE_DEVICE_EDITOR
     };
-    render_selectable_list_block(
-        frame,
-        area,
-        theme::panel_line(profile_scoped_title(title, app)),
-        items,
-        selected,
-    );
+    let table = Table::new(rows, form_column_constraints())
+        .column_spacing(consts::FORM_COL_SPACING)
+        .flex(Flex::Start)
+        .block(theme::panel_line(profile_scoped_title(title, app)))
+        .row_highlight_style(theme::style_selected())
+        .highlight_symbol(consts::LIST_HIGHLIGHT_SYMBOL);
+    let mut state = TableState::default();
+    if !fields.is_empty() {
+        state.select(Some(selected.min(fields.len() - 1)));
+    }
+    frame.render_stateful_widget(table, area, &mut state);
 }
 
-fn field_row(field: FieldId, value: &str, device: &DeviceEntry) -> ListItem<'static> {
-    let mut spans = vec![Span::raw(format!(
-        "{:<width$} {value}",
-        field.label(),
-        width = consts::FIELD_LABEL_WIDTH
-    ))];
-    if field == FieldId::Pan {
-        if schema::field_is_set(device, FieldId::Pan) {
-            let channels = device
-                .get_i64(consts::KEY_CHANNELS)
-                .unwrap_or(consts::DEFAULT_CHANNELS);
-            let pan = device
-                .get_i64(consts::KEY_PAN)
-                .unwrap_or(consts::DEFAULT_PAN);
-            spans.push(Span::raw("  "));
-            spans.extend(diagrams::pan_line(pan, channels).spans);
-        }
-    } else if let Some(ratio) = diagrams::field_ratio(device, field) {
-        spans.push(Span::raw("  "));
-        spans.push(Span::styled(
-            theme::bar(ratio, consts::GAUGE_WIDTH),
-            theme::style_ok(),
-        ));
+fn form_field_value(app: &App, field: FieldId, index: usize, tune: bool) -> String {
+    if !tune && app.form.edit_buffer.is_some() && index == app.form.field_index {
+        return format!(
+            "{}{}",
+            app.form.edit_buffer.as_deref().unwrap_or(""),
+            consts::EDIT_CURSOR
+        );
     }
-    ListItem::new(Line::from(spans))
+    let mut value = schema::display_value(&app.form.device, field);
+    if schema::is_identity(field) {
+        let choices = app
+            .discovery
+            .choices_for(app.form.device.class(), field == FieldId::Devpath);
+        if let Some(choice) = choices.iter().find(|c| c.value == value) {
+            value = choice.label.clone();
+        }
+    }
+    if value.is_empty() {
+        return consts::FIELD_UNSET.to_string();
+    }
+    value
+}
+
+fn form_column_constraints() -> [Constraint; consts::FORM_COLUMN_COUNT] {
+    [
+        Constraint::Length(consts::FIELD_LABEL_WIDTH as u16),
+        Constraint::Length(consts::FORM_VALUE_WIDTH),
+        Constraint::Length(consts::FORM_WIDGET_WIDTH),
+    ]
+}
+
+fn field_table_row(
+    field: FieldId,
+    value: &str,
+    device: &DeviceEntry,
+    output_slot: usize,
+    pan_focused: bool,
+) -> Row<'static> {
+    Row::new([
+        Cell::from(field.label().to_string()),
+        Cell::from(value.to_string()),
+        Cell::from(field_widget(field, device, output_slot, pan_focused)),
+    ])
+}
+
+fn form_notice_row(text: String, style: Style) -> Row<'static> {
+    Row::new([
+        Cell::from(""),
+        Cell::from(text).style(style),
+        Cell::from(""),
+    ])
+}
+
+fn field_widget(
+    field: FieldId,
+    device: &DeviceEntry,
+    output_slot: usize,
+    pan_focused: bool,
+) -> Line<'static> {
+    if field == FieldId::Pan {
+        return pan_widget(device, output_slot, pan_focused);
+    }
+    let Some(ratio) = diagrams::field_ratio(device, field) else {
+        return Line::default();
+    };
+    Line::from(Span::styled(
+        theme::bar(ratio, consts::GAUGE_WIDTH),
+        theme::style_ok(),
+    ))
+}
+
+fn pan_widget(device: &DeviceEntry, output_slot: usize, pan_focused: bool) -> Line<'static> {
+    let channels = schema::sound_channel_count(device);
+    let mask = schema::sound_resolve_channel_mask(device);
+    let focus = if pan_focused { Some(output_slot) } else { None };
+    diagrams::pan_compact_line(mask, channels, focus)
 }
 
 fn draw_form_diagram(frame: &mut Frame, area: Rect, app: &App) {
@@ -1268,12 +1359,8 @@ fn draw_diagnostics(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_raw(frame: &mut Frame, area: Rect, app: &App) {
-    let mut lines = vec![Line::from(Span::styled(
-        consts::RAW_VIEW_HINT,
-        theme::style_muted(),
-    ))];
+    let mut lines = Vec::new();
     if !app.raw_on_disk.is_empty() {
-        lines.push(Line::from(""));
         for line in app.raw_on_disk.lines() {
             lines.push(Line::from(line.to_string()));
         }
@@ -1360,6 +1447,21 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| draw(frame, app)).unwrap();
         terminal.backend().to_string()
+    }
+
+    fn widget_column(dump: &str, label: &str) -> usize {
+        for line in dump.lines() {
+            if !line.contains(label) {
+                continue;
+            }
+            if let Some(index) = line.find(consts::GAUGE_FILL) {
+                return index;
+            }
+            if let Some(index) = line.find(consts::GAUGE_EMPTY) {
+                return index;
+            }
+        }
+        panic!("no slider widget on a {label} row:\n{dump}");
     }
 
     fn with_app<F: FnOnce(&mut App)>(f: F) {
@@ -1478,6 +1580,41 @@ mod tests {
     #[test]
     fn action_hints_match_actions() {
         assert_eq!(consts::ACTION_HINTS.len(), consts::DASHBOARD_ACTIONS.len());
+    }
+
+    #[test]
+    fn pressing_t_stops_a_running_test() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(consts::ENV_XDG_CONFIG_HOME, dir.path().join("config"));
+        std::env::set_var(consts::ENV_XDG_CACHE_HOME, dir.path().join("cache"));
+        std::env::set_var(consts::ENV_XDG_STATE_HOME, dir.path().join("state"));
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let stub = bin.join(consts::BINARY_CARGOPIT);
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\necho stub-test\ntrap 'exit 0' TERM\nexec sleep 30\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).unwrap();
+        let previous_path = std::env::var_os(consts::ENV_PATH);
+        std::env::set_var(consts::ENV_PATH, &bin);
+        let mut app = App::new().unwrap();
+        let key =
+            |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+        app.handle_key(key(consts::KEY_TEST)).unwrap();
+        assert!(app.test_running(), "{}", app.message);
+        app.handle_key(key(consts::KEY_TEST)).unwrap();
+        assert!(!app.test_running(), "{}", app.message);
+        assert_eq!(app.message, consts::MSG_STOPPED_TEST);
+        match previous_path {
+            Some(path) => std::env::set_var(consts::ENV_PATH, path),
+            None => std::env::remove_var(consts::ENV_PATH),
+        }
     }
 
     #[test]
@@ -1788,6 +1925,63 @@ mod tests {
             assert_eq!(app.profile_index, 1);
             app.handle_key(key(consts::KEY_PREV_PROFILE)).unwrap();
             assert_eq!(app.profile_index, 0);
+            app.handle_key(key(consts::KEY_RIGHT)).unwrap();
+            assert_eq!(app.profile_index, 1);
+            app.handle_key(key(consts::KEY_LEFT)).unwrap();
+            assert_eq!(app.profile_index, 0);
+        });
+    }
+
+    #[test]
+    fn shift_arrows_reorder_devices() {
+        with_app(|app| {
+            let mut first = DeviceEntry::new();
+            first.set_str(consts::KEY_DEVID, "sink-a");
+            let mut second = DeviceEntry::new();
+            second.set_str(consts::KEY_DEVID, "sink-b");
+            if let Some(profile) = app.current_profile_mut() {
+                profile.devices = vec![first, second];
+            }
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::Devices;
+            app.device_index = 0;
+            let key = |code, modifiers| crossterm::event::KeyEvent::new(code, modifiers);
+            app.handle_key(key(consts::KEY_DOWN, crossterm::event::KeyModifiers::SHIFT))
+                .unwrap();
+            assert_eq!(app.device_index, 1);
+            let ids: Vec<_> = app
+                .current_profile()
+                .unwrap()
+                .devices
+                .iter()
+                .map(|device| device.get_str(consts::KEY_DEVID))
+                .collect();
+            assert_eq!(ids, vec![Some("sink-b"), Some("sink-a")]);
+        });
+    }
+
+    #[test]
+    fn space_confirms_and_escape_cancels() {
+        with_app(|app| {
+            let mut device = DeviceEntry::new();
+            device.set_str(consts::KEY_DEVID, "sink-a");
+            if let Some(profile) = app.current_profile_mut() {
+                profile.devices = vec![device];
+            }
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::Devices;
+            app.device_index = 0;
+            let key =
+                |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            app.handle_key(key(consts::KEY_DELETE)).unwrap();
+            assert!(matches!(app.screen, Screen::Confirm(_)));
+            app.handle_key(key(consts::KEY_ESC)).unwrap();
+            assert!(matches!(app.screen, Screen::Devices));
+            assert_eq!(app.current_profile().unwrap().devices.len(), 1);
+            app.handle_key(key(consts::KEY_DELETE)).unwrap();
+            app.handle_key(key(consts::KEY_SPACE)).unwrap();
+            assert!(matches!(app.screen, Screen::Devices));
+            assert!(app.current_profile().unwrap().devices.is_empty());
         });
     }
 
@@ -1819,6 +2013,44 @@ mod tests {
             let dump = render_dump(app);
             assert!(dump.contains(consts::TITLE_DEVICE_EDITOR), "{dump}");
             assert!(dump.contains("Garage"), "{dump}");
+        });
+    }
+
+    #[test]
+    fn device_editor_aligns_slider_widgets() {
+        with_app(|app| {
+            app.form = crate::form::DeviceForm::blank();
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::DeviceForm;
+            let dump = render_dump_size(app, 100, 28);
+            let volume = widget_column(&dump, FieldId::Volume.label());
+            let amplitude = widget_column(&dump, FieldId::Amplitude.label());
+            let frequency = widget_column(&dump, FieldId::Frequency.label());
+            assert_eq!(volume, amplitude, "{dump}");
+            assert_eq!(volume, frequency, "{dump}");
+        });
+    }
+
+    #[test]
+    fn tune_hint_pins_below_the_field_table() {
+        with_app(|app| {
+            app.form = crate::form::DeviceForm::blank();
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::DeviceTune;
+            let dump = render_dump_size(app, 120, 28);
+            let hint_lead = consts::TUNING_OFFLINE_HINT
+                .split_once(':')
+                .map(|(lead, _)| lead)
+                .unwrap_or(consts::TUNING_OFFLINE_HINT);
+            assert!(dump.contains(hint_lead), "{dump}");
+            for line in dump.lines() {
+                if line.contains(hint_lead) {
+                    assert!(
+                        !line.contains(consts::GAUGE_FILL),
+                        "hint must not share a row with sliders:\n{line}\n{dump}"
+                    );
+                }
+            }
         });
     }
 

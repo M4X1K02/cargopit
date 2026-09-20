@@ -90,7 +90,7 @@ impl FieldId {
             FieldId::StartLed => "Start LED",
             FieldId::EndLed => "End LED",
             FieldId::Volume => "Volume",
-            FieldId::Pan => "Pan",
+            FieldId::Pan => "Output",
             FieldId::Channels => "Channels",
             FieldId::Noise => "Noise",
             FieldId::Effect => "Effect",
@@ -127,8 +127,10 @@ impl FieldId {
             FieldId::StartLed => "First LED in the strip that this effect owns (1-based).",
             FieldId::EndLed => "Last LED in the strip that this effect owns (1-based).",
             FieldId::Volume => "PulseAudio volume 0-100. Unset uses the engine unity default.",
-            FieldId::Pan => "Channel index to play on. Unset uses 0 (first channel).",
-            FieldId::Channels => "Mix width used to interpret pan. Unset uses 2.",
+            FieldId::Pan => {
+                "Speakers that play this effect. Left/right selects a speaker, space toggles it. Backspace restores all channels."
+            }
+            FieldId::Channels => "Mix width (1, 2, 4, 6, or 8). Unset uses 2.",
             FieldId::Noise => "Extra hertz added to the tone. Unset uses 0.",
             FieldId::Effect => "Telemetry source that drives this haptic or sound device.",
             FieldId::Modulation => "Frequency or amplitude modulation, or none. Unset is none.",
@@ -164,7 +166,7 @@ impl FieldId {
             FieldId::StartLed => Some(consts::KEY_STARTLED),
             FieldId::EndLed => Some(consts::KEY_ENDLED),
             FieldId::Volume => Some(consts::KEY_STREAM_VOLUME),
-            FieldId::Pan => Some(consts::KEY_PAN),
+            FieldId::Pan => Some(consts::KEY_CHANNEL_MASK),
             FieldId::Channels => Some(consts::KEY_CHANNELS),
             FieldId::Noise => Some(consts::KEY_NOISE),
             FieldId::Effect => Some(consts::KEY_EFFECT),
@@ -320,6 +322,7 @@ pub fn combo_choices(
         FieldId::Modulation => consts::MODULATIONS,
         FieldId::Tyre => consts::TYRES,
         FieldId::Motors => consts::MOTOR_LABELS,
+        FieldId::Channels => consts::SOUND_CHANNEL_COUNT_LABELS,
         _ => &[],
     }
 }
@@ -341,6 +344,8 @@ pub fn allowed_keys(class: DeviceClass, type_name: &str) -> Vec<&'static str> {
     if class == DeviceClass::Sound {
         keys.push(consts::KEY_VOLUME);
         keys.push(consts::KEY_STREAM_VOLUME);
+        keys.push(consts::KEY_PAN);
+        keys.push(consts::KEY_CHANNEL_MASK);
     }
     keys
 }
@@ -419,11 +424,13 @@ pub fn apply_defaults(device: &mut DeviceEntry, class: DeviceClass, type_name: &
                 device.set_int(consts::KEY_STREAM_VOLUME, consts::DEFAULT_VOLUME);
                 device.set_int(consts::KEY_VOLUME, consts::DEFAULT_VOLUME);
             }
-            if device.get(consts::KEY_PAN).is_none() {
-                device.set_int(consts::KEY_PAN, consts::DEFAULT_PAN);
-            }
             if device.get(consts::KEY_CHANNELS).is_none() {
                 device.set_int(consts::KEY_CHANNELS, consts::DEFAULT_CHANNELS);
+            }
+            if device.get(consts::KEY_CHANNEL_MASK).is_none()
+                && device.get(consts::KEY_PAN).is_none()
+            {
+                write_sound_channel_mask(device, sound_channel_mask_all(consts::DEFAULT_CHANNELS));
             }
             if device.get(consts::KEY_NOISE).is_none() {
                 device.set_int(consts::KEY_NOISE, consts::DEFAULT_NOISE);
@@ -485,6 +492,7 @@ pub fn display_value(device: &DeviceEntry, field: FieldId) -> String {
         }
         FieldId::Volume => volume_display(device),
         FieldId::Motors => motors_display(device),
+        FieldId::Pan => sound_output_display(device),
         FieldId::Devid => device.get_str(consts::KEY_DEVID).unwrap_or("").to_string(),
         FieldId::Devpath => device
             .get_str(consts::KEY_DEVPATH)
@@ -535,6 +543,9 @@ pub fn field_is_set(device: &DeviceEntry, field: FieldId) -> bool {
             device.get(consts::KEY_STREAM_VOLUME).is_some()
                 || device.get(consts::KEY_VOLUME).is_some()
         }
+        FieldId::Pan => {
+            device.get(consts::KEY_CHANNEL_MASK).is_some() || device.get(consts::KEY_PAN).is_some()
+        }
         other => other
             .config_key()
             .map(|key| device.get(key).is_some())
@@ -549,6 +560,10 @@ pub fn clear_field(device: &mut DeviceEntry, field: FieldId) {
     if field == FieldId::Volume {
         device.remove(consts::KEY_STREAM_VOLUME);
         device.remove(consts::KEY_VOLUME);
+        return;
+    }
+    if field == FieldId::Pan {
+        write_sound_channel_mask(device, sound_channel_mask_all(sound_channel_count(device)));
         return;
     }
     if let Some(key) = field.config_key() {
@@ -570,6 +585,130 @@ pub fn motor_index(label: &str) -> i64 {
         .unwrap_or(0) as i64
 }
 
+pub fn sound_channel_count(device: &DeviceEntry) -> i64 {
+    let raw = device
+        .get_i64(consts::KEY_CHANNELS)
+        .unwrap_or(consts::DEFAULT_CHANNELS);
+    raw.clamp(
+        consts::SOUND_CHANNEL_COUNT_MIN,
+        consts::SOUND_CHANNEL_COUNT_MAX,
+    )
+}
+
+pub fn sound_channel_mask_all(channels: i64) -> u32 {
+    let count = channels.clamp(
+        consts::SOUND_CHANNEL_COUNT_MIN,
+        consts::SOUND_CHANNEL_COUNT_MAX,
+    );
+    (1u32 << count as u32) - 1
+}
+
+pub fn sound_channel_bit(index: i64) -> u32 {
+    if index < 0 || index >= consts::SOUND_CHANNEL_COUNT_MAX {
+        return 0;
+    }
+    1u32 << index as u32
+}
+
+pub fn sound_resolve_channel_mask(device: &DeviceEntry) -> u32 {
+    let channels = sound_channel_count(device);
+    let all = sound_channel_mask_all(channels);
+    if let Some(mask) = device.get_i64(consts::KEY_CHANNEL_MASK) {
+        let clipped = mask as u32 & all;
+        if clipped != 0 {
+            return clipped;
+        }
+        return all;
+    }
+    let Some(pan) = device.get_i64(consts::KEY_PAN) else {
+        return all;
+    };
+    if pan == consts::SOUND_PAN_ALL_CHANNELS || pan < 0 || pan >= channels {
+        return all;
+    }
+    sound_channel_bit(pan)
+}
+
+pub fn sound_first_channel(mask: u32) -> i64 {
+    for index in 0..consts::SOUND_CHANNEL_COUNT_MAX {
+        if mask & sound_channel_bit(index) != 0 {
+            return index;
+        }
+    }
+    consts::DEFAULT_PAN
+}
+
+pub fn write_sound_channel_mask(device: &mut DeviceEntry, mask: u32) {
+    let channels = sound_channel_count(device);
+    let all = sound_channel_mask_all(channels);
+    let mut clipped = mask & all;
+    if clipped == 0 {
+        clipped = all;
+    }
+    device.set_int(consts::KEY_CHANNEL_MASK, i64::from(clipped));
+    device.set_int(consts::KEY_PAN, sound_first_channel(clipped));
+}
+
+pub fn clip_sound_output(device: &mut DeviceEntry) {
+    write_sound_channel_mask(device, sound_resolve_channel_mask(device));
+}
+
+pub fn toggle_sound_channel(device: &mut DeviceEntry, index: usize) {
+    let channels = sound_channel_count(device) as usize;
+    if index >= channels {
+        return;
+    }
+    let bit = sound_channel_bit(index as i64);
+    let mask = sound_resolve_channel_mask(device);
+    if mask & bit != 0 {
+        let next = mask & !bit;
+        if next == 0 {
+            return;
+        }
+        write_sound_channel_mask(device, next);
+        return;
+    }
+    write_sound_channel_mask(device, mask | bit);
+}
+
+pub fn sound_channel_label(channels: i64, index: usize) -> &'static str {
+    let layout = sound_channel_layout(channels);
+    if let Some(label) = layout.get(index) {
+        return label;
+    }
+    consts::SOUND_LAYOUT_NUMBERED
+        .get(index)
+        .copied()
+        .unwrap_or(consts::SOUND_LAYOUT_NUMBERED[0])
+}
+
+pub fn sound_channel_layout(channels: i64) -> &'static [&'static str] {
+    match channels {
+        consts::SOUND_CHANNELS_MONO => consts::SOUND_LAYOUT_MONO,
+        consts::SOUND_CHANNELS_STEREO => consts::SOUND_LAYOUT_STEREO,
+        consts::SOUND_CHANNELS_QUAD => consts::SOUND_LAYOUT_QUAD,
+        consts::SOUND_CHANNELS_SURROUND_51 => consts::SOUND_LAYOUT_51,
+        consts::SOUND_CHANNELS_SURROUND_71 => consts::SOUND_LAYOUT_71,
+        _ => consts::SOUND_LAYOUT_NUMBERED,
+    }
+}
+
+fn sound_output_display(device: &DeviceEntry) -> String {
+    let channels = sound_channel_count(device);
+    let mask = sound_resolve_channel_mask(device);
+    if mask == sound_channel_mask_all(channels) {
+        return consts::SOUND_OUTPUT_ALL.to_string();
+    }
+    let mut labels = Vec::new();
+    for index in 0..channels as usize {
+        if mask & sound_channel_bit(index as i64) == 0 {
+            continue;
+        }
+        labels.push(sound_channel_label(channels, index));
+    }
+    labels.join(consts::SOUND_OUTPUT_SEP)
+}
+
 pub fn is_numeric(field: FieldId) -> bool {
     matches!(
         field,
@@ -583,8 +722,6 @@ pub fn is_numeric(field: FieldId) -> bool {
             | FieldId::StartLed
             | FieldId::EndLed
             | FieldId::Volume
-            | FieldId::Pan
-            | FieldId::Channels
             | FieldId::Noise
             | FieldId::Frequency
             | FieldId::FrequencyMax
@@ -614,6 +751,8 @@ pub fn is_combo(field: FieldId) -> bool {
             | FieldId::Tyre
             | FieldId::Motors
             | FieldId::Granularity
+            | FieldId::Channels
+            | FieldId::Pan
     )
 }
 
@@ -814,6 +953,57 @@ mod tests {
     fn every_catalog_field_has_help() {
         for field in catalog_field_ids() {
             assert!(!field.help().is_empty(), "missing help for {:?}", field);
+            assert!(
+                field.label().len() <= consts::FIELD_LABEL_WIDTH,
+                "label {:?} is wider than FIELD_LABEL_WIDTH",
+                field
+            );
         }
+    }
+
+    #[test]
+    fn sound_output_resolves_legacy_pan_and_never_uses_minus_one() {
+        let mut device = DeviceEntry::new();
+        apply_defaults(&mut device, DeviceClass::Sound, consts::TYPE_HAPTIC);
+        assert_eq!(
+            display_value(&device, FieldId::Pan),
+            consts::SOUND_OUTPUT_ALL
+        );
+        assert!(!display_value(&device, FieldId::Pan).contains('-'));
+
+        device.remove(consts::KEY_CHANNEL_MASK);
+        device.set_int(consts::KEY_CHANNELS, consts::DEFAULT_CHANNELS);
+        device.set_int(consts::KEY_PAN, consts::SOUND_PAN_ALL_CHANNELS);
+        assert_eq!(
+            sound_resolve_channel_mask(&device),
+            sound_channel_mask_all(consts::DEFAULT_CHANNELS)
+        );
+        assert_eq!(
+            display_value(&device, FieldId::Pan),
+            consts::SOUND_OUTPUT_ALL
+        );
+
+        device.set_int(consts::KEY_PAN, 1);
+        assert_eq!(sound_resolve_channel_mask(&device), sound_channel_bit(1));
+        assert_eq!(display_value(&device, FieldId::Pan), consts::LABEL_SOUND_FR);
+
+        device.set_int(
+            consts::KEY_CHANNEL_MASK,
+            i64::from(sound_channel_bit(0) | sound_channel_bit(1)),
+        );
+        assert_eq!(
+            display_value(&device, FieldId::Pan),
+            consts::SOUND_OUTPUT_ALL
+        );
+
+        toggle_sound_channel(&mut device, 0);
+        assert_eq!(sound_resolve_channel_mask(&device), sound_channel_bit(1));
+        toggle_sound_channel(&mut device, 1);
+        assert_eq!(sound_resolve_channel_mask(&device), sound_channel_bit(1));
+        assert_eq!(device.get_i64(consts::KEY_PAN), Some(1));
+        assert_ne!(
+            device.get_i64(consts::KEY_PAN),
+            Some(consts::SOUND_PAN_ALL_CHANNELS)
+        );
     }
 }

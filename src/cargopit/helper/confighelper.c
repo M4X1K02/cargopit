@@ -941,16 +941,40 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
             ds->hapticsettings.amplitude = HAPTIC_AMPLITUDE_UNITY;
             ds->hapticsettings.amplitudeMax = HAPTIC_AMPLITUDE_UNITY;
             ds->sounddevsettings.volume = SOUND_STREAM_VOLUME_UNITY;
-            ds->sounddevsettings.pan = 0;
-            ds->sounddevsettings.channels = 1;
+            ds->sounddevsettings.channelmask = sound_channel_mask_all(SOUND_CHANNEL_COUNT_MIN);
+            ds->sounddevsettings.channels = SOUND_CHANNEL_COUNT_MIN;
             ds->sounddevsettings.noise = 0;
             if (device_settings != NULL)
             {
+                int pan = 0;
+                int channelmask = 0;
+                int have_pan;
+                int have_mask;
+
+                int channels = SOUND_CHANNEL_COUNT_MIN;
+                int noise = 0;
 
                 ds->sounddevsettings.volume = lookup_pipewire_stream_volume(device_settings);
-                config_setting_lookup_int(device_settings, "pan", &ds->sounddevsettings.pan);
-                config_setting_lookup_int(device_settings, "channels", &ds->sounddevsettings.channels);
-                config_setting_lookup_int(device_settings, "noise", &ds->sounddevsettings.noise);
+                have_pan = config_setting_lookup_int(device_settings, "pan", &pan);
+                have_mask = config_setting_lookup_int(device_settings, "channelMask", &channelmask);
+                config_setting_lookup_int(device_settings, "channels", &channels);
+                config_setting_lookup_int(device_settings, "noise", &noise);
+                if (channels < SOUND_CHANNEL_COUNT_MIN)
+                {
+                    channels = SOUND_CHANNEL_COUNT_MIN;
+                }
+                if (channels > SOUND_CHANNEL_COUNT_MAX)
+                {
+                    channels = SOUND_CHANNEL_COUNT_MAX;
+                }
+                ds->sounddevsettings.channels = (uint32_t)channels;
+                ds->sounddevsettings.noise = (uint32_t)noise;
+                ds->sounddevsettings.channelmask = sound_resolve_channel_mask(
+                    have_pan == CONFIG_TRUE,
+                    pan,
+                    have_mask == CONFIG_TRUE,
+                    channelmask,
+                    channels);
 
                 const char* temp = NULL;
                 int found = 0;
@@ -1550,7 +1574,8 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
             const SoundDeviceSettings *ss = &ds->sounddevsettings;
 
             set_int(device_entry, "streamVolume", ss->volume);
-            set_int(device_entry, "pan", ss->pan);
+            set_int(device_entry, "channelMask", (int)ss->channelmask);
+            set_int(device_entry, "pan", sound_first_channel(ss->channelmask));
             set_int(device_entry, "channels", ss->channels);
             set_int(device_entry, "noise", ss->noise);
 
@@ -1686,4 +1711,55 @@ int cargopitsettingsfree(CargopitSettings* ms)
         free(ms->log_dirname_str);
         ms->log_dirname_str = NULL;
     }
+}
+
+uint32_t sound_channel_mask_all(int channels)
+{
+    int count = channels;
+    if (count < SOUND_CHANNEL_COUNT_MIN)
+    {
+        count = SOUND_CHANNEL_COUNT_MIN;
+    }
+    if (count > SOUND_CHANNEL_COUNT_MAX)
+    {
+        count = SOUND_CHANNEL_COUNT_MAX;
+    }
+    return (1u << (unsigned)count) - 1u;
+}
+
+uint32_t sound_resolve_channel_mask(int have_pan, int pan, int have_mask, int mask, int channels)
+{
+    uint32_t all = sound_channel_mask_all(channels);
+    uint32_t clipped;
+    if (have_mask)
+    {
+        clipped = (uint32_t)mask & all;
+        if (clipped != 0)
+        {
+            return clipped;
+        }
+        return all;
+    }
+    if (!have_pan)
+    {
+        return all;
+    }
+    if (pan == SOUND_PAN_ALL_CHANNELS || pan < 0 || pan >= channels)
+    {
+        return all;
+    }
+    return SOUND_CHANNEL_BIT(pan);
+}
+
+int sound_first_channel(uint32_t mask)
+{
+    int index;
+    for (index = 0; index < SOUND_CHANNEL_COUNT_MAX; index++)
+    {
+        if ((mask & SOUND_CHANNEL_BIT(index)) != 0)
+        {
+            return index;
+        }
+    }
+    return 0;
 }

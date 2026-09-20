@@ -34,6 +34,61 @@ static void check_index(const char* path, int requested, int expected)
     }
 }
 
+static void check_u32(const char* name, uint32_t got, uint32_t expected)
+{
+    if (got != expected)
+    {
+        fprintf(stderr, "FAIL: %s = %u, expected %u\n", name, got, expected);
+        failures++;
+    }
+}
+
+static void check_int(const char* name, int got, int expected)
+{
+    if (got != expected)
+    {
+        fprintf(stderr, "FAIL: %s = %d, expected %d\n", name, got, expected);
+        failures++;
+    }
+}
+
+static void check_sound_channel_helpers(void)
+{
+    uint32_t stereo = sound_channel_mask_all(SOUND_CHANNELS_STEREO);
+    uint32_t surround = sound_channel_mask_all(SOUND_CHANNELS_SURROUND_71);
+
+    check_u32("mask_all stereo", stereo, SOUND_CHANNEL_BIT(0) | SOUND_CHANNEL_BIT(1));
+    check_u32(
+        "mask_all 7.1",
+        surround,
+        SOUND_CHANNEL_BIT(0) | SOUND_CHANNEL_BIT(1) | SOUND_CHANNEL_BIT(2) | SOUND_CHANNEL_BIT(3)
+            | SOUND_CHANNEL_BIT(4) | SOUND_CHANNEL_BIT(5) | SOUND_CHANNEL_BIT(6)
+            | SOUND_CHANNEL_BIT(7));
+    check_u32("mask_all below min", sound_channel_mask_all(0), SOUND_CHANNEL_BIT(0));
+    check_u32(
+        "missing pan and mask",
+        sound_resolve_channel_mask(0, 0, 0, 0, SOUND_CHANNELS_STEREO),
+        stereo);
+    check_u32(
+        "legacy pan all",
+        sound_resolve_channel_mask(1, SOUND_PAN_ALL_CHANNELS, 0, 0, SOUND_CHANNELS_SURROUND_71),
+        surround);
+    check_u32(
+        "legacy pan index",
+        sound_resolve_channel_mask(1, 3, 0, 0, SOUND_CHANNELS_SURROUND_71),
+        SOUND_CHANNEL_BIT(3));
+    check_u32(
+        "channelMask wins",
+        sound_resolve_channel_mask(1, 0, 1, 5, SOUND_CHANNELS_STEREO),
+        SOUND_CHANNEL_BIT(0));
+    check_u32(
+        "zero mask becomes all",
+        sound_resolve_channel_mask(0, 0, 1, 0, SOUND_CHANNELS_STEREO),
+        stereo);
+    check_int("first channel of bit 3", sound_first_channel(SOUND_CHANNEL_BIT(3)), 3);
+    check_int("first channel of empty", sound_first_channel(0), 0);
+}
+
 static char* write_two_profiles(void)
 {
     char tmpl[] = "/tmp/cargopit-config-index-XXXXXX";
@@ -82,6 +137,8 @@ int main(void)
     check_index(path, 99, CONFIG_INDEX_UNSET);
     unlink(path);
     free(path);
+
+    check_sound_channel_helpers();
 
     if (failures > 0)
     {

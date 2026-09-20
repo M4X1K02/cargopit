@@ -476,11 +476,20 @@ int usb_generic_shaker_free(SoundDevice* sounddevice, pa_threaded_mainloop* main
     return err;
 }
 
-int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop, pa_context* context, const char* devname, int volume, int pan, int channels, const char* streamname)
+int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop, pa_context* context, const char* devname, int volume, uint32_t channelmask, int channels, const char* streamname)
 {
     custom_frequency_response_analysis_build_correcting_output_table();
     pa_threaded_mainloop_lock(mainloop);
     pa_stream *stream;
+
+    if (channels < SOUND_CHANNEL_COUNT_MIN)
+    {
+        channels = SOUND_CHANNEL_COUNT_MIN;
+    }
+    if (channels > SOUND_CHANNEL_COUNT_MAX)
+    {
+        channels = SOUND_CHANNEL_COUNT_MAX;
+    }
 
     // Create a playback stream
     pa_sample_spec sample_specifications;
@@ -494,19 +503,19 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
     //pa_channel_map_init_stereo(&channel_map);
 
     // not sure about what to do here
-    if(channels == 2)
+    if(channels == SOUND_CHANNELS_STEREO)
     {
         pa_channel_map_parse(&channel_map, "front-left,front-right");
     }
-    if(channels == 4)
+    if(channels == SOUND_CHANNELS_QUAD)
     {
         pa_channel_map_parse(&channel_map, "front-left,front-right,rear-left,rear-right");
     }
-    if(channels == 6)
+    if(channels == SOUND_CHANNELS_SURROUND_51)
     {
         pa_channel_map_parse(&channel_map, "front-left,front-right,front-center,lfe,rear-left,rear-right");
     }
-    if(channels == 8)
+    if(channels == SOUND_CHANNELS_SURROUND_71)
     {
         pa_channel_map_parse(&channel_map, "front-left,front-right,front-center,lfe,rear-left,rear-right,side-left,side-right");
     }
@@ -547,16 +556,17 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
         | PA_STREAM_ADJUST_LATENCY
         | PA_STREAM_START_UNMUTED;
 
-    if (pan == SOUND_PAN_ALL_CHANNELS || pan < 0 || pan >= channels)
+    uint32_t active_channels = channelmask & sound_channel_mask_all(channels);
+    if (active_channels == 0)
     {
-        for (int ch = 0; ch < channels; ch++)
+        active_channels = sound_channel_mask_all(channels);
+    }
+    for (int ch = 0; ch < channels; ch++)
+    {
+        if ((active_channels & SOUND_CHANNEL_BIT(ch)) != 0)
         {
             cv.values[ch] = channel_volume;
         }
-    }
-    else
-    {
-        cv.values[pan] = channel_volume;
     }
 
     pa_stream_connect_playback(stream, devname, &buffer_attr, stream_flags, &cv, NULL);

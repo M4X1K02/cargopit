@@ -9,6 +9,7 @@ pub struct DeviceForm {
     pub device: DeviceEntry,
     pub original: DeviceEntry,
     pub field_index: usize,
+    pub output_slot: usize,
     pub is_new: bool,
     pub edit_buffer: Option<String>,
     pub error: Option<String>,
@@ -16,10 +17,13 @@ pub struct DeviceForm {
 
 impl DeviceForm {
     pub fn new(device: DeviceEntry, is_new: bool) -> Self {
+        let output_slot =
+            schema::sound_first_channel(schema::sound_resolve_channel_mask(&device)) as usize;
         Self {
             original: device.clone(),
             device,
             field_index: 0,
+            output_slot,
             is_new,
             edit_buffer: None,
             error: None,
@@ -61,6 +65,7 @@ impl DeviceForm {
         let next = (self.field_index as isize + delta).rem_euclid(len);
         self.field_index = next as usize;
         self.edit_buffer = None;
+        self.clamp_output_slot();
     }
 
     pub fn cycle_current(&mut self, discovery: &Discovery, delta: i32) {
@@ -74,6 +79,10 @@ impl DeviceForm {
         }
         if field == FieldId::Granularity {
             self.cycle_granularity(delta);
+            return;
+        }
+        if field == FieldId::Pan {
+            self.move_output_slot(delta);
             return;
         }
         if schema::is_identity(field) {
@@ -105,7 +114,7 @@ impl DeviceForm {
         let current = schema::display_value(&self.device, field);
         let next = next_combo_value(choices, &current, delta, schema::is_optional(field));
         if next.is_empty() {
-            schema::clear_field(&mut self.device, field);
+            self.clear_current();
             return;
         }
         self.apply_combo(field, &next);
@@ -117,6 +126,52 @@ impl DeviceForm {
         };
         schema::clear_field(&mut self.device, field);
         self.edit_buffer = None;
+        if field == FieldId::Channels {
+            schema::clip_sound_output(&mut self.device);
+            self.clamp_output_slot();
+        }
+    }
+
+    pub fn move_output_slot(&mut self, delta: i32) {
+        let count = schema::sound_channel_count(&self.device) as i32;
+        if count <= 0 {
+            return;
+        }
+        self.clamp_output_slot();
+        let next = (self.output_slot as i32 + delta).rem_euclid(count);
+        self.output_slot = next as usize;
+    }
+
+    pub fn toggle_output(&mut self) {
+        if self.current_field() != Some(FieldId::Pan) {
+            return;
+        }
+        self.clamp_output_slot();
+        schema::toggle_sound_channel(&mut self.device, self.output_slot);
+    }
+
+    pub fn activate_current(&mut self, discovery: &Discovery) {
+        let Some(field) = self.current_field() else {
+            return;
+        };
+        if field == FieldId::Pan {
+            self.toggle_output();
+            return;
+        }
+        if schema::is_combo(field) || schema::is_identity(field) {
+            self.cycle_current(discovery, 1);
+        }
+    }
+
+    fn clamp_output_slot(&mut self) {
+        let count = schema::sound_channel_count(&self.device) as usize;
+        if count == 0 {
+            self.output_slot = 0;
+            return;
+        }
+        if self.output_slot >= count {
+            self.output_slot = count - 1;
+        }
     }
 
     fn cycle_granularity(&mut self, delta: i32) {
@@ -198,6 +253,13 @@ impl DeviceForm {
                 self.device
                     .set_int(consts::KEY_MOTORS, schema::motor_index(value));
             }
+            FieldId::Channels => {
+                if let Ok(parsed) = value.parse::<i64>() {
+                    self.device.set_int(consts::KEY_CHANNELS, parsed);
+                    schema::clip_sound_output(&mut self.device);
+                    self.clamp_output_slot();
+                }
+            }
             FieldId::Volume => {
                 if let Ok(parsed) = value.parse::<i64>() {
                     self.device.set_int(consts::KEY_STREAM_VOLUME, parsed);
@@ -233,6 +295,7 @@ impl DeviceForm {
         }
         self.device = next;
         self.field_index = 0;
+        self.output_slot = 0;
     }
 
     pub fn change_type(&mut self, type_name: &str) {
@@ -243,6 +306,7 @@ impl DeviceForm {
         restore_compatible(&extra, &mut next, class, type_name);
         self.device = next;
         self.field_index = 0;
+        self.output_slot = 0;
     }
 
     pub fn begin_edit(&mut self) {
@@ -386,6 +450,25 @@ mod tests {
     }
 
     #[test]
+    fn small_nudge_moves_volume_by_one() {
+        let mut form = DeviceForm::blank();
+        form.device
+            .set_int(consts::KEY_STREAM_VOLUME, consts::DEFAULT_VOLUME);
+        form.device
+            .set_int(consts::KEY_VOLUME, consts::DEFAULT_VOLUME);
+        form.nudge(FieldId::Volume, 1, false);
+        assert_eq!(
+            form.device.get_i64(consts::KEY_STREAM_VOLUME),
+            Some(consts::DEFAULT_VOLUME + consts::NUDGE_INT_SMALL)
+        );
+        form.nudge(FieldId::Volume, 1, true);
+        assert_eq!(
+            form.device.get_i64(consts::KEY_STREAM_VOLUME),
+            Some(consts::DEFAULT_VOLUME + consts::NUDGE_INT_SMALL + consts::NUDGE_INT_LARGE)
+        );
+    }
+
+    #[test]
     fn empty_edit_unsets_optional_field() {
         let mut form = DeviceForm::blank();
         let freq_index = form
@@ -397,5 +480,62 @@ mod tests {
         form.edit_buffer = Some(String::new());
         form.commit_edit();
         assert!(!schema::field_is_set(&form.device, FieldId::Frequency));
+    }
+
+    #[test]
+    fn output_slot_toggles_channels_without_minus_one() {
+        let mut form = DeviceForm::blank();
+        let pan_index = form
+            .fields()
+            .iter()
+            .position(|field| *field == FieldId::Pan)
+            .expect("output field");
+        form.field_index = pan_index;
+        form.output_slot = 0;
+        form.toggle_output();
+        assert_eq!(
+            schema::sound_resolve_channel_mask(&form.device),
+            schema::sound_channel_bit(1)
+        );
+        assert_eq!(form.device.get_i64(consts::KEY_PAN), Some(1));
+        form.toggle_output();
+        assert_eq!(
+            schema::sound_resolve_channel_mask(&form.device),
+            schema::sound_channel_bit(0) | schema::sound_channel_bit(1)
+        );
+        assert_ne!(
+            form.device.get_i64(consts::KEY_PAN),
+            Some(consts::SOUND_PAN_ALL_CHANNELS)
+        );
+        form.move_output_slot(1);
+        assert_eq!(form.output_slot, 1);
+        form.toggle_output();
+        assert_eq!(
+            schema::sound_resolve_channel_mask(&form.device),
+            schema::sound_channel_bit(0)
+        );
+        form.move_output_slot(-1);
+        form.toggle_output();
+        assert_eq!(
+            schema::sound_resolve_channel_mask(&form.device),
+            schema::sound_channel_bit(0)
+        );
+    }
+
+    #[test]
+    fn space_toggles_enabled_without_letter_keys() {
+        let mut form = DeviceForm::blank();
+        let enabled_index = form
+            .fields()
+            .iter()
+            .position(|field| *field == FieldId::Enabled)
+            .expect("enabled field");
+        form.field_index = enabled_index;
+        assert!(form.device.enabled());
+        let discovery = Discovery::default();
+        form.activate_current(&discovery);
+        assert!(!form.device.enabled());
+        form.activate_current(&discovery);
+        assert!(form.device.enabled());
     }
 }

@@ -91,19 +91,26 @@ fn is_executable(path: &Path) -> bool {
 }
 
 pub fn check_processes() -> ProcessStatus {
+    check_processes_from(&process_listing())
+}
+
+pub fn check_processes_from(listing: &str) -> ProcessStatus {
     let mut status = ProcessStatus::default();
     let self_pid = std::process::id();
-    status.simd_running = process_running(consts::BINARY_SIMD, self_pid);
-    status.cargopit_running = process_running(consts::BINARY_CARGOPIT, self_pid);
+    status.simd_running = service_running(listing, consts::BINARY_SIMD, self_pid);
+    status.cargopit_running = service_running(listing, consts::BINARY_CARGOPIT, self_pid);
     status.cleaned_pid_files = cleanup_stale_pid_files(&status);
     status
 }
 
-fn process_running(name: &str, self_pid: u32) -> bool {
-    if pgrep_exact(name) {
+fn service_running(listing: &str, name: &str, self_pid: u32) -> bool {
+    if listing_has_service(listing, name, self_pid) {
         return true;
     }
-    scan_ps(name, self_pid)
+    if !listing.is_empty() {
+        return false;
+    }
+    pgrep_exact(name)
 }
 
 fn pgrep_exact(name: &str) -> bool {
@@ -116,12 +123,8 @@ fn pgrep_exact(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn scan_ps(name: &str, self_pid: u32) -> bool {
-    let text = process_listing();
-    if text.is_empty() {
-        return false;
-    }
-    for line in text.lines().skip(1) {
+fn listing_has_service(listing: &str, name: &str, self_pid: u32) -> bool {
+    for line in listing.lines().skip(1) {
         let mut parts = line.split_whitespace();
         let Some(pid) = parts.next() else {
             continue;
@@ -180,7 +183,7 @@ fn args_launch_binary(args: &str, name: &str) -> bool {
 pub fn wait_until_stopped(name: &str) {
     let self_pid = std::process::id();
     for _ in 0..consts::PROCESS_STOP_POLL_ATTEMPTS {
-        if !process_running(name, self_pid) {
+        if !service_running(&process_listing(), name, self_pid) {
             return;
         }
         thread::sleep(Duration::from_millis(consts::PROCESS_STOP_POLL_MS));
@@ -346,7 +349,38 @@ fn detach_from_tui(cmd: &mut Command) {
 }
 
 pub fn kill_session(session: &mut ChildSession) {
-    let _ = session.child.kill();
+    let _ = terminate_then_kill(&mut session.child);
+}
+
+fn terminate_then_kill(child: &mut Child) -> std::io::Result<std::process::ExitStatus> {
+    if let Ok(Some(status)) = child.try_wait() {
+        return Ok(status);
+    }
+    send_term(child.id());
+    for _ in 0..consts::PROCESS_STOP_POLL_ATTEMPTS {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => thread::sleep(Duration::from_millis(consts::PROCESS_STOP_POLL_MS)),
+            Err(err) => return Err(err),
+        }
+    }
+    child.kill()?;
+    child.wait()
+}
+
+fn send_term(pid: u32) {
+    let pid_text = pid.to_string();
+    let group = format!("{}{pid}", consts::PROCESS_GROUP_SIGNAL_PREFIX);
+    send_kill_signal(&pid_text);
+    send_kill_signal(&group);
+}
+
+fn send_kill_signal(target: &str) {
+    let _ = Command::new(consts::KILL_BIN)
+        .args([consts::KILL_TERM, consts::KILL_END_OF_OPTIONS, target])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 pub fn stop_all() -> Vec<String> {
@@ -561,6 +595,35 @@ mod tests {
             consts::BINARY_CARGOPIT,
             "/opt/build/cargopit play",
         ));
+    }
+
+    #[test]
+    fn check_processes_from_listing_detects_play() {
+        let listing =
+            "PID COMMAND ARGS\n1 systemd /sbin/init\n42 cargopit /opt/build/cargopit play\n";
+        let status = check_processes_from(listing);
+        assert!(status.cargopit_running);
+        assert!(!status.simd_running);
+    }
+
+    #[test]
+    fn check_processes_from_listing_ignores_tui() {
+        let listing = "PID COMMAND ARGS\n9 cargopit-tui /opt/build/cargopit-tui\n";
+        let status = check_processes_from(listing);
+        assert!(!status.cargopit_running);
+    }
+
+    #[test]
+    fn terminate_then_kill_stops_sleep() {
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn sleep");
+        let status = terminate_then_kill(&mut child).expect("stop sleep");
+        assert!(!status.success());
     }
 
     #[test]

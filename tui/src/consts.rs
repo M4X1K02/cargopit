@@ -53,6 +53,7 @@ pub const MIN_TERMINAL_HEIGHT: u16 = 20;
 
 pub const STATUS_REFRESH_MS: u64 = 1000;
 pub const EVENT_POLL_MS: u64 = 200;
+pub const EVENT_DRAIN_MS: u64 = 0;
 pub const FLOW_HOLD_MS: u64 = 1000;
 pub const PROCESS_STOP_WAIT_MS: u64 = 1000;
 pub const PROCESS_STOP_POLL_MS: u64 = 50;
@@ -72,8 +73,26 @@ pub const DEFAULT_STARTLED: i64 = 1;
 pub const DEFAULT_ENDLED: i64 = 1;
 pub const DEFAULT_GRANULARITY: i64 = 1;
 pub const DEFAULT_VOLUME: i64 = 70;
+pub const SOUND_CHANNELS_MONO: i64 = 1;
+pub const SOUND_CHANNELS_STEREO: i64 = 2;
+pub const SOUND_CHANNELS_QUAD: i64 = 4;
+pub const SOUND_CHANNELS_SURROUND_51: i64 = 6;
+pub const SOUND_CHANNELS_SURROUND_71: i64 = 8;
+pub const SOUND_CHANNEL_COUNT_MIN: i64 = SOUND_CHANNELS_MONO;
+pub const SOUND_CHANNEL_COUNT_MAX: i64 = SOUND_CHANNELS_SURROUND_71;
+pub const SOUND_PAN_ALL_CHANNELS: i64 = -1;
 pub const DEFAULT_PAN: i64 = 0;
-pub const DEFAULT_CHANNELS: i64 = 2;
+pub const DEFAULT_CHANNELS: i64 = SOUND_CHANNELS_STEREO;
+pub const SOUND_CHANNEL_COUNT_CHOICES: [i64; 5] = [
+    SOUND_CHANNELS_MONO,
+    SOUND_CHANNELS_STEREO,
+    SOUND_CHANNELS_QUAD,
+    SOUND_CHANNELS_SURROUND_51,
+    SOUND_CHANNELS_SURROUND_71,
+];
+pub const SOUND_CHANNEL_COUNT_LABELS: &[&str] = &["1", "2", "4", "6", "8"];
+pub const SOUND_OUTPUT_ALL: &str = "all";
+pub const SOUND_OUTPUT_SEP: &str = " ";
 pub const DEFAULT_NOISE: i64 = 0;
 pub const DEFAULT_FREQUENCY: i64 = 17;
 pub const DEFAULT_FREQUENCY_MAX: i64 = 37;
@@ -198,6 +217,7 @@ pub const KEY_GRANULARITY: &str = "granularity";
 pub const KEY_VOLUME: &str = "volume";
 pub const KEY_STREAM_VOLUME: &str = "streamVolume";
 pub const KEY_PAN: &str = "pan";
+pub const KEY_CHANNEL_MASK: &str = "channelMask";
 pub const KEY_CHANNELS: &str = "channels";
 pub const KEY_NOISE: &str = "noise";
 pub const KEY_SIM: &str = "sim";
@@ -343,9 +363,21 @@ pub const PKILL_SIGNAL_KILL: &str = "-9";
 pub const PS_BIN: &str = "ps";
 pub const PS_LIST_ARGS: &[&str] = &["axo", "pid,comm,args"];
 pub const PS_COMM_ARGS: &[&str] = &["-o", "comm="];
+pub const SIM_EXE_HOST_COMMS: &[&str] = &[
+    "wine",
+    "wine64",
+    "wine-preloader",
+    "wine64-preloader",
+    "wine64-preload",
+    "bash",
+    "sh",
+];
+pub const WINDOWS_EXE_SUFFIX: &str = ".exe";
 pub const PS_PID_FLAG: &str = "-p";
 pub const KILL_BIN: &str = "kill";
 pub const KILL_TERM: &str = "-TERM";
+pub const KILL_END_OF_OPTIONS: &str = "--";
+pub const PROCESS_GROUP_SIGNAL_PREFIX: &str = "-";
 pub const ID_BIN: &str = "id";
 pub const ID_GROUPS: &str = "-nG";
 pub const WHICH_CARGOPIT_PLAY: &str = "play";
@@ -377,7 +409,7 @@ pub const ACTION_RESTART: &str = "Restart";
 pub const ACTION_STOP: &str = "Stop";
 pub const ACTION_HINTS: &[&str] = &[
     "start play (simd if needed)",
-    "run a hardware test pass",
+    "start or stop a hardware test",
     "stop then start play",
     "stop cargopit and simd",
 ];
@@ -386,7 +418,8 @@ pub const MSG_STARTED_PLAY: &str = "Started cargopit play";
 pub const MSG_STARTED_TEST: &str = "Started cargopit test";
 pub const MSG_STARTED_DEVICE_TEST: &str = "Started test for this device";
 pub const MSG_PLAY_ALREADY_RUNNING: &str = "cargopit play is already running";
-pub const MSG_TEST_ALREADY_RUNNING: &str = "cargopit test is already running";
+pub const MSG_STOPPED_TEST: &str = "Stopped hardware test";
+pub const MSG_NO_TEST_RUNNING: &str = "No hardware test is running";
 pub const MSG_TEST_FINISHED: &str = "Hardware test finished";
 pub const MSG_PLAY_EXITED: &str = "cargopit play exited";
 pub const MSG_TEST_FAILED: &str = "Hardware test failed";
@@ -398,7 +431,7 @@ pub const PROFILE_FIELD_COUNT: usize = 1;
 
 pub const TOO_SMALL_TITLE: &str = "Terminal too small";
 pub const TEST_PANEL_IDLE: &str = "Idle - press t to test";
-pub const TEST_PANEL_RUNNING: &str = "Testing this device";
+pub const TEST_PANEL_RUNNING: &str = "Testing - press t to stop";
 const _: () =
     assert!(TEST_PANEL_IDLE.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize);
 const _: () =
@@ -413,6 +446,13 @@ pub const DIAGRAM_EMPTY_DEVICES: &str = "No devices. Press a to add, T for a tem
 pub const DIAGRAM_NO_TYRES: &str = "No cars. Press a to add.";
 pub const DIAGRAM_TITLE_PIPELINE: &str = "Signal path";
 pub const DIAGRAM_TITLE_HEALTH: &str = "Device health";
+pub const HEALTH_LABEL_READY: &str = "ready";
+pub const HEALTH_CHECK_COUNT: usize = 4;
+pub const HEALTH_GAUGE_UNICODE: bool = true;
+pub const STATUS_HEALTH_PAD: u16 = 7;
+pub const STATUS_HEALTH_WIDTH: u16 = HEALTH_LABEL_READY.len() as u16 + STATUS_HEALTH_PAD;
+pub const LAYOUT_HEALTH_GAUGE_HEIGHT: u16 = 1;
+pub const LAYOUT_HEALTH_CHECKS_HEIGHT: u16 = 1;
 pub const DIAGRAM_TITLE_PRESENCE: &str = "Presence by class";
 pub const DIAGRAM_TITLE_ACTIONS: &str = "Actions";
 pub const DIAGRAM_TITLE_PREVIEW: &str = "Preview";
@@ -499,6 +539,42 @@ pub const LABEL_FRONT: &str = "Front";
 pub const LABEL_REAR: &str = "Rear";
 pub const LABEL_PAN_LEFT: &str = "L";
 pub const LABEL_PAN_RIGHT: &str = "R";
+pub const LABEL_SOUND_MONO: &str = "M";
+pub const LABEL_SOUND_FL: &str = "FL";
+pub const LABEL_SOUND_FR: &str = "FR";
+pub const LABEL_SOUND_FC: &str = "FC";
+pub const LABEL_SOUND_LFE: &str = "LFE";
+pub const LABEL_SOUND_RL: &str = "RL";
+pub const LABEL_SOUND_RR: &str = "RR";
+pub const LABEL_SOUND_SL: &str = "SL";
+pub const LABEL_SOUND_SR: &str = "SR";
+pub const SOUND_LAYOUT_MONO: &[&str] = &[LABEL_SOUND_MONO];
+pub const SOUND_LAYOUT_STEREO: &[&str] = &[LABEL_SOUND_FL, LABEL_SOUND_FR];
+pub const SOUND_LAYOUT_QUAD: &[&str] = &[
+    LABEL_SOUND_FL,
+    LABEL_SOUND_FR,
+    LABEL_SOUND_RL,
+    LABEL_SOUND_RR,
+];
+pub const SOUND_LAYOUT_51: &[&str] = &[
+    LABEL_SOUND_FL,
+    LABEL_SOUND_FR,
+    LABEL_SOUND_FC,
+    LABEL_SOUND_LFE,
+    LABEL_SOUND_RL,
+    LABEL_SOUND_RR,
+];
+pub const SOUND_LAYOUT_71: &[&str] = &[
+    LABEL_SOUND_FL,
+    LABEL_SOUND_FR,
+    LABEL_SOUND_FC,
+    LABEL_SOUND_LFE,
+    LABEL_SOUND_RL,
+    LABEL_SOUND_RR,
+    LABEL_SOUND_SL,
+    LABEL_SOUND_SR,
+];
+pub const SOUND_LAYOUT_NUMBERED: &[&str] = &["1", "2", "3", "4", "5", "6", "7", "8"];
 pub const LABEL_MOTOR_FL: &str = "M1";
 pub const LABEL_MOTOR_FR: &str = "M2";
 pub const LABEL_MOTOR_RR: &str = "M3";
@@ -520,8 +596,11 @@ pub const LED_ON: &str = "●";
 pub const LED_OFF: &str = "○";
 pub const GAUGE_FILL: char = '█';
 pub const GAUGE_EMPTY: char = '░';
-pub const GAUGE_WIDTH: usize = 10;
 pub const GAUGE_PERCENT_MAX: u16 = 100;
+pub const GAUGE_FRACTION_COUNT: usize = 8;
+pub const GAUGE_FRACTION_GLYPHS: [char; GAUGE_FRACTION_COUNT] =
+    [GAUGE_EMPTY, '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
+pub const GAUGE_WIDTH: usize = (GAUGE_PERCENT_MAX as usize).div_ceil(GAUGE_FRACTION_COUNT);
 pub const GAUGE_FPS_MAX: f64 = 120.0;
 pub const GAUGE_FREQ_MAX: f64 = 80.0;
 pub const GAUGE_NOISE_MAX: f64 = 50.0;
@@ -529,7 +608,12 @@ pub const GAUGE_CHANNELS_MAX: f64 = 16.0;
 pub const GAUGE_DURATION_MAX: f64 = 2.0;
 pub const GAUGE_AMPFACTOR_MAX: f64 = 2.0;
 pub const GAUGE_BAUD_MAX: f64 = 115200.0;
-pub const FIELD_LABEL_WIDTH: usize = 16;
+pub const FIELD_LABEL_WIDTH: usize = 13;
+pub const FORM_COLUMN_COUNT: usize = 3;
+pub const FORM_COL_SPACING: u16 = 1;
+pub const FORM_COL_GAPS: u16 = (FORM_COLUMN_COUNT - 1) as u16;
+pub const FORM_WIDGET_WIDTH: u16 = GAUGE_WIDTH as u16;
+pub const FORM_VALUE_WIDTH: u16 = FIELD_LABEL_WIDTH as u16;
 pub const TAB_PAD: &str = " ";
 pub const TAB_ACTIVE_LEFT: &str = "[";
 pub const TAB_ACTIVE_RIGHT: &str = "]";
@@ -563,26 +647,27 @@ pub const fn help_note(desc: &'static str) -> HelpBinding {
 }
 
 pub const HOTKEY_TAB_PAGES: &str = "Tab/1-5";
-pub const HOTKEY_MOVE: &str = "j/k";
+pub const HOTKEY_MOVE: &str = "↑↓";
 pub const HOTKEY_ENTER: &str = "Enter";
+pub const HOTKEY_ACTIVATE: &str = "Enter/space";
 pub const HOTKEY_QUIT: &str = "q";
 pub const HOTKEY_ADD: &str = "a";
 pub const HOTKEY_EDIT: &str = "e";
 pub const HOTKEY_DUP: &str = "y";
 pub const HOTKEY_DELETE: &str = "d";
 pub const HOTKEY_SPACE: &str = "space";
-pub const HOTKEY_REORDER: &str = "J/K";
+pub const HOTKEY_REORDER: &str = "Shift+↑↓";
 pub const HOTKEY_TEMPLATE: &str = "T";
-pub const HOTKEY_PROFILE: &str = ", .";
-pub const HOTKEY_CYCLE: &str = "h/l";
+pub const HOTKEY_PROFILE: &str = "←→";
+pub const HOTKEY_CYCLE: &str = "←→";
 pub const HOTKEY_UNSET: &str = "Bksp";
 pub const HOTKEY_SAVE: &str = "s";
 pub const HOTKEY_TEST: &str = "t";
 pub const HOTKEY_ESC: &str = "Esc";
 pub const HOTKEY_APPLY: &str = "A";
-pub const HOTKEY_CONFIRM: &str = "y";
-pub const HOTKEY_CANCEL: &str = "n/Esc";
-pub const HOTKEY_COLUMNS: &str = "h/l/wheel";
+pub const HOTKEY_CONFIRM: &str = "space";
+pub const HOTKEY_CANCEL: &str = "Esc";
+pub const HOTKEY_COLUMNS: &str = "←→/wheel";
 pub const HOTKEY_SAVE_ENTER: &str = "Enter/s";
 
 pub const HELP_DESC_PAGES: &str = "pages";
@@ -608,9 +693,10 @@ pub const HELP_DESC_CYCLE: &str = "cycle";
 pub const HELP_DESC_TYPE: &str = "type";
 pub const HELP_DESC_UNSET: &str = "unset";
 pub const HELP_DESC_SAVE: &str = "save";
-pub const HELP_DESC_TEST_DEVICE: &str = "test this device";
+pub const HELP_DESC_TEST_DEVICE: &str = "start/stop test";
 pub const HELP_DESC_CANCEL: &str = "cancel";
 pub const HELP_DESC_NUDGE: &str = "nudge";
+pub const HELP_DESC_TOGGLE: &str = "toggle";
 pub const HELP_DESC_APPLY: &str = "apply/restart";
 pub const HELP_DESC_CONFIRM: &str = "confirm";
 pub const HELP_DESC_COLUMNS: &str = "columns";
@@ -628,7 +714,8 @@ pub const HELP_DESC_DUP_PROFILE: &str = "duplicate current";
 pub const HELP_DASHBOARD: &[HelpBinding] = &[
     help_key(HOTKEY_TAB_PAGES, HELP_DESC_PAGES),
     help_key(HOTKEY_MOVE, HELP_DESC_SELECT),
-    help_key(HOTKEY_ENTER, HELP_DESC_RUN),
+    help_key(HOTKEY_ACTIVATE, HELP_DESC_RUN),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
     help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
@@ -647,12 +734,13 @@ pub const HELP_DEVICES: &[HelpBinding] = &[
     help_key(HOTKEY_SPACE, HELP_DESC_ENABLE),
     help_key(HOTKEY_REORDER, HELP_DESC_MOVE),
     help_key(HOTKEY_TEMPLATE, HELP_DESC_TEMPLATE),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
     help_key(HOTKEY_ENTER, HELP_DESC_TUNE),
     help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
 ];
 pub const HELP_SETTINGS: &[HelpBinding] = &[
     help_keys(HOTKEY_MOVE),
-    help_key(HOTKEY_ENTER, HELP_DESC_OPEN),
+    help_key(HOTKEY_ACTIVATE, HELP_DESC_OPEN),
     help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_ESC, HELP_DESC_BACK),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
@@ -660,12 +748,14 @@ pub const HELP_SETTINGS: &[HelpBinding] = &[
 pub const HELP_LOGS: &[HelpBinding] = &[
     help_key(HOTKEY_MOVE, HELP_DESC_SCROLL),
     help_key(HOTKEY_SPACE, HELP_DESC_FILTER),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
     help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
 pub const HELP_FORM: &[HelpBinding] = &[
     help_key(HOTKEY_MOVE, HELP_DESC_FIELD),
     help_key(HOTKEY_CYCLE, HELP_DESC_CYCLE),
+    help_key(HOTKEY_SPACE, HELP_DESC_TOGGLE),
     help_key(HOTKEY_ENTER, HELP_DESC_TYPE),
     help_key(HOTKEY_UNSET, HELP_DESC_UNSET),
     help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
@@ -673,7 +763,9 @@ pub const HELP_FORM: &[HelpBinding] = &[
     help_key(HOTKEY_ESC, HELP_DESC_CANCEL),
 ];
 pub const HELP_TUNE: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_FIELD),
     help_key(HOTKEY_CYCLE, HELP_DESC_NUDGE),
+    help_key(HOTKEY_SPACE, HELP_DESC_TOGGLE),
     help_key(HOTKEY_UNSET, HELP_DESC_UNSET),
     help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
     help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
@@ -683,6 +775,11 @@ pub const HELP_TUNE: &[HelpBinding] = &[
 pub const HELP_CONFIRM: &[HelpBinding] = &[
     help_key(HOTKEY_CONFIRM, HELP_DESC_CONFIRM),
     help_key(HOTKEY_CANCEL, HELP_DESC_CANCEL),
+];
+pub const HELP_TEMPLATES: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_TEMPLATE),
+    help_key(HOTKEY_ACTIVATE, HELP_DESC_CONFIRM),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
 ];
 pub const HELP_BACK: &[HelpBinding] = &[
     help_key(HOTKEY_ESC, HELP_DESC_BACK),
@@ -698,7 +795,7 @@ pub const HELP_FLAGS: &[HelpBinding] = &[
 pub const HELP_SIMD: &[HelpBinding] = &[
     help_key(HOTKEY_COLUMNS, HELP_DESC_COLUMNS),
     help_key(HOTKEY_MOVE, HELP_DESC_ROWS),
-    help_key(HOTKEY_ENTER, HELP_DESC_TELEMETRY_SOURCE),
+    help_key(HOTKEY_ACTIVATE, HELP_DESC_TELEMETRY_SOURCE),
     help_key(HOTKEY_ADD, HELP_DESC_ADD),
     help_key(HOTKEY_DELETE, HELP_DESC_DELETE),
     help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
@@ -706,7 +803,7 @@ pub const HELP_SIMD: &[HelpBinding] = &[
 ];
 pub const HELP_LUA: &[HelpBinding] = &[
     help_key(HOTKEY_MOVE, HELP_DESC_TEMPLATE),
-    help_key(HOTKEY_ENTER, HELP_DESC_LUA_COPY),
+    help_key(HOTKEY_ACTIVATE, HELP_DESC_LUA_COPY),
     help_key(HOTKEY_ESC, HELP_DESC_BACK),
 ];
 pub const HELP_TACH: &[HelpBinding] = &[
@@ -745,6 +842,7 @@ pub const FIELD_UNSET: &str = "(unset)";
 
 pub const LAYOUT_TAB_HEIGHT: u16 = 2;
 pub const LAYOUT_STATUS_HEIGHT: u16 = 1;
+pub const LAYOUT_HINT_HEIGHT: u16 = 1;
 pub const LAYOUT_HELP_HEIGHT: u16 = 1;
 pub const LAYOUT_BORDER_LINES: u16 = 2;
 pub const LAYOUT_DASHBOARD_PIPELINE_HEIGHT: u16 = 7;
@@ -753,7 +851,12 @@ pub const LAYOUT_DASHBOARD_SPLIT_RIGHT: u16 = 45;
 pub const LAYOUT_TELEMETRY_SPLIT_LEFT: u16 = 50;
 pub const LAYOUT_TELEMETRY_SPLIT_RIGHT: u16 = 50;
 pub const LAYOUT_FORM_DIAGRAM_WIDTH: u16 = 34;
-pub const LAYOUT_FORM_LIST_MIN: u16 = 36;
+pub const LAYOUT_FORM_LIST_MIN: u16 = LIST_HIGHLIGHT_WIDTH
+    + FIELD_LABEL_WIDTH as u16
+    + FORM_VALUE_WIDTH
+    + FORM_WIDGET_WIDTH
+    + FORM_COL_SPACING * FORM_COL_GAPS
+    + LAYOUT_BORDER_LINES;
 pub const LAYOUT_FORM_HELP_HEIGHT: u16 = 8;
 pub const LAYOUT_FORM_TEST_MIN_HEIGHT: u16 = 10;
 pub const LAYOUT_FORM_DIAGRAM_MIN_HEIGHT: u16 = 6;
@@ -875,6 +978,8 @@ pub const SIMULATOR_API_SCS_TRUCKSIM2: u8 = 4;
 pub const SIMULATOR_API_OUTSIM: u8 = 5;
 pub const SIMULATOR_API_DIRT_RALLY_2: u8 = 6;
 pub const SIMULATOR_EXE_DIRT_RALLY_2: u64 = 690790;
+pub const SIMULATOR_EXE_ASSETTO_CORSA_RALLY: u64 = 3917090;
+pub const SIM_EXE_ACR: &str = "acr.exe";
 pub const SIMULATOR_API_F1_2018: u8 = 7;
 pub const SIMULATOR_API_RACE_ROOM: u8 = 8;
 pub const SIMULATOR_API_FORZA: u8 = 9;

@@ -24,7 +24,7 @@ Use `cargopit-tui` for device lists, play/test flags, simd.config, Lua scripts, 
 * `~/.config/cargopit/cargopit.config` — start from an empty profile in the TUI, or the installer stub / [conf/cargopit.config](https://github.com/M4X1K02/cargopit/blob/master/conf/cargopit.config)
     * Keep only devices you have plugged in (or disable unused rows in the TUI)
     * [Bass shaker config](https://spacefreak18.github.io/simapi/shakers)
-    * Test with `test-cargopit`, `cargopit test -vv`, or **t** in the TUI
+    * Test with `test-cargopit`, `cargopit test -vv`, or **t** in the TUI. Press **t** again (or **q** / Ctrl+C in the CLI) to stop a running test.
 
 Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, plus the udev rules from `udev/69-cargopit.rules`. The TUI Diagnostics page reports groups, udev, binaries, and `SIMAPI.DAT`.
 
