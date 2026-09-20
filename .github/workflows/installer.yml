@@ -6,7 +6,7 @@ on:
     paths:
       - install.sh
       - tools/uninstall.sh
-      - tools/cargopit-manager
+      - tui/**
       - tools/distro/**
       - README.md
       - HOW-TO-USE.md
@@ -17,7 +17,7 @@ on:
     paths:
       - install.sh
       - tools/uninstall.sh
-      - tools/cargopit-manager
+      - tui/**
       - tools/distro/**
       - README.md
       - HOW-TO-USE.md

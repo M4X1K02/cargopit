@@ -1,27 +1,10 @@
-# Flatpak manifest for cargopit -- NOT submitted anywhere (Flathub or
-# otherwise) yet. Built 2026-08-30 on the patterns proven working for the
-# sibling typiql-tauri/typiql project's own Flatpak pipeline (see this
-# repo's .github/workflows/flatpak.yml header for the full list of bugs
-# found and fixed here, cargopit-specific beyond what that sibling project
-# already covered). VERIFIED LOCALLY end-to-end: built, installed, and ran
-# `cargopit --help` from the resulting bundle. Not
-# yet verified against real CI or real hardware (HID/serial/USB device
-# access under the sandbox).
+# Flatpak manifest for cargopit (this fork). The upstream-named sibling
+# io.github.spacefreak18.monocoque.yml is kept so older notes and CI
+# snapshots still resolve; this file is the one to ship.
 #
-# org.freedesktop.Platform, not org.gnome.Platform: the CLI only needs
-# PulseAudio and HID/serial, which freedesktop.Platform//25.08 already
-# ships -- no need for the heavier GNOME runtime typiql needs for WebKitGTK.
-# simd is NOT bundled. It is a separate daemon with its own packaging, and
-# cargopit does not need it inside the sandbox to use it: simapi_get_sim()
-# checks /dev/shm/SIMAPI.DAT before it ever scans /proc, so a simd running on
-# the host -- however it was installed -- publishes telemetry this sandbox
-# reads directly. That is what --device=shm below is for, and it is the only
-# thing this manifest needs in order to work with simd.
-#
-# simapi itself is still present, but only as cargopit's own statically
-# linked submodule, exactly as upstream's CMakeLists builds it. There is no
-# separate simapi module here.
-app-id: io.github.spacefreak18.monocoque
+# NOT submitted to Flathub yet. simd is NOT bundled: a host simd publishes
+# /dev/shm/SIMAPI.DAT, which this sandbox reads via --device=shm.
+app-id: io.github.M4X1K02.cargopit
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
@@ -238,13 +221,13 @@ modules:
       # source above doesn't pull submodule content in (same class of issue
       # as typiql-tauri/typiql's own submodules, src/lib/per-form etc.).
       - type: git
-        url: https://github.com/spacefreak18/simapi
-        commit: 50fd181681862256780b2a0f74ef4bc459ed631a
+        url: https://github.com/M4X1K02/simapi
+        commit: e5367fbd5a41287b1d38766cb2595100c1eff56f
         dest: src/cargopit/simulatorapi/simapi
       - type: file
-        path: io.github.spacefreak18.monocoque.desktop
+        path: io.github.M4X1K02.cargopit.desktop
       - type: file
-        path: io.github.spacefreak18.monocoque.metainfo.xml
+        path: io.github.M4X1K02.cargopit.metainfo.xml
       # Icon comes from tools/cargopit.svg via the `dir` source above (no
       # separate file source needed). That file is a square 100x100 copy of
       # the upstream artwork -- the published monocoque.svg the deb job
@@ -267,7 +250,7 @@ modules:
       # lives in doc/readme.html -- so a checked-in copy is installed from
       # here, where the repo is the build directory.
       - install -Dm644 packaging/licenses/lua-5.4-LICENSE.txt /app/share/licenses/lua5.4/LICENSE
-      - sh -c 'python3 tools/generate-third-party-notices.py flatpak/io.github.spacefreak18.monocoque.yml > /tmp/notices.md && install -Dm644 /tmp/notices.md /app/share/licenses/THIRD-PARTY-NOTICES.md'
+      - sh -c 'python3 tools/generate-third-party-notices.py flatpak/io.github.M4X1K02.cargopit.yml > /tmp/notices.md && install -Dm644 /tmp/notices.md /app/share/licenses/THIRD-PARTY-NOTICES.md'
     # Confirmed via a failed local build that flatpak-builder's cmake-ninja
     # buildsystem runs the automatic build+install step regardless of
     # whether build-commands are also given -- these run in *addition*,
@@ -279,6 +262,6 @@ modules:
     # already installs cargopit correctly; these build-commands
     # only need to add the extra files CMake doesn't know about.
     build-commands:
-      - install -Dm644 io.github.spacefreak18.monocoque.desktop /app/share/applications/io.github.spacefreak18.monocoque.desktop
-      - install -Dm644 io.github.spacefreak18.monocoque.metainfo.xml /app/share/metainfo/io.github.spacefreak18.monocoque.metainfo.xml
-      - install -Dm644 tools/cargopit.svg /app/share/icons/hicolor/scalable/apps/io.github.spacefreak18.monocoque.svg
+      - install -Dm644 io.github.M4X1K02.cargopit.desktop /app/share/applications/io.github.M4X1K02.cargopit.desktop
+      - install -Dm644 io.github.M4X1K02.cargopit.metainfo.xml /app/share/metainfo/io.github.M4X1K02.cargopit.metainfo.xml
+      - install -Dm644 tools/cargopit.svg /app/share/icons/hicolor/scalable/apps/io.github.M4X1K02.cargopit.svg

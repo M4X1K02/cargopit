@@ -272,7 +272,7 @@ int delete_device_config(config_t *cfg, const char *configfile, int confignum, i
 int save_device_config(config_t *cfg, const char* configfile, int confignum, int devicenum, const DeviceSettings *ds);
 int configcheck(const char* config_file_str, int confignum, int* devices);
 
-int uiloadconfig(const char* config_file_str, int confignum, int configureddevices, CargopitSettings* ms, DeviceSettings* ds);
+int load_device_configs(const char* config_file_str, int confignum, int configureddevices, CargopitSettings* ms, DeviceSettings* ds);
 
 int getsingledevice(const char* config_file_str, int confignum, int devicenum, CargopitSettings* ms, DeviceSettings* ds);
 

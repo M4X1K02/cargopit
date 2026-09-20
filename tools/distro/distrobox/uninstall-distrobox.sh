@@ -41,7 +41,7 @@ print_header
 
 log_warn "This will remove:"
 echo "  - Distrobox container '$CONTAINER'"
-echo "  - Wrapper scripts ($BIN_DIR/start-simd, start-cargopit, test-cargopit)"
+echo "  - Wrapper scripts ($BIN_DIR/start-simd, start-cargopit, test-cargopit, cargopit-tui)"
 echo "  - simshmbridge source ($INSTALL_DIR)"
 echo ""
 echo "This will NOT remove:"
@@ -62,6 +62,7 @@ log_info "Removing wrapper scripts..."
 rm -f "$BIN_DIR/start-simd"
 rm -f "$BIN_DIR/start-cargopit"
 rm -f "$BIN_DIR/test-cargopit"
+rm -f "$BIN_DIR/cargopit-tui"
 log_success "Wrapper scripts removed"
 
 # Remove simshmbridge source

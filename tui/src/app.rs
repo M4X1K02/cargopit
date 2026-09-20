@@ -1,0 +1,1016 @@
+use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+
+use crate::config::{self, CargopitConfig, DeviceEntry, SimProfile};
+use crate::consts;
+use crate::diagnostics::{self, Diagnostics};
+use crate::form::DeviceForm;
+use crate::hardware::Discovery;
+use crate::libconfig::Value;
+use crate::logs::LogState;
+use crate::paths;
+use crate::process::{self, ChildSession, ProcessStatus, SessionKind};
+use crate::schema::{DeviceClass, FieldId};
+use crate::simd_config::{self, SimdConfig, SimdSim};
+use crate::templates;
+use crate::tui_state::{self, TuiState};
+use crate::tyres::{self, TyreCar, TyreStore};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Screen {
+    Dashboard,
+    Devices,
+    Settings,
+    Logs,
+    DeviceForm,
+    DeviceTune,
+    ProfileEdit,
+    TemplatePicker,
+    Confirm(ConfirmKind),
+    SettingsSub(SettingsSub),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfirmKind {
+    DeleteDevice,
+    DeleteProfile,
+    RestartAfterSave,
+    ApplyTemplate(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSub {
+    Flags,
+    Simd,
+    Lua,
+    Tach,
+    Tyres,
+    Diagnostics,
+    Raw,
+}
+
+pub struct App {
+    pub screen: Screen,
+    pub previous: Screen,
+    pub tab: usize,
+    pub config: CargopitConfig,
+    pub config_path: PathBuf,
+    pub raw_on_disk: String,
+    pub tui_state: TuiState,
+    pub status: ProcessStatus,
+    pub discovery: Discovery,
+    pub logs: LogState,
+    pub message: String,
+    pub last_tick: Instant,
+    pub form: DeviceForm,
+    pub device_index: usize,
+    pub profile_index: usize,
+    pub dashboard_index: usize,
+    pub settings_index: usize,
+    pub template_index: usize,
+    pub simd: SimdConfig,
+    pub simd_index: usize,
+    pub simd_field: usize,
+    pub tyres: TyreStore,
+    pub tyre_index: usize,
+    pub lua_index: usize,
+    pub tach_max_revs: i64,
+    pub tach_granularity: i64,
+    pub tach_path: String,
+    pub tach_field: usize,
+    pub flags_field: usize,
+    pub profile_edit: SimProfile,
+    pub profile_field: usize,
+    pub tune_index: usize,
+    pub should_quit: bool,
+    child_rx: Option<Receiver<(SessionKind, String)>>,
+    child: Option<ChildSession>,
+}
+
+impl App {
+    pub fn new() -> Result<Self> {
+        paths::prepend_search_path();
+        let tui_state = tui_state::load();
+        let config_path = tui_state.config_path();
+        let config = config::load_file(&config_path)?;
+        let raw_on_disk = config::read_raw(&config_path).unwrap_or_default();
+        let simd = simd_config::load(&paths::simd_config_path()).unwrap_or_default();
+        let tyres = tyres::load(&paths::diameters_path()).unwrap_or_default();
+        let mut app = Self {
+            screen: Screen::Dashboard,
+            previous: Screen::Dashboard,
+            tab: consts::TAB_DASHBOARD,
+            config,
+            config_path,
+            raw_on_disk,
+            tui_state,
+            status: process::check_processes(),
+            discovery: Discovery::live(),
+            logs: LogState::new(),
+            message: String::new(),
+            last_tick: Instant::now(),
+            form: DeviceForm::blank(),
+            device_index: 0,
+            profile_index: 0,
+            dashboard_index: 0,
+            settings_index: 0,
+            template_index: 0,
+            simd,
+            simd_index: 0,
+            simd_field: 0,
+            tyres,
+            tyre_index: 0,
+            lua_index: 0,
+            tach_max_revs: consts::DEFAULT_TACH_MAX_REVS,
+            tach_granularity: consts::DEFAULT_GRANULARITY,
+            tach_path: paths::config_home()
+                .join(consts::CONFIG_DIR_NAME)
+                .join("revburner.xml")
+                .display()
+                .to_string(),
+            tach_field: 0,
+            flags_field: 0,
+            profile_edit: SimProfile::default(),
+            profile_field: 0,
+            tune_index: 0,
+            should_quit: false,
+            child_rx: None,
+            child: None,
+        };
+        app.logs.refresh_files();
+        Ok(app)
+    }
+
+    pub fn current_profile(&self) -> Option<&SimProfile> {
+        self.config.profiles.get(self.profile_index)
+    }
+
+    pub fn current_profile_mut(&mut self) -> Option<&mut SimProfile> {
+        self.config.profiles.get_mut(self.profile_index)
+    }
+
+    pub fn current_device(&self) -> Option<&DeviceEntry> {
+        self.current_profile()?.devices.get(self.device_index)
+    }
+
+    pub fn diagnostics(&self) -> Diagnostics {
+        let devices: Vec<(DeviceClass, String, String)> = self
+            .current_profile()
+            .map(|profile| {
+                profile
+                    .devices
+                    .iter()
+                    .map(|d| {
+                        (
+                            d.class(),
+                            d.get_str(consts::KEY_DEVID).unwrap_or("").to_string(),
+                            d.get_str(consts::KEY_DEVPATH).unwrap_or("").to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        diagnostics::collect(&self.discovery, &devices)
+    }
+
+    pub fn tick(&mut self) {
+        if self.last_tick.elapsed() >= Duration::from_millis(consts::STATUS_REFRESH_MS) {
+            self.status = process::check_processes();
+            self.discovery = Discovery::live();
+            self.logs.refresh_files();
+            if !self.status.cleaned_pid_files.is_empty() {
+                self.message = format!(
+                    "Cleaned stale PID files: {}",
+                    self.status.cleaned_pid_files.join(", ")
+                );
+            }
+            self.last_tick = Instant::now();
+        }
+        self.drain_child();
+    }
+
+    fn drain_child(&mut self) {
+        if let Some(rx) = &self.child_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok((kind, line)) => self.logs.push(kind.as_str().to_string(), line),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        self.child_rx = None;
+                        break;
+                    }
+                }
+            }
+        }
+        let Some(session) = self.child.as_mut() else {
+            return;
+        };
+        match session.child.try_wait() {
+            Ok(Some(status)) => {
+                self.message = format!("{} exited {status}", session.kind.as_str());
+                self.child = None;
+            }
+            Ok(None) => {}
+            Err(err) => {
+                self.message = format!("wait failed: {err}");
+                self.child = None;
+            }
+        }
+    }
+
+    pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
+        if key.kind != KeyEventKind::Press {
+            return Ok(());
+        }
+        if self.form.edit_buffer.is_some() && matches!(self.screen, Screen::DeviceForm | Screen::DeviceTune)
+        {
+            self.handle_form_edit(key.code);
+            return Ok(());
+        }
+        if is_global_tab(key.code) && is_main_tab(&self.screen) {
+            self.switch_tab_key(key.code);
+            return Ok(());
+        }
+        match self.screen {
+            Screen::Dashboard => self.handle_dashboard(key.code),
+            Screen::Devices => self.handle_devices(key.code),
+            Screen::Settings => self.handle_settings(key.code),
+            Screen::Logs => self.handle_logs(key.code),
+            Screen::DeviceForm => self.handle_form(key.code)?,
+            Screen::DeviceTune => self.handle_tune(key.code)?,
+            Screen::ProfileEdit => self.handle_profile_edit(key.code)?,
+            Screen::TemplatePicker => self.handle_templates(key.code),
+            Screen::Confirm(ref kind) => self.handle_confirm(key.code, kind.clone())?,
+            Screen::SettingsSub(sub) => self.handle_settings_sub(key.code, sub)?,
+        }
+        Ok(())
+    }
+
+    fn switch_tab_key(&mut self, code: KeyCode) {
+        let tab = match code {
+            consts::KEY_TAB => (self.tab + 1) % consts::TAB_COUNT,
+            consts::KEY_BACK_TAB => (self.tab + consts::TAB_COUNT - 1) % consts::TAB_COUNT,
+            consts::KEY_START => consts::TAB_DASHBOARD,
+            consts::KEY_TAB2 => consts::TAB_DEVICES,
+            consts::KEY_TAB3 => consts::TAB_SETTINGS,
+            consts::KEY_TAB4 => consts::TAB_LOGS,
+            _ => return,
+        };
+        self.set_tab(tab);
+    }
+
+    fn set_tab(&mut self, tab: usize) {
+        self.tab = tab;
+        self.screen = match tab {
+            consts::TAB_DEVICES => Screen::Devices,
+            consts::TAB_SETTINGS => Screen::Settings,
+            consts::TAB_LOGS => Screen::Logs,
+            _ => Screen::Dashboard,
+        };
+    }
+
+    fn handle_dashboard(&mut self, code: KeyCode) {
+        match code {
+            consts::KEY_QUIT | consts::KEY_QUIT_UPPER | consts::KEY_ESC => self.should_quit = true,
+            consts::KEY_UP | consts::KEY_K => {
+                self.dashboard_index = wrap_index(
+                    self.dashboard_index,
+                    consts::DASHBOARD_ACTIONS.len(),
+                    -1,
+                );
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.dashboard_index = wrap_index(
+                    self.dashboard_index,
+                    consts::DASHBOARD_ACTIONS.len(),
+                    1,
+                );
+            }
+            consts::KEY_ENTER => self.run_dashboard_action(self.dashboard_index),
+            _ => {}
+        }
+    }
+
+    fn run_dashboard_action(&mut self, index: usize) {
+        match consts::DASHBOARD_ACTIONS.get(index).copied() {
+            Some(consts::ACTION_START) => self.start_play(),
+            Some(consts::ACTION_TEST) => self.start_test(),
+            Some(consts::ACTION_RESTART) => self.restart_play(),
+            Some(consts::ACTION_STOP) => self.stop_all(),
+            _ => {}
+        }
+    }
+
+    fn start_play(&mut self) {
+        self.status = process::check_processes();
+        if self.child.is_some() || self.status.cargopit_running {
+            self.message = consts::MSG_PLAY_ALREADY_RUNNING.into();
+            return;
+        }
+        match process::spawn_session(SessionKind::Play, &self.tui_state.play_flags, &self.config_path) {
+            Ok(session) => {
+                self.attach_child(session);
+                self.message = consts::MSG_STARTED_PLAY.into();
+                self.set_tab(consts::TAB_LOGS);
+            }
+            Err(err) => self.message = err.to_string(),
+        }
+    }
+
+    fn restart_play(&mut self) {
+        self.kill_tracked_child();
+        let _ = process::stop_play();
+        self.status = process::check_processes();
+        self.start_play();
+    }
+
+    fn start_test(&mut self) {
+        match process::spawn_session(SessionKind::Test, &self.tui_state.play_flags, &self.config_path)
+        {
+            Ok(session) => {
+                self.attach_child(session);
+                self.message = consts::MSG_STARTED_TEST.into();
+                self.set_tab(consts::TAB_LOGS);
+            }
+            Err(err) => self.message = err.to_string(),
+        }
+    }
+
+    fn attach_child(&mut self, mut session: ChildSession) {
+        let (tx, rx) = mpsc::channel();
+        spawn_pipe_reader(session.child.stdout.take(), session.kind, tx.clone());
+        spawn_pipe_reader(session.child.stderr.take(), session.kind, tx);
+        self.child_rx = Some(rx);
+        self.child = Some(session);
+    }
+
+    fn stop_all(&mut self) {
+        self.kill_tracked_child();
+        let stopped = process::stop_all();
+        self.status = process::check_processes();
+        self.message = if stopped.is_empty() {
+            consts::MSG_NO_SERVICES.into()
+        } else {
+            format!("Stopped: {}", stopped.join(", "))
+        };
+    }
+
+    fn kill_tracked_child(&mut self) {
+        if let Some(mut session) = self.child.take() {
+            process::kill_session(&mut session);
+        }
+        self.child_rx = None;
+    }
+
+    fn handle_devices(&mut self, code: KeyCode) {
+        match code {
+            consts::KEY_QUIT | consts::KEY_QUIT_UPPER => self.should_quit = true,
+            consts::KEY_PREV_PROFILE => self.cycle_profile(-1),
+            consts::KEY_NEXT_PROFILE => self.cycle_profile(1),
+            consts::KEY_UP | consts::KEY_K => self.move_device(-1),
+            consts::KEY_DOWN | consts::KEY_J => self.move_device(1),
+            consts::KEY_G_UPPER => self.reorder_device(1),
+            consts::KEY_K_UPPER => self.reorder_device(-1),
+            consts::KEY_SPACE => self.toggle_enabled(),
+            consts::KEY_ADD => self.open_new_form(),
+            consts::KEY_EDIT => self.open_edit_form(),
+            consts::KEY_DUPLICATE => self.duplicate_device(),
+            consts::KEY_DELETE => self.open_confirm(ConfirmKind::DeleteDevice),
+            consts::KEY_DELETE_UPPER => self.open_confirm(ConfirmKind::DeleteProfile),
+            consts::KEY_TEMPLATE => {
+                self.previous = Screen::Devices;
+                self.screen = Screen::TemplatePicker;
+            }
+            consts::KEY_ENTER => self.open_tune(),
+            consts::KEY_SAVE => {
+                self.previous = Screen::Devices;
+                self.profile_edit = self.current_profile().cloned().unwrap_or_default();
+                self.profile_field = consts::PROFILE_FIELD_SIM;
+                self.screen = Screen::ProfileEdit;
+            }
+            _ => {}
+        }
+    }
+
+    fn cycle_profile(&mut self, delta: isize) {
+        if self.config.profiles.is_empty() {
+            return;
+        }
+        let len = self.config.profiles.len() as isize;
+        self.profile_index = (self.profile_index as isize + delta).rem_euclid(len) as usize;
+        self.device_index = 0;
+    }
+
+    fn move_device(&mut self, delta: isize) {
+        let Some(profile) = self.current_profile() else {
+            return;
+        };
+        if profile.devices.is_empty() {
+            return;
+        }
+        self.device_index = wrap_index(self.device_index, profile.devices.len(), delta);
+    }
+
+    fn reorder_device(&mut self, delta: isize) {
+        let len = match self.current_profile() {
+            Some(profile) if !profile.devices.is_empty() => profile.devices.len(),
+            _ => return,
+        };
+        let current = self.device_index;
+        let next = (current as isize + delta).rem_euclid(len as isize) as usize;
+        if let Some(profile) = self.current_profile_mut() {
+            profile.devices.swap(current, next);
+        }
+        self.device_index = next;
+        self.persist_config();
+    }
+
+    fn toggle_enabled(&mut self) {
+        let index = self.device_index;
+        let Some(profile) = self.current_profile_mut() else {
+            return;
+        };
+        let Some(device) = profile.devices.get_mut(index) else {
+            return;
+        };
+        let enabled = !device.enabled();
+        device.set_bool(consts::KEY_ENABLED, enabled);
+        self.persist_config();
+    }
+
+    fn open_new_form(&mut self) {
+        self.form = DeviceForm::blank();
+        self.previous = Screen::Devices;
+        self.screen = Screen::DeviceForm;
+    }
+
+    fn open_edit_form(&mut self) {
+        let Some(device) = self.current_device().cloned() else {
+            self.message = "No device to edit".into();
+            return;
+        };
+        self.form = DeviceForm::new(device, false);
+        self.previous = Screen::Devices;
+        self.screen = Screen::DeviceForm;
+    }
+
+    fn duplicate_device(&mut self) {
+        let Some(device) = self.current_device().cloned() else {
+            return;
+        };
+        let insert_at = self.device_index + 1;
+        if let Some(profile) = self.current_profile_mut() {
+            profile.devices.insert(insert_at, device);
+        }
+        self.device_index = insert_at;
+        self.persist_config();
+    }
+
+    fn open_tune(&mut self) {
+        let Some(device) = self.current_device().cloned() else {
+            return;
+        };
+        self.form = DeviceForm::new(device, false);
+        self.tune_index = 0;
+        self.previous = Screen::Devices;
+        self.screen = Screen::DeviceTune;
+    }
+
+    fn handle_form(&mut self, code: KeyCode) -> Result<()> {
+        match code {
+            consts::KEY_ESC => {
+                self.screen = Screen::Devices;
+            }
+            consts::KEY_UP | consts::KEY_K => self.form.move_field(-1),
+            consts::KEY_DOWN | consts::KEY_J => self.form.move_field(1),
+            consts::KEY_LEFT | consts::KEY_H | consts::KEY_MINUS => {
+                self.form.cycle_current(&self.discovery, -1);
+            }
+            consts::KEY_RIGHT | consts::KEY_L | consts::KEY_PLUS | consts::KEY_EQUALS => {
+                self.form.cycle_current(&self.discovery, 1);
+            }
+            consts::KEY_ENTER => self.form.begin_edit(),
+            consts::KEY_SAVE => self.save_form()?,
+            consts::KEY_TEST => {
+                self.save_form()?;
+                self.start_test();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_form_edit(&mut self, code: KeyCode) {
+        let Some(buffer) = self.form.edit_buffer.as_mut() else {
+            return;
+        };
+        match code {
+            consts::KEY_ESC => self.form.cancel_edit(),
+            consts::KEY_ENTER => self.form.commit_edit(),
+            consts::KEY_BACKSPACE => {
+                buffer.pop();
+            }
+            KeyCode::Char(ch) => buffer.push(ch),
+            _ => {}
+        }
+    }
+
+    fn save_form(&mut self) -> Result<()> {
+        if let Err(err) = self.form.validate() {
+            self.form.error = Some(err);
+            self.message = self.form.error.clone().unwrap_or_default();
+            return Ok(());
+        }
+        let device = self.form.device.clone();
+        let is_new = self.form.is_new;
+        let index = self.device_index;
+        let Some(profile) = self.current_profile_mut() else {
+            return Ok(());
+        };
+        if is_new {
+            profile.devices.push(device);
+            self.device_index = profile.devices.len().saturating_sub(1);
+        } else if let Some(slot) = profile.devices.get_mut(index) {
+            *slot = device;
+        }
+        self.persist_config();
+        self.screen = Screen::Devices;
+        if self.status.cargopit_running {
+            self.open_confirm(ConfirmKind::RestartAfterSave);
+        }
+        Ok(())
+    }
+
+    fn handle_tune(&mut self, code: KeyCode) -> Result<()> {
+        let fields = tune_fields(&self.form);
+        match code {
+            consts::KEY_ESC => self.screen = Screen::Devices,
+            consts::KEY_UP | consts::KEY_K => {
+                self.tune_index = wrap_index(self.tune_index, fields.len().max(1), -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.tune_index = wrap_index(self.tune_index, fields.len().max(1), 1);
+            }
+            consts::KEY_LEFT | consts::KEY_H | consts::KEY_MINUS => {
+                if let Some(field) = fields.get(self.tune_index).copied() {
+                    self.form.field_index = index_of_field(&self.form, field);
+                    self.form.nudge(field, -1, true);
+                }
+            }
+            consts::KEY_RIGHT | consts::KEY_L | consts::KEY_PLUS | consts::KEY_EQUALS => {
+                if let Some(field) = fields.get(self.tune_index).copied() {
+                    self.form.field_index = index_of_field(&self.form, field);
+                    self.form.nudge(field, 1, true);
+                }
+            }
+            consts::KEY_SAVE => self.save_form()?,
+            consts::KEY_APPLY => {
+                self.save_form()?;
+                if self.form.error.is_some() {
+                    return Ok(());
+                }
+                if self.child.is_some() || self.status.cargopit_running {
+                    self.restart_play();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_profile_edit(&mut self, code: KeyCode) -> Result<()> {
+        match code {
+            consts::KEY_ESC => self.screen = Screen::Devices,
+            consts::KEY_UP | consts::KEY_K => {
+                self.profile_field = wrap_index(self.profile_field, consts::PROFILE_FIELD_COUNT, -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.profile_field = wrap_index(self.profile_field, consts::PROFILE_FIELD_COUNT, 1);
+            }
+            consts::KEY_LEFT | consts::KEY_H => {
+                if self.profile_field == consts::PROFILE_FIELD_SIM {
+                    self.cycle_profile_sim(-1);
+                }
+            }
+            consts::KEY_RIGHT | consts::KEY_L => {
+                if self.profile_field == consts::PROFILE_FIELD_SIM {
+                    self.cycle_profile_sim(1);
+                }
+            }
+            consts::KEY_ADD => {
+                let mut profile = SimProfile::default();
+                profile.sim = format!("sim{}", self.config.profiles.len());
+                self.config.profiles.push(profile);
+                self.profile_index = self.config.profiles.len() - 1;
+                self.persist_config();
+                self.screen = Screen::Devices;
+            }
+            consts::KEY_DUPLICATE => {
+                if let Some(profile) = self.current_profile().cloned() {
+                    self.config.profiles.push(profile);
+                    self.profile_index = self.config.profiles.len() - 1;
+                    self.persist_config();
+                }
+                self.screen = Screen::Devices;
+            }
+            consts::KEY_SAVE | consts::KEY_ENTER => {
+                if let Some(slot) = self.config.profiles.get_mut(self.profile_index) {
+                    slot.sim = self.profile_edit.sim.clone();
+                    slot.car = self.profile_edit.car.clone();
+                    slot.api = self.profile_edit.api.clone();
+                }
+                self.persist_config();
+                self.screen = Screen::Devices;
+            }
+            KeyCode::Char(ch) => {
+                if self.profile_field == consts::PROFILE_FIELD_CAR {
+                    self.profile_edit.car.push(ch);
+                }
+            }
+            consts::KEY_BACKSPACE => {
+                if self.profile_field == consts::PROFILE_FIELD_CAR {
+                    self.profile_edit.car.pop();
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn cycle_profile_sim(&mut self, delta: i32) {
+        let current = self.profile_edit.sim.clone();
+        let index = consts::PROFILE_SIMS
+            .iter()
+            .position(|s| *s == current)
+            .unwrap_or(0);
+        let len = consts::PROFILE_SIMS.len() as i32;
+        let next = (index as i32 + delta).rem_euclid(len) as usize;
+        self.profile_edit.sim = consts::PROFILE_SIMS[next].to_string();
+    }
+
+    fn handle_templates(&mut self, code: KeyCode) {
+        let count = templates::all().len();
+        match code {
+            consts::KEY_ESC => self.screen = Screen::Devices,
+            consts::KEY_UP | consts::KEY_K => {
+                self.template_index = wrap_index(self.template_index, count, -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.template_index = wrap_index(self.template_index, count, 1);
+            }
+            consts::KEY_ENTER => {
+                self.open_confirm(ConfirmKind::ApplyTemplate(self.template_index));
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_confirm(&mut self, code: KeyCode, kind: ConfirmKind) -> Result<()> {
+        match code {
+            consts::KEY_CONFIRM_YES => {
+                self.apply_confirm(kind)?;
+                self.screen = Screen::Devices;
+            }
+            consts::KEY_CONFIRM_NO | consts::KEY_ESC => {
+                self.screen = self.previous.clone();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn apply_confirm(&mut self, kind: ConfirmKind) -> Result<()> {
+        match kind {
+            ConfirmKind::DeleteDevice => {
+                let index = self.device_index;
+                if let Some(profile) = self.current_profile_mut() {
+                    if index < profile.devices.len() {
+                        profile.devices.remove(index);
+                    }
+                }
+                self.device_index = index.saturating_sub(1);
+                self.persist_config();
+            }
+            ConfirmKind::DeleteProfile => {
+                if self.config.profiles.len() > 1 {
+                    self.config.profiles.remove(self.profile_index);
+                    self.profile_index = self.profile_index.saturating_sub(1);
+                    self.persist_config();
+                } else {
+                    self.message = "Cannot delete the last profile".into();
+                }
+            }
+            ConfirmKind::RestartAfterSave => {
+                self.restart_play();
+            }
+            ConfirmKind::ApplyTemplate(index) => {
+                if let Some(template) = templates::all().get(index) {
+                    let devices = (template.devices)();
+                    if let Some(profile) = self.current_profile_mut() {
+                        profile.devices.extend(devices);
+                    }
+                    self.persist_config();
+                    self.message = format!("Inserted template {}", template.name);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_settings(&mut self, code: KeyCode) {
+        match code {
+            consts::KEY_QUIT | consts::KEY_QUIT_UPPER => self.should_quit = true,
+            consts::KEY_UP | consts::KEY_K => {
+                self.settings_index = wrap_index(self.settings_index, consts::SETTINGS_ITEMS.len(), -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.settings_index = wrap_index(self.settings_index, consts::SETTINGS_ITEMS.len(), 1);
+            }
+            consts::KEY_ENTER => {
+                let sub = match self.settings_index {
+                    0 => SettingsSub::Flags,
+                    1 => SettingsSub::Simd,
+                    2 => SettingsSub::Lua,
+                    3 => SettingsSub::Tach,
+                    4 => SettingsSub::Tyres,
+                    5 => SettingsSub::Diagnostics,
+                    _ => SettingsSub::Raw,
+                };
+                self.previous = Screen::Settings;
+                self.screen = Screen::SettingsSub(sub);
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_settings_sub(&mut self, code: KeyCode, sub: SettingsSub) -> Result<()> {
+        if code == consts::KEY_ESC {
+            self.screen = Screen::Settings;
+            return Ok(());
+        }
+        match sub {
+            SettingsSub::Flags => self.handle_flags(code),
+            SettingsSub::Simd => self.handle_simd(code)?,
+            SettingsSub::Lua => self.handle_lua(code)?,
+            SettingsSub::Tach => self.handle_tach(code)?,
+            SettingsSub::Tyres => self.handle_tyres(code)?,
+            SettingsSub::Diagnostics | SettingsSub::Raw => {}
+        }
+        Ok(())
+    }
+
+    fn handle_flags(&mut self, code: KeyCode) {
+        match code {
+            consts::KEY_UP | consts::KEY_K => self.flags_field = wrap_index(self.flags_field, 5, -1),
+            consts::KEY_DOWN | consts::KEY_J => self.flags_field = wrap_index(self.flags_field, 5, 1),
+            consts::KEY_LEFT | consts::KEY_H | consts::KEY_RIGHT | consts::KEY_L | consts::KEY_ENTER => {
+                self.toggle_flag();
+            }
+            consts::KEY_SAVE => {
+                let _ = tui_state::save(&self.tui_state);
+                self.message = "Play flags saved".into();
+            }
+            _ => {}
+        }
+    }
+
+    fn toggle_flag(&mut self) {
+        match self.flags_field {
+            0 => {
+                self.tui_state.play_flags.verbosity = (self.tui_state.play_flags.verbosity + 1) % 3;
+            }
+            1 => self.tui_state.play_flags.disable_audio = !self.tui_state.play_flags.disable_audio,
+            2 => self.tui_state.play_flags.udp = !self.tui_state.play_flags.udp,
+            3 => {
+                let fps = self.tui_state.play_flags.fps.unwrap_or(consts::DEFAULT_FPS);
+                self.tui_state.play_flags.fps = Some(if fps == 60 { 30 } else { 60 });
+            }
+            _ => {}
+        }
+        let _ = tui_state::save(&self.tui_state);
+    }
+
+    fn handle_simd(&mut self, code: KeyCode) -> Result<()> {
+        match code {
+            consts::KEY_ADD => {
+                if self.simd.sims.is_empty() {
+                    self.simd = simd_config::stub_from_bundled();
+                } else {
+                    self.simd.sims.push(SimdSim { settings: Vec::new() });
+                }
+                simd_config::save(&paths::simd_config_path(), &self.simd)?;
+            }
+            consts::KEY_DELETE => {
+                if self.simd_index < self.simd.sims.len() {
+                    self.simd.sims.remove(self.simd_index);
+                    simd_config::save(&paths::simd_config_path(), &self.simd)?;
+                }
+            }
+            consts::KEY_UP | consts::KEY_K => {
+                self.simd_index = wrap_index(self.simd_index, self.simd.sims.len().max(1), -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.simd_index = wrap_index(self.simd_index, self.simd.sims.len().max(1), 1);
+            }
+            consts::KEY_SAVE => simd_config::save(&paths::simd_config_path(), &self.simd)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_lua(&mut self, code: KeyCode) -> Result<()> {
+        let scripts = diagnostics::lua_scripts();
+        match code {
+            consts::KEY_UP | consts::KEY_K => {
+                self.lua_index = wrap_index(self.lua_index, scripts.len().max(1), -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.lua_index = wrap_index(self.lua_index, scripts.len().max(1), 1);
+            }
+            consts::KEY_ENTER => {
+                if let Some(name) = consts::BUNDLED_LUA.get(self.lua_index) {
+                    match diagnostics::copy_lua_template(name) {
+                        Ok(path) => self.message = format!("Copied {}", path.display()),
+                        Err(err) => self.message = err.to_string(),
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_tach(&mut self, code: KeyCode) -> Result<()> {
+        match code {
+            consts::KEY_UP | consts::KEY_K => self.tach_field = wrap_index(self.tach_field, 3, -1),
+            consts::KEY_DOWN | consts::KEY_J => self.tach_field = wrap_index(self.tach_field, 3, 1),
+            consts::KEY_LEFT | consts::KEY_H => self.nudge_tach(-1),
+            consts::KEY_RIGHT | consts::KEY_L => self.nudge_tach(1),
+            consts::KEY_ENTER | consts::KEY_SAVE => {
+                match process::spawn_tachometer(
+                    self.tach_max_revs,
+                    self.tach_granularity,
+                    &self.tach_path,
+                ) {
+                    Ok(out) => self.message = out,
+                    Err(err) => self.message = err.to_string(),
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn nudge_tach(&mut self, delta: i64) {
+        match self.tach_field {
+            0 => self.tach_max_revs = (self.tach_max_revs + delta * 500).max(1000),
+            1 => {
+                let current = self.tach_granularity;
+                let labels = consts::GRANULARITY_ALLOWED;
+                let index = labels.iter().position(|v| *v == current).unwrap_or(0);
+                let next = (index as i64 + delta).rem_euclid(labels.len() as i64) as usize;
+                self.tach_granularity = labels[next];
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_tyres(&mut self, code: KeyCode) -> Result<()> {
+        match code {
+            consts::KEY_ADD => {
+                self.tyres.cars.push(TyreCar::default());
+                tyres::save(&paths::diameters_path(), &self.tyres)?;
+            }
+            consts::KEY_DELETE => {
+                if self.tyre_index < self.tyres.cars.len() {
+                    self.tyres.cars.remove(self.tyre_index);
+                    tyres::save(&paths::diameters_path(), &self.tyres)?;
+                }
+            }
+            consts::KEY_UP | consts::KEY_K => {
+                self.tyre_index = wrap_index(self.tyre_index, self.tyres.cars.len().max(1), -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.tyre_index = wrap_index(self.tyre_index, self.tyres.cars.len().max(1), 1);
+            }
+            consts::KEY_SAVE => tyres::save(&paths::diameters_path(), &self.tyres)?,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_logs(&mut self, code: KeyCode) {
+        match code {
+            consts::KEY_QUIT | consts::KEY_QUIT_UPPER => self.should_quit = true,
+            consts::KEY_UP | consts::KEY_K => self.logs.scroll = self.logs.scroll.saturating_add(1),
+            consts::KEY_DOWN | consts::KEY_J => self.logs.scroll = self.logs.scroll.saturating_sub(1),
+            consts::KEY_TEST | consts::KEY_SPACE => self.logs.filter = self.logs.filter.cycle(),
+            _ => {}
+        }
+    }
+
+    fn open_confirm(&mut self, kind: ConfirmKind) {
+        self.previous = self.screen.clone();
+        self.screen = Screen::Confirm(kind);
+    }
+
+    fn persist_config(&mut self) {
+        self.raw_on_disk = config::read_raw(&self.config_path).unwrap_or_default();
+        match config::save_file(&self.config_path, &self.config) {
+            Ok(()) => self.message = format!("Saved {}", self.config_path.display()),
+            Err(err) => self.message = err.to_string(),
+        }
+    }
+}
+
+fn spawn_pipe_reader<R: std::io::Read + Send + 'static>(
+    pipe: Option<R>,
+    kind: SessionKind,
+    tx: mpsc::Sender<(SessionKind, String)>,
+) {
+    let Some(pipe) = pipe else {
+        return;
+    };
+    thread::spawn(move || {
+        let reader = BufReader::new(pipe);
+        for line in reader.lines().flatten() {
+            if tx.send((kind, line)).is_err() {
+                break;
+            }
+        }
+    });
+}
+
+fn wrap_index(current: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    (current as isize + delta).rem_euclid(len as isize) as usize
+}
+
+fn is_global_tab(code: KeyCode) -> bool {
+    matches!(
+        code,
+        consts::KEY_TAB
+            | consts::KEY_BACK_TAB
+            | consts::KEY_START
+            | consts::KEY_TAB2
+            | consts::KEY_TAB3
+            | consts::KEY_TAB4
+    )
+}
+
+fn is_main_tab(screen: &Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Dashboard | Screen::Devices | Screen::Settings | Screen::Logs
+    )
+}
+
+pub fn tune_fields(form: &DeviceForm) -> Vec<FieldId> {
+    form.fields()
+        .into_iter()
+        .filter(|field| {
+            matches!(
+                field,
+                FieldId::Volume
+                    | FieldId::Pan
+                    | FieldId::Frequency
+                    | FieldId::FrequencyMax
+                    | FieldId::Amplitude
+                    | FieldId::AmplitudeMax
+                    | FieldId::Threshold
+                    | FieldId::Duration
+                    | FieldId::Ampfactor
+                    | FieldId::Fanpower
+                    | FieldId::Fps
+            )
+        })
+        .collect()
+}
+
+fn index_of_field(form: &DeviceForm, field: FieldId) -> usize {
+    form.fields().iter().position(|item| *item == field).unwrap_or(0)
+}
+
+pub fn simd_field_pairs(sim: &SimdSim) -> Vec<(String, String)> {
+    sim.settings
+        .iter()
+        .map(|(k, v)| {
+            let display = match v {
+                Value::String(s) => s.clone(),
+                Value::Int(n) => n.to_string(),
+                Value::Float(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                _ => "?".into(),
+            };
+            (k.clone(), display)
+        })
+        .collect()
+}

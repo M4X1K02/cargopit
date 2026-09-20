@@ -14,6 +14,11 @@ CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 CARGOPIT_RAW_MASTER_URL="https://raw.githubusercontent.com/${CARGOPIT_GITHUB_REPO}/master"
 CARGOPIT_RELEASES_URL="https://github.com/${CARGOPIT_GITHUB_REPO}/releases"
 AUR_INSTALL_UNAVAILABLE_MSG="AUR install is not offered yet; use --from-source"
+# Keep in sync with tui/Cargo.toml rust-version. Cargo.lock v4 needs cargo
+# 1.78+; ratatui's darling/instability crates need rustc 1.88+.
+TUI_MIN_RUSTC_MAJOR=1
+TUI_MIN_RUSTC_MINOR=88
+RUSTUP_INIT_URL="https://sh.rustup.rs"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -41,6 +46,7 @@ LOCAL_SRC=""
 CARGOPIT_SRC=""
 SIMD_BIN=""
 CARGOPIT_BIN=""
+CARGOPIT_TUI_BIN=""
 
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -93,6 +99,75 @@ run_root() {
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
+}
+
+prepend_rustup_bin() {
+    local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+    case ":$PATH:" in
+        *":$cargo_bin:"*) ;;
+        *) export PATH="$cargo_bin:$PATH" ;;
+    esac
+}
+
+rustc_major_minor() {
+    local version
+    if ! have_cmd rustc; then
+        printf '%s\n' "0.0"
+        return 0
+    fi
+    version="$(rustc --version | awk '{print $2}')"
+    printf '%s\n' "${version%.*}"
+}
+
+tui_rustc_is_new_enough() {
+    local mm major minor
+    mm="$(rustc_major_minor)"
+    major="${mm%%.*}"
+    minor="${mm#*.}"
+    if [ "$major" -gt "$TUI_MIN_RUSTC_MAJOR" ]; then
+        return 0
+    fi
+    if [ "$major" -eq "$TUI_MIN_RUSTC_MAJOR" ] && [ "$minor" -ge "$TUI_MIN_RUSTC_MINOR" ]; then
+        return 0
+    fi
+    return 1
+}
+
+install_rustup_stable() {
+    local cargo_env="${CARGO_HOME:-$HOME/.cargo}/env"
+    log_info "Installing rustup (need rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ for cargopit-tui)"
+    if ! have_cmd curl; then
+        log_error "curl is required to install rustup"
+        exit 1
+    fi
+    export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+    curl --proto '=https' --tlsv1.2 -sSf "$RUSTUP_INIT_URL" | sh -s -- -y --profile minimal
+    if [ -f "$cargo_env" ]; then
+        # shellcheck disable=SC1090
+        . "$cargo_env"
+    fi
+    prepend_rustup_bin
+}
+
+ensure_tui_rust_toolchain() {
+    prepend_rustup_bin
+    if tui_rustc_is_new_enough; then
+        log_info "Using $(rustc --version) for cargopit-tui"
+        return 0
+    fi
+    if have_cmd rustup; then
+        log_info "Updating rustup stable (need rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+)"
+        rustup toolchain install stable
+        rustup default stable
+        prepend_rustup_bin
+    else
+        install_rustup_stable
+    fi
+    if ! tui_rustc_is_new_enough; then
+        log_error "rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ is required for cargopit-tui"
+        exit 1
+    fi
+    log_success "Using $(rustc --version) for cargopit-tui"
 }
 
 ensure_writable_dir() {
@@ -183,12 +258,12 @@ manual_dep_hint() {
 Required build packages (names vary by distro):
   git cmake gcc make pkg-config
   libuv argtable libserialport libconfig hidapi lua libxdg-basedir libxml2 libpulse
-  yder (simd), python3
-  optional: mingw-w64 (only with --build-bridges)
+  yder (simd), cargo/rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ (or rustup)
+  optional: mingw-w64 (only with --build-bridges), python3 (tests)
 
-Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 python yder
-Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config python3
-Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config python3
+Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 rust python yder
+Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3
+Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3
 EOF
 }
 
@@ -242,7 +317,7 @@ install_yder_from_source() {
 
 install_deps_arch() {
     local deps=(
-        git cmake make gcc pkgconf python curl unzip
+        git cmake make gcc pkgconf python curl unzip rust
         libuv argtable libserialport libconfig hidapi lua54
         libpulse libxdg-basedir libxml2 yder procps-ng
     )
@@ -255,7 +330,7 @@ install_deps_arch() {
 
 install_deps_fedora() {
     local deps=(
-        git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates
+        git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
         pulseaudio-libs-devel procps-ng-devel
@@ -279,7 +354,7 @@ install_deps_debian() {
     run_root apt-get update
 
     local deps=(
-        build-essential git cmake pkg-config python3 curl unzip ca-certificates
+        build-essential git cmake pkg-config python3 curl unzip ca-certificates cargo
         libuv1-dev libargtable2-dev libserialport-dev libconfig-dev
         libhidapi-dev libxdg-basedir-dev libxml2-dev libpulse-dev
     )
@@ -306,7 +381,7 @@ install_deps_debian() {
 
 install_deps_opensuse() {
     local deps=(
-        git cmake gcc gcc-c++ make pkg-config python3 curl unzip
+        git cmake gcc gcc-c++ make pkg-config python3 curl unzip cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
         libpulse-devel procps-devel
@@ -457,6 +532,14 @@ build_cargopit() {
     CARGOPIT_BIN="$CARGOPIT_SRC/build/cargopit"
     if [ ! -x "$CARGOPIT_BIN" ]; then
         log_error "cargopit binary was not produced"
+        exit 1
+    fi
+    if [ -x "$CARGOPIT_SRC/build/tui/release/cargopit-tui" ]; then
+        CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/release/cargopit-tui"
+    elif [ -x "$CARGOPIT_SRC/build/tui/debug/cargopit-tui" ]; then
+        CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/debug/cargopit-tui"
+    else
+        log_error "cargopit-tui binary was not produced (install cargo/rustc)"
         exit 1
     fi
     log_success "cargopit built"
@@ -627,36 +710,19 @@ exec "\$BIN" test -vv "\$@"
 EOF
     chmod +x "$BIN_DIR/test-cargopit"
 
-    local search_paths=(
-        "$INSTALL_DIR/cargopit/tools/cargopit-manager"
-        "$INSTALL_DIR/cargopit/cargopit-manager"
-        "${CARGOPIT_SRC:-}/tools/cargopit-manager"
-        "${SCRIPT_DIR:-}/tools/cargopit-manager"
-        "${SCRIPT_DIR:-}/cargopit-manager"
-    )
-    local manager=""
-    local path
-    for path in "${search_paths[@]}"; do
-        [ -n "$path" ] || continue
-        if [ -f "$path" ]; then
-            manager="$path"
-            break
-        fi
-    done
-    if [ -z "$manager" ]; then
-        mkdir -p "$INSTALL_DIR"
-        if curl -fsSL -o "$INSTALL_DIR/cargopit-manager" \
-            "${CARGOPIT_RAW_MASTER_URL}/tools/cargopit-manager"; then
-            manager="$INSTALL_DIR/cargopit-manager"
-            log_info "Downloaded cargopit-manager from GitHub"
+    if [ -z "${CARGOPIT_TUI_BIN:-}" ]; then
+        if [ -x "${CARGOPIT_SRC:-}/build/tui/release/cargopit-tui" ]; then
+            CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/release/cargopit-tui"
+        elif [ -x "${CARGOPIT_SRC:-}/build/tui/debug/cargopit-tui" ]; then
+            CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/debug/cargopit-tui"
         fi
     fi
-    if [ -n "$manager" ]; then
-        cp "$manager" "$BIN_DIR/cargopit-manager"
-        chmod +x "$BIN_DIR/cargopit-manager"
-        log_success "Installed cargopit-manager from $manager"
+    if [ -n "${CARGOPIT_TUI_BIN:-}" ] && [ -x "$CARGOPIT_TUI_BIN" ]; then
+        cp "$CARGOPIT_TUI_BIN" "$BIN_DIR/cargopit-tui"
+        chmod +x "$BIN_DIR/cargopit-tui"
+        log_success "Installed cargopit-tui from $CARGOPIT_TUI_BIN"
     else
-        log_warn "cargopit-manager not found (looked in cloned tree, not the directory you launched install.sh from)"
+        log_warn "cargopit-tui was not built (need cargo during cmake)"
     fi
 
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -746,10 +812,10 @@ verify_install() {
         log_error "simd binary missing"
         ok=0
     fi
-    if [ -f "$BIN_DIR/cargopit-manager" ]; then
-        log_success "manager: $BIN_DIR/cargopit-manager"
+    if [ -x "$BIN_DIR/cargopit-tui" ]; then
+        log_success "tui: $BIN_DIR/cargopit-tui"
     else
-        log_warn "cargopit-manager was not installed"
+        log_warn "cargopit-tui was not installed"
     fi
     if [ "$ok" -ne 1 ]; then
         exit 1
@@ -772,20 +838,20 @@ print_next_steps() {
     echo "  start-simd"
     echo "  start-cargopit"
     echo "  test-cargopit"
-    echo "  cargopit-manager"
+    echo "  cargopit-tui"
     echo ""
     echo "Confirm telemetry after the session is live:"
     echo "  hexdump /dev/shm/SIMAPI.DAT | head"
     echo "  hexdump /dev/shm/acpmf_physics | head     # AC / ACC"
     echo ""
-    echo "Start:         start-cargopit   (or cargopit-manager)"
+    echo "Start:         start-cargopit   (or cargopit-tui)"
     echo "simd is started automatically if it is not already running."
     echo "You will only be asked to act if simd is not installed."
     echo ""
-    echo "Edit devices:  $CONFIG_DIR/cargopit/cargopit.config"
+    echo "Edit devices:  cargopit-tui"
     echo "Examples:      $CONFIG_DIR/cargopit/cargopit.config.example"
     echo "Test devices:  test-cargopit"
-    echo "TUI:           cargopit-manager"
+    echo "TUI:           cargopit-tui"
     echo ""
     echo "Game setup:    https://spacefreak18.github.io/simapi/simd_usage"
     echo "Docs:          https://spacefreak18.github.io/simapi/"
@@ -864,6 +930,7 @@ main() {
 
     install_dependencies
     check_requirements
+    ensure_tui_rust_toolchain
 
     if [ "$DEPS_ONLY" -eq 1 ]; then
         log_success "Dependencies only; done"

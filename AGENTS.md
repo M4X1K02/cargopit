@@ -26,7 +26,8 @@ Follow these on every change:
 | `src/arduino/` | Sample sketches (shift lights, simwind, simhaptic, custom Lua serial) |
 | `conf/` | Example `cargopit.config` |
 | `tests/` | Automated tests (`ENABLE_TESTS=ON`). Hardware/interactive tools in `tests/manual/` |
-| `tools/` | Installer helpers, distro packaging, `cargopit-manager` |
+| `tui/` | Ratatui manager: `cargopit-tui` |
+| `tools/` | Installer helpers, distro packaging |
 | `udev/` | `69-cargopit.rules` |
 | `.github/workflows/` | PR build (`pr-build.yaml`), installer CI (`installer.yml`), release packages (`ci.yaml`) |
 
@@ -55,7 +56,7 @@ cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`. GCC 13+ is required (simapi uses C23 enum-with-underlying-type). Debian 12 / GCC 12 cannot compile current simapi.
+Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`, `BUILD_TUI` (default ON; needs cargo). GCC 13+ is required (simapi uses C23 enum-with-underlying-type). Debian 12 / GCC 12 cannot compile current simapi.
 
 End-user source install (compiles simapi, simd, and this tree; does not configure Steam, audio, or wheel firmware):
 

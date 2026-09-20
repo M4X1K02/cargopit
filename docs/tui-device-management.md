@@ -1,6 +1,6 @@
 # TUI device management plan
 
-This write-up is extracted from the USB-shaker/TUI branch so its findings can extend the original cargopit-tui plan. It is an implementation plan, not user-facing usage docs. Sim/bridge setup still lives at [simapi](https://spacefreak18.github.io/simapi/); this document only covers what the TUI must own in this tree.
+Implemented by `cargopit-tui` (see `tui/`). This write-up remains as the schema and gap list the TUI is built against.
 
 Goal: **every setting a user currently has to edit outside the TUI becomes editable inside `cargopit-tui`**, with device management that goes beyond a single add/edit form.
 

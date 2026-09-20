@@ -296,7 +296,7 @@ int main(int argc, char** argv)
             DeviceSettings* ds = malloc(configureddevices * sizeof(DeviceSettings));
             slogd("loading confignum %i, with %i devices.", confignum, configureddevices);
 
-            int numdevices = uiloadconfig(ms->config_str, confignum, configureddevices, ms, ds);
+            int numdevices = load_device_configs(ms->config_str, confignum, configureddevices, ms, ds);
             SimDevice* simdevices = malloc(numdevices * sizeof(SimDevice));
             SimInfo* siminfo = malloc(sizeof(SimInfo));
             simapi_set_faux_siminfo(siminfo);

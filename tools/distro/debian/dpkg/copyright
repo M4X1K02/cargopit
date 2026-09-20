@@ -12,6 +12,14 @@ Copyright: 2022 Paul Jones
            2026 M4X1K02
 License: GPL-3+
 
+Files: tui/*
+Copyright: 2026 M4X1K02
+License: GPL-3+
+Comment:
+ cargopit-tui is GPL-3.0-or-later. The release binary statically links
+ ratatui and crossterm (MIT) via Cargo; those crate licences travel with
+ the binary but are not copied into this tree.
+
 Files: src/cargopit/slog/slog.?
 Copyright: 2015-2020 Sun Dro (f4tb0y@protonmail.com)
 License: MIT
