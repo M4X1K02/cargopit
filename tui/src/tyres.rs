@@ -62,7 +62,9 @@ pub fn parse(src: &str) -> Result<TyreStore> {
     let mut cars = Vec::new();
     for (key, value) in group {
         if key == consts::KEY_CARS {
-            let list = value.as_list().ok_or_else(|| anyhow!("cars must be a list"))?;
+            let list = value
+                .as_list()
+                .ok_or_else(|| anyhow!("cars must be a list"))?;
             for item in list {
                 cars.push(car_from_value(item)?);
             }

@@ -2,7 +2,7 @@
 //! Color literals stay in this module.
 
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders};
 
 use crate::consts::{self, HelpBinding};
@@ -112,6 +112,10 @@ fn push_help_item(spans: &mut Vec<Span<'static>>, separate: bool, item: &HelpBin
     spans.push(Span::styled(item.desc, style_help_desc()));
 }
 
+pub fn style_profile_pin() -> Style {
+    style_selected()
+}
+
 pub fn panel(title: impl Into<String>) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -119,6 +123,14 @@ pub fn panel(title: impl Into<String>) -> Block<'static> {
         .border_style(style_border())
         .title(title.into())
         .title_style(style_title())
+}
+
+pub fn panel_line(title: Line<'static>) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(style_border())
+        .title(title)
 }
 
 pub fn tab_bar() -> Block<'static> {

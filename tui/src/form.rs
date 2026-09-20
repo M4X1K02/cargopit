@@ -91,7 +91,11 @@ impl DeviceForm {
             return;
         }
         if field == FieldId::Type {
-            self.change_type(cycle_slice(schema::types_for_class(class), type_name, delta));
+            self.change_type(cycle_slice(
+                schema::types_for_class(class),
+                type_name,
+                delta,
+            ));
             return;
         }
         let choices = schema::combo_choices(field, class, type_name);
@@ -120,7 +124,10 @@ impl DeviceForm {
             Some(value) => value.to_string(),
             None => String::new(),
         };
-        let labels: Vec<String> = consts::GRANULARITY_ALLOWED.iter().map(|v| v.to_string()).collect();
+        let labels: Vec<String> = consts::GRANULARITY_ALLOWED
+            .iter()
+            .map(|v| v.to_string())
+            .collect();
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
         let next = next_combo_value(&refs, &current, delta, true);
         if next.is_empty() {
@@ -171,7 +178,8 @@ impl DeviceForm {
                 .get_i64(consts::KEY_STREAM_VOLUME)
                 .or_else(|| self.device.get_i64(consts::KEY_VOLUME))
                 .unwrap_or(consts::DEFAULT_VOLUME);
-            let next = (current + step * i64::from(delta)).clamp(consts::VOLUME_MIN, consts::VOLUME_MAX);
+            let next =
+                (current + step * i64::from(delta)).clamp(consts::VOLUME_MIN, consts::VOLUME_MAX);
             self.device.set_int(consts::KEY_STREAM_VOLUME, next);
             self.device.set_int(consts::KEY_VOLUME, next);
             return;
@@ -180,13 +188,15 @@ impl DeviceForm {
             return;
         };
         let current = self.device.get_i64(key).unwrap_or(0);
-        self.device.set_int(key, (current + step * i64::from(delta)).max(0));
+        self.device
+            .set_int(key, (current + step * i64::from(delta)).max(0));
     }
 
     fn apply_combo(&mut self, field: FieldId, value: &str) {
         match field {
             FieldId::Motors => {
-                self.device.set_int(consts::KEY_MOTORS, schema::motor_index(value));
+                self.device
+                    .set_int(consts::KEY_MOTORS, schema::motor_index(value));
             }
             FieldId::Volume => {
                 if let Ok(parsed) = value.parse::<i64>() {

@@ -1,6 +1,8 @@
 set(gameloop_source_files
   gameloop.c
   gameloop.h
+  acr_udp.c
+  acr_udp.h
   tachconfig.c
   tachconfig.h
   loopdata.h

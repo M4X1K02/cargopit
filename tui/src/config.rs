@@ -16,6 +16,7 @@ pub struct CargopitConfig {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimProfile {
+    pub name: String,
     pub sim: String,
     pub car: String,
     pub api: Option<String>,
@@ -40,6 +41,7 @@ impl Default for CargopitConfig {
 impl Default for SimProfile {
     fn default() -> Self {
         Self {
+            name: String::new(),
             sim: consts::DEFAULT_SIM.to_string(),
             car: consts::DEFAULT_CAR.to_string(),
             api: None,
@@ -109,11 +111,13 @@ impl DeviceEntry {
     }
 
     pub fn type_name(&self) -> &str {
-        self.get_str(consts::KEY_TYPE).unwrap_or(consts::TYPE_HAPTIC)
+        self.get_str(consts::KEY_TYPE)
+            .unwrap_or(consts::TYPE_HAPTIC)
     }
 
     pub fn enabled(&self) -> bool {
-        self.get_bool(consts::KEY_ENABLED).unwrap_or(consts::DEFAULT_ENABLED)
+        self.get_bool(consts::KEY_ENABLED)
+            .unwrap_or(consts::DEFAULT_ENABLED)
     }
 
     pub fn identity(&self) -> String {
@@ -139,8 +143,11 @@ impl DeviceEntry {
 
     pub fn keep_keys_for_class(&mut self, class: DeviceClass, type_name: &str) {
         let allowed = schema::allowed_keys(class, type_name);
-        self.settings
-            .retain(|(key, _)| allowed.iter().any(|allowed_key| *allowed_key == key.as_str()));
+        self.settings.retain(|(key, _)| {
+            allowed
+                .iter()
+                .any(|allowed_key| *allowed_key == key.as_str())
+        });
         self.set_str(consts::KEY_DEVICE, class.as_str());
         if class == DeviceClass::Sound && type_name == consts::TYPE_HAPTIC {
             self.remove(consts::KEY_TYPE);
@@ -193,6 +200,9 @@ fn profile_from_value(value: &Value) -> Result<SimProfile> {
     let mut extra = Vec::new();
     for (key, item) in group {
         match key.as_str() {
+            consts::KEY_PROFILE_NAME => {
+                profile.name = item.as_str().unwrap_or("").to_string();
+            }
             consts::KEY_SIM => {
                 profile.sim = item.as_str().unwrap_or(consts::DEFAULT_SIM).to_string();
             }
@@ -240,6 +250,15 @@ pub fn to_value(config: &CargopitConfig) -> Value {
 
 fn profile_to_value(profile: &SimProfile) -> Value {
     let mut items = profile.extra.clone();
+    if profile.name.is_empty() {
+        libconfig::group_remove(&mut items, consts::KEY_PROFILE_NAME);
+    } else {
+        libconfig::group_set(
+            &mut items,
+            consts::KEY_PROFILE_NAME,
+            Value::String(profile.name.clone()),
+        );
+    }
     libconfig::group_set(
         &mut items,
         consts::KEY_SIM,
@@ -272,8 +291,7 @@ pub fn load_file(path: &Path) -> Result<CargopitConfig> {
     if !path.exists() {
         return Ok(CargopitConfig::default());
     }
-    let src = fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let src = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     parse_cargopit(&src)
 }
 
@@ -287,8 +305,8 @@ pub fn atomic_write(path: &Path, contents: &str) -> Result<()> {
         consts::ATOMIC_SAVE_SUFFIX
     ));
     {
-        let mut file = fs::File::create(&tmp)
-            .with_context(|| format!("create {}", tmp.display()))?;
+        let mut file =
+            fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
         file.write_all(contents.as_bytes())?;
         file.sync_all()?;
     }
@@ -315,7 +333,9 @@ mod tests {
 
     #[test]
     fn parse_sample_config() {
-        let path = crate::paths::source_root().join("conf").join(consts::CONFIG_FILE_NAME);
+        let path = crate::paths::source_root()
+            .join("conf")
+            .join(consts::CONFIG_FILE_NAME);
         let src = std::fs::read_to_string(&path).expect("sample config");
         let config = parse_cargopit(&src).expect("parse sample");
         assert!(!config.profiles.is_empty());

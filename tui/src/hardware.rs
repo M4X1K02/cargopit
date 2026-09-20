@@ -197,7 +197,13 @@ fn expand_glob_dir(dir_pattern: &Path, file_pat: &str) -> Vec<PathBuf> {
     out
 }
 
-fn expand_parts(current: PathBuf, parts: &[&str], index: usize, file_pat: &str, out: &mut Vec<PathBuf>) {
+fn expand_parts(
+    current: PathBuf,
+    parts: &[&str],
+    index: usize,
+    file_pat: &str,
+    out: &mut Vec<PathBuf>,
+) {
     if index == parts.len() {
         out.extend(match_dir(&current, file_pat));
         return;
@@ -236,7 +242,9 @@ fn match_dir(dir: &Path, file_pat: &str) -> Vec<PathBuf> {
 
 fn glob_match(pattern: &str, name: &str) -> bool {
     if let Some((head, tail)) = pattern.split_once('*') {
-        return name.starts_with(head) && name.ends_with(tail) && name.len() >= head.len() + tail.len();
+        return name.starts_with(head)
+            && name.ends_with(tail)
+            && name.len() >= head.len() + tail.len();
     }
     pattern == name
 }

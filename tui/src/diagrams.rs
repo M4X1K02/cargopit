@@ -11,7 +11,12 @@ use crate::simapi_shm::RunningGame;
 use crate::theme;
 use crate::tyres::TyreCar;
 
-pub fn led_span(name: &str, on: bool, on_label: &'static str, off_label: &'static str) -> Span<'static> {
+pub fn led_span(
+    name: &str,
+    on: bool,
+    on_label: &'static str,
+    off_label: &'static str,
+) -> Span<'static> {
     let (glyph, color, label) = if on {
         (consts::LED_ON, theme::COLOR_OK, on_label)
     } else {
@@ -121,7 +126,12 @@ pub fn pipeline_line(
     let shm_flow = simapi_live;
     let into_game = game_flow || shm_flow;
     Line::from(vec![
-        led_span(consts::BINARY_SIMD, simd, consts::STATUS_RUNNING, consts::STATUS_STOPPED),
+        led_span(
+            consts::BINARY_SIMD,
+            simd,
+            consts::STATUS_RUNNING,
+            consts::STATUS_STOPPED,
+        ),
         flow_arrow(into_game, flow_frame),
         game_span(game, flow_frame),
         flow_arrow(shm_flow, flow_frame),
@@ -194,10 +204,18 @@ fn pulse_glyph(flow_frame: u64) -> &'static str {
     }
 }
 
-pub fn class_presence_line(profile: &SimProfile, class: DeviceClass, discovery: &Discovery) -> Line<'static> {
+pub fn class_presence_line(
+    profile: &SimProfile,
+    class: DeviceClass,
+    discovery: &Discovery,
+) -> Line<'static> {
     let mut spans = vec![
         Span::styled(
-            format!("{:<width$}", class.as_str(), width = consts::CLASS_COLUMN_WIDTH),
+            format!(
+                "{:<width$}",
+                class.as_str(),
+                width = consts::CLASS_COLUMN_WIDTH
+            ),
             class_style(class),
         ),
         Span::raw(" "),
@@ -225,7 +243,10 @@ pub fn class_presence_line(profile: &SimProfile, class: DeviceClass, discovery: 
         spans.push(Span::styled(format!("{glyph} "), style));
     }
     if !any {
-        spans.push(Span::styled(consts::LED_OFF.to_string(), theme::style_muted()));
+        spans.push(Span::styled(
+            consts::LED_OFF.to_string(),
+            theme::style_muted(),
+        ));
     }
     Line::from(spans)
 }
@@ -296,7 +317,10 @@ fn motor_cell(label: &str, on: bool) -> Span<'static> {
 pub fn motor_lines(index: i64) -> Vec<Line<'static>> {
     let on = motor_active(index);
     vec![
-        Line::from(Span::styled(consts::DIAGRAM_TITLE_CHASSIS, theme::style_title())),
+        Line::from(Span::styled(
+            consts::DIAGRAM_TITLE_CHASSIS,
+            theme::style_title(),
+        )),
         Line::from(vec![
             Span::raw(consts::MOTOR_ROW_INDENT),
             motor_cell(consts::LABEL_MOTOR_FL, on[0]),
@@ -379,8 +403,12 @@ pub fn field_ratio(device: &DeviceEntry, field: FieldId) -> Option<f64> {
         FieldId::Baud => device
             .get_i64(consts::KEY_BAUD)
             .map(|v| int_ratio(v, consts::GAUGE_BAUD_MAX as i64)),
-        FieldId::Fanpower => device.get_f64(consts::KEY_FANPOWER).map(|v| v.clamp(0.0, 1.0)),
-        FieldId::Threshold => device.get_f64(consts::KEY_THRESHOLD).map(|v| v.clamp(0.0, 1.0)),
+        FieldId::Fanpower => device
+            .get_f64(consts::KEY_FANPOWER)
+            .map(|v| v.clamp(0.0, 1.0)),
+        FieldId::Threshold => device
+            .get_f64(consts::KEY_THRESHOLD)
+            .map(|v| v.clamp(0.0, 1.0)),
         FieldId::Duration => device
             .get_f64(consts::KEY_DURATION)
             .map(|v| v / consts::GAUGE_DURATION_MAX),
@@ -414,7 +442,10 @@ pub fn device_diagram_lines(device: &DeviceEntry) -> Vec<Line<'static>> {
         || type_name == consts::TYPE_SIMLEDS
     {
         return vec![
-            Line::from(Span::styled(consts::DIAGRAM_TITLE_LEDS, theme::style_title())),
+            Line::from(Span::styled(
+                consts::DIAGRAM_TITLE_LEDS,
+                theme::style_title(),
+            )),
             led_device_line(device, type_name),
         ];
     }
@@ -424,7 +455,11 @@ pub fn device_diagram_lines(device: &DeviceEntry) -> Vec<Line<'static>> {
             .unwrap_or(consts::DEFAULT_FANPOWER);
         return vec![
             Line::from(Span::styled(consts::KEY_FANPOWER, theme::style_title())),
-            Line::from(format!("{}  {:.2}", theme::bar(power, consts::GAUGE_WIDTH), power)),
+            Line::from(format!(
+                "{}  {:.2}",
+                theme::bar(power, consts::GAUGE_WIDTH),
+                power
+            )),
         ];
     }
     if type_name == consts::TYPE_HAPTIC && class == DeviceClass::Serial {
@@ -435,7 +470,10 @@ pub fn device_diagram_lines(device: &DeviceEntry) -> Vec<Line<'static>> {
     if class == DeviceClass::Sound || type_name == consts::TYPE_HAPTIC {
         return sound_gauge_lines(device);
     }
-    vec![Line::from(Span::styled(device.summary(), theme::style_muted()))]
+    vec![Line::from(Span::styled(
+        device.summary(),
+        theme::style_muted(),
+    ))]
 }
 
 fn led_device_line(device: &DeviceEntry, type_name: &str) -> Line<'static> {
@@ -465,7 +503,9 @@ fn sound_gauge_lines(device: &DeviceEntry) -> Vec<Line<'static>> {
     let channels = device
         .get_i64(consts::KEY_CHANNELS)
         .unwrap_or(consts::DEFAULT_CHANNELS);
-    let pan = device.get_i64(consts::KEY_PAN).unwrap_or(consts::DEFAULT_PAN);
+    let pan = device
+        .get_i64(consts::KEY_PAN)
+        .unwrap_or(consts::DEFAULT_PAN);
     vec![
         Line::from(Span::styled(FieldId::Volume.label(), theme::style_title())),
         Line::from(theme::bar(volume, consts::GAUGE_WIDTH)),
@@ -486,9 +526,8 @@ mod tests {
 
     #[test]
     fn motor_all_corners() {
-        let all = (0..consts::MOTOR_COUNT).find(|&index| {
-            motor_active(index) == [true, true, true, true]
-        });
+        let all =
+            (0..consts::MOTOR_COUNT).find(|&index| motor_active(index) == [true, true, true, true]);
         assert!(all.is_some());
     }
 

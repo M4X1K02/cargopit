@@ -161,6 +161,7 @@ typedef struct
     char* config_str;
     char* log_filename_str;
     char* log_dirname_str;
+    int config_index;
     config_t* cfg;
 }
 CargopitSettings;

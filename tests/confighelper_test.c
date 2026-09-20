@@ -3,7 +3,9 @@
 // a pure string->enum mapping with no I/O/hardware, including the R8/R3
 // aliasing onto SIMDEVSUBTYPE_MOZAR5 and the fallback for unrecognized input.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "../src/cargopit/helper/confighelper.h"
 
@@ -21,6 +23,41 @@ static void check(const char* input, DeviceSubSubType expected)
     }
 }
 
+static void check_index(const char* path, int requested, int expected)
+{
+    int got = resolve_config_index(path, requested);
+    if (got != expected)
+    {
+        fprintf(stderr, "FAIL: resolve_config_index(%s, %d) = %d, expected %d\n",
+                path, requested, got, expected);
+        failures++;
+    }
+}
+
+static char* write_two_profiles(void)
+{
+    char tmpl[] = "/tmp/cargopit-config-index-XXXXXX";
+    int fd = mkstemp(tmpl);
+    if (fd < 0)
+    {
+        perror("mkstemp");
+        return NULL;
+    }
+    const char* body =
+        "configs = (\n"
+        "  { sim = \"ac\"; car = \"one\"; devices = (); },\n"
+        "  { sim = \"acc\"; car = \"two\"; devices = (); }\n"
+        ");\n";
+    if (write(fd, body, strlen(body)) < 0)
+    {
+        perror("write");
+        close(fd);
+        return NULL;
+    }
+    close(fd);
+    return strdup(tmpl);
+}
+
 int main(void)
 {
     check("MozaR5", SIMDEVSUBTYPE_MOZAR5);
@@ -33,6 +70,18 @@ int main(void)
     check("LogitechG29", SIMDEVSUBTYPE_LOGITECH_G29);
     check("not-a-real-subtype", SIMDEVSUBTYPE_UNKNOWN);
     check("", SIMDEVSUBTYPE_UNKNOWN);
+
+    char* path = write_two_profiles();
+    if (path == NULL)
+    {
+        fprintf(stderr, "FAIL: could not write fixture\n");
+        return 1;
+    }
+    check_index(path, 1, 1);
+    check_index(path, CONFIG_INDEX_UNSET, CONFIG_INDEX_FIRST);
+    check_index(path, 99, CONFIG_INDEX_UNSET);
+    unlink(path);
+    free(path);
 
     if (failures > 0)
     {

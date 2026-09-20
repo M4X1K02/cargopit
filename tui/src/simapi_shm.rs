@@ -219,7 +219,10 @@ fn shm_has_identity(view: &TelemetryView) -> bool {
 }
 
 fn with_flow(games: &[RunningGame], sending: bool) -> Vec<RunningGame> {
-    games.iter().map(|game| with_flow_one(game, sending)).collect()
+    games
+        .iter()
+        .map(|game| with_flow_one(game, sending))
+        .collect()
 }
 
 pub fn games_with_flow(games: &[RunningGame], sending: bool) -> Vec<RunningGame> {
@@ -229,7 +232,8 @@ pub fn games_with_flow(games: &[RunningGame], sending: bool) -> Vec<RunningGame>
 pub fn flow_hold_active(last_flow: Option<std::time::Instant>, now: std::time::Instant) -> bool {
     match last_flow {
         Some(at) => {
-            now.saturating_duration_since(at) <= std::time::Duration::from_millis(consts::FLOW_HOLD_MS)
+            now.saturating_duration_since(at)
+                <= std::time::Duration::from_millis(consts::FLOW_HOLD_MS)
         }
         None => false,
     }
@@ -355,15 +359,13 @@ fn spawn_watcher() -> Option<Receiver<ShmEvent>> {
 
 fn watch_loop(tx: mpsc::Sender<ShmEvent>) -> io::Result<()> {
     let mut notifier = inotify::Inotify::init()?;
-    notifier
-        .watches()
-        .add(
-            consts::SIMAPI_DAT_DIR,
-            inotify::WatchMask::CREATE
-                | inotify::WatchMask::DELETE
-                | inotify::WatchMask::MOVED_FROM
-                | inotify::WatchMask::MOVED_TO,
-        )?;
+    notifier.watches().add(
+        consts::SIMAPI_DAT_DIR,
+        inotify::WatchMask::CREATE
+            | inotify::WatchMask::DELETE
+            | inotify::WatchMask::MOVED_FROM
+            | inotify::WatchMask::MOVED_TO,
+    )?;
     let mut buf = [0u8; consts::SIMAPI_WATCH_BUF];
     loop {
         let events = notifier.read_events_blocking(&mut buf)?;
@@ -402,7 +404,8 @@ pub fn exe_matches_listing(listing: &str, exe: &str) -> bool {
             continue;
         };
         let args = parts.collect::<Vec<_>>().join(" ");
-        if comm.to_ascii_lowercase().contains(&needle) || args.to_ascii_lowercase().contains(&needle)
+        if comm.to_ascii_lowercase().contains(&needle)
+            || args.to_ascii_lowercase().contains(&needle)
         {
             return true;
         }

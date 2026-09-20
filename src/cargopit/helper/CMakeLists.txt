@@ -7,6 +7,8 @@ set(helper_source_files
   confighelper.h
   ensure_simd.c
   ensure_simd.h
+  simd_telemetry.c
+  simd_telemetry.h
 )
 
 set(LIBXML_INCLUDE_DIR /usr/include/libxml2)

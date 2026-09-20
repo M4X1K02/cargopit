@@ -111,10 +111,7 @@ pub fn local_bin_dir() -> PathBuf {
 }
 
 pub fn prepend_search_path() {
-    let extra = [
-        source_root().join(consts::BUILD_DIRNAME),
-        local_bin_dir(),
-    ];
+    let extra = [source_root().join(consts::BUILD_DIRNAME), local_bin_dir()];
     let current = env::var(consts::ENV_PATH).unwrap_or_default();
     let mut parts: Vec<String> = extra
         .into_iter()

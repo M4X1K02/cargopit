@@ -12,6 +12,8 @@
 
 #include "gameloop.h"
 #include "loopdata.h"
+#include "acr_udp.h"
+#include "../helper/simd_telemetry.h"
 #include "../helper/confighelper.h"
 #include "../helper/ensure_simd.h"
 #include "../devices/simdevice.h"
@@ -449,18 +451,13 @@ void looprun(CargopitSettings* ms, loop_data* f, SimData* simdata)
 {
     if (doui == true)
     {
-        slogi("looking for ui config %s pass 1 simapi %i", ms->config_str, f->siminfo.simulatorapi);
-        int confignum = getconfigtouse2(ms->config_str, simdata->car, f->siminfo.simulatorapi);
-        slogi("first pass finished");
-        if(confignum == -1)
+        slogi("loading device profile from %s (config-index %i)", ms->config_str, ms->config_index);
+        int confignum = resolve_config_index(ms->config_str, ms->config_index);
+        if (confignum < 0)
         {
-            slogi("looking for ui config %s pass 2", ms->config_str);
-            confignum = getconfigtouse1(ms->config_str, simdata->car, f->siminfo.simulatorapi);
-        }
-        if(confignum == -1)
-        {
-            slogi("looking for ui config %s pass 3", ms->config_str);
-            confignum = getconfigtouse(ms->config_str, simdata->car, f->siminfo.simulatorapi);
+            sloge("no device profile to load (config-index %i)", ms->config_index);
+            doui = false;
+            return;
         }
 
         int configureddevices;
@@ -674,6 +671,16 @@ static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf,
     SimMap* simmap = f->simmap;
     CargopitSettings* ms = f->ms;
 
+    if (appstate == 2 && acr_udp_packet_ok(a, (size_t)nread))
+    {
+        acr_udp_apply(simdata, a);
+        acr_udp_publish(simmap, simdata);
+        looprun(ms, f, simdata);
+        slogt("udp free  :%lu %p\n",rcvbuf->len,rcvbuf->base);
+        free(rcvbuf->base);
+        return;
+    }
+
     if (appstate == 2)
     {
         map_live_simdata(simdata, simmap, f->siminfo.mapapi, true, a);
@@ -728,20 +735,108 @@ static bool simapi_daemon_advancing(SimData* simdata, SimMap* simmap)
     return simdata->mtick != first_tick;
 }
 
+static SimulatorEXE discovered_sim_exe(loop_data* f)
+{
+    SimInfo exe_info;
+
+    if (f->siminfo.simulatorexe != SIMULATOREXE_SIMAPI_TEST_NONE)
+    {
+        return f->siminfo.simulatorexe;
+    }
+    memset(&exe_info, 0, sizeof(exe_info));
+    return simapi_get_sim_exe(&exe_info);
+}
+
+static bool try_acr_udp_bridge(loop_data* f, SimData* simdata, SimMap* simmap)
+{
+    SimulatorEXE exe = discovered_sim_exe(f);
+    TelemetrySource source;
+
+    if (exe != SIMULATOREXE_ASSETTO_CORSA_RALLY)
+    {
+        return false;
+    }
+    source = simd_telemetry_source(exe);
+    if (source == TELEMETRY_SOURCE_SHM)
+    {
+        return false;
+    }
+    if (source != TELEMETRY_SOURCE_UDP && !ac_physics_shm_is_blank())
+    {
+        return false;
+    }
+    if (startudp(SIM_UDP_PORT_ASSETTO_CORSA_RALLY) != 0)
+    {
+        sloge("could not bind Assetto Corsa Rally UDP port %i",
+              SIM_UDP_PORT_ASSETTO_CORSA_RALLY);
+        return false;
+    }
+    if (source == TELEMETRY_SOURCE_UDP)
+    {
+        slogi("Assetto Corsa Rally telemetry=udp; binding Proton UDP on %i",
+              SIM_UDP_PORT_ASSETTO_CORSA_RALLY);
+    }
+    else
+    {
+        slogi("Assetto Corsa Rally Linux SHM is blank; using Proton UDP on %i",
+              SIM_UDP_PORT_ASSETTO_CORSA_RALLY);
+    }
+    close_simapi_map(simmap);
+    f->use_udp = true;
+    f->siminfo.SimUsesUDP = true;
+    f->siminfo.isSimOn = true;
+    f->siminfo.simulatorapi = SIMULATORAPI_ASSETTO_CORSA;
+    f->siminfo.mapapi = SIMULATORAPI_ASSETTO_CORSA;
+    f->siminfo.simulatorexe = exe;
+    simdata->simon = true;
+    simdata->simapi = SIMULATORAPI_ASSETTO_CORSA;
+    simdata->simexe = exe;
+    simdata->simstatus = SIMAPI_STATUS_ACTIVEPLAY;
+    return true;
+}
+
+static void apply_simd_telemetry_preference(loop_data* f)
+{
+    SimInfo probe;
+    SimulatorEXE exe;
+    TelemetrySource source;
+
+    memset(&probe, 0, sizeof(probe));
+    exe = simapi_get_sim_exe(&probe);
+    source = simd_telemetry_source(exe);
+    if (source == TELEMETRY_SOURCE_UDP)
+    {
+        f->ms->force_udp_mode = true;
+        return;
+    }
+    if (source == TELEMETRY_SOURCE_SHM)
+    {
+        f->ms->force_udp_mode = false;
+    }
+}
+
 static void discover_sim(loop_data* f, SimData* simdata, SimMap* simmap)
 {
+    apply_simd_telemetry_preference(f);
     f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, false);
-    if (f->siminfo.mapapi != SIMULATORAPI_SIMAPI_TEST)
+    if (f->siminfo.mapapi == SIMULATORAPI_SIMAPI_TEST
+        && !simapi_daemon_advancing(simdata, simmap))
+    {
+        slogd("SIMAPI.DAT is not advancing; mapping the simulator directly");
+        close_simapi_map(simmap);
+        f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, true);
+    }
+    if (try_acr_udp_bridge(f, simdata, simmap))
     {
         return;
     }
-    if (simapi_daemon_advancing(simdata, simmap))
+    if (discovered_sim_exe(f) == SIMULATOREXE_ASSETTO_CORSA_RALLY
+        && simd_telemetry_source(SIMULATOREXE_ASSETTO_CORSA_RALLY) == TELEMETRY_SOURCE_SHM
+        && ac_physics_shm_is_blank())
     {
-        return;
+        slogi("Assetto Corsa Rally telemetry=shm but /dev/shm/acpmf_physics is empty");
+        slogi("Proton keeps Local\\acpmf_physics inside Wine; acr_shm_udp must mirror it");
     }
-    slogd("SIMAPI.DAT is not advancing; mapping the simulator directly");
-    close_simapi_map(simmap);
-    f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, true);
 }
 
 static void ensure_play_publishes_simapi(SimMap* simmap, SimData* simdata, SimulatorAPI mapapi)

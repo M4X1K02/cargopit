@@ -36,6 +36,8 @@ Parameters;
 
 #define TEST_DEVICE_INDEX_ALL     (-1)
 #define TEST_CONFIG_INDEX_DEFAULT (-1)
+#define CONFIG_INDEX_UNSET        TEST_CONFIG_INDEX_DEFAULT
+#define CONFIG_INDEX_FIRST        0
 
 typedef enum
 {

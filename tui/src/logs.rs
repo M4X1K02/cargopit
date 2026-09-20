@@ -159,8 +159,10 @@ impl LogState {
                 LogFilter::All => true,
                 LogFilter::Play => line.source == "play",
                 LogFilter::Test => line.source == "test",
-                LogFilter::File => line.source.ends_with(consts::LOG_GLOB_SUFFIX)
-                    || (!line.source.eq("play") && !line.source.eq("test")),
+                LogFilter::File => {
+                    line.source.ends_with(consts::LOG_GLOB_SUFFIX)
+                        || (!line.source.eq("play") && !line.source.eq("test"))
+                }
             })
             .collect()
     }
