@@ -2,6 +2,7 @@
 //!
 //! Stop/Restart are not entered: those call `pkill -x cargopit` and would hit a
 //! live session. Start is entered only to exercise the "already running" path.
+//! Test stops play first so the hardware pass can open devices.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,7 @@ fn walks_all_tui_features() {
     let dash = render_text(&app, SHOT_WIDTH, SHOT_HEIGHT);
     let game_visible = dash.contains(consts::LABEL_NO_SIM)
         || dash.contains(consts::LABEL_TELEMETRY_LIVE)
+        || dash.contains(consts::LABEL_TELEMETRY_RUNNING)
         || dash.contains(consts::LABEL_TELEMETRY_IDLE)
         || dash.contains(consts::LABEL_TELEMETRY_MENU);
     assert!(game_visible, "dashboard missing game node\n{dash}");
@@ -69,13 +71,34 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_START);
     app.dashboard_index = 1;
     press(&mut app, consts::KEY_ENTER);
+    app.tick();
+    press(&mut app, consts::KEY_START);
+    shot(&mut step, &shots, &app, "dashboard-during-test", &[
+        consts::TAB_TITLES[consts::TAB_DASHBOARD],
+        consts::DIAGRAM_TITLE_PIPELINE,
+    ]);
+    let during_test = render_text(&app, SHOT_WIDTH, SHOT_HEIGHT);
+    assert!(
+        app.telemetry_live || dump_has_march(&during_test),
+        "test session should march the signal path\n{during_test}"
+    );
+    press(&mut app, consts::KEY_TAB4);
+    shot(&mut step, &shots, &app, "telemetry", &[
+        consts::TITLE_TELEMETRY_SESSION,
+        consts::TITLE_TELEMETRY_CONTROLS,
+        consts::LABEL_RPM,
+    ]);
+    assert!(matches!(app.screen, Screen::Telemetry));
+    press(&mut app, consts::KEY_TAB5);
     wait_for_log(&mut app, STUB_TEST_LINE);
     shot(&mut step, &shots, &app, "logs-after-test", &[
         consts::TITLE_LOGS,
         STUB_TEST_LINE,
     ]);
     assert!(
-        app.message == consts::MSG_STARTED_TEST || app.message.contains("exited"),
+        app.message == consts::MSG_STARTED_TEST
+            || app.message == consts::MSG_TEST_FINISHED
+            || app.message.contains("exited"),
         "unexpected test message: {}",
         app.message
     );
@@ -96,12 +119,22 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_EDIT);
     shot(&mut step, &shots, &app, "device-editor", &[
         consts::TITLE_DEVICE_EDITOR,
+        consts::TITLE_DEVICE_TEST,
         consts::DIAGRAM_TITLE_PREVIEW,
         FieldId::Class.label(),
         "Transport:",
         consts::TYPE_TACHOMETER,
     ]);
     assert!(matches!(app.screen, Screen::DeviceForm));
+
+    press(&mut app, consts::KEY_TEST);
+    app.tick();
+    shot(&mut step, &shots, &app, "device-editor-test", &[
+        consts::TITLE_DEVICE_EDITOR,
+        consts::TITLE_DEVICE_TEST,
+    ]);
+    assert!(matches!(app.screen, Screen::DeviceForm));
+    wait_for_log(&mut app, STUB_TEST_LINE);
 
     press(&mut app, consts::KEY_RIGHT);
     shot(&mut step, &shots, &app, "device-editor-class-cycled", &[consts::CLASS_SOUND]);
@@ -130,7 +163,10 @@ fn walks_all_tui_features() {
     shot(&mut step, &shots, &app, "devices-reordered", &[consts::EFFECT_ENGINE]);
 
     press(&mut app, consts::KEY_ENTER);
-    shot(&mut step, &shots, &app, "device-tune", &[consts::TITLE_TUNE]);
+    shot(&mut step, &shots, &app, "device-tune", &[
+        consts::TITLE_TUNE,
+        consts::TITLE_DEVICE_TEST,
+    ]);
     press(&mut app, consts::KEY_RIGHT);
     press(&mut app, consts::KEY_ESC);
     leave_editor(&mut app);
@@ -223,7 +259,7 @@ fn walks_all_tui_features() {
     shot(&mut step, &shots, &app, "settings-raw", &[consts::TITLE_RAW]);
     press(&mut app, consts::KEY_ESC);
 
-    press(&mut app, consts::KEY_TAB4);
+    press(&mut app, consts::KEY_TAB5);
     press(&mut app, consts::KEY_SPACE);
     shot(&mut step, &shots, &app, "logs-filtered", &[consts::TITLE_LOGS, consts::LOG_FILTER_PREFIX]);
 
@@ -247,6 +283,12 @@ fn wait_for_log(app: &mut App, needle: &str) {
         }
         thread::sleep(Duration::from_millis(LOG_WAIT_MS));
     }
+}
+
+fn dump_has_march(dump: &str) -> bool {
+    consts::TELEMETRY_FLOW_FRAMES
+        .iter()
+        .any(|frame| dump.contains(frame.trim()))
 }
 
 fn leave_editor(app: &mut App) {

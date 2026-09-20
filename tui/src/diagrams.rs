@@ -41,7 +41,7 @@ pub fn simapi_span_compact(exists: bool, live: bool) -> Span<'static> {
     } else if live {
         (consts::LED_ON, theme::COLOR_OK)
     } else {
-        (consts::LED_OFF, theme::COLOR_WARN)
+        (consts::LED_ON, theme::COLOR_MUTED)
     };
     Span::styled(
         format!(" {glyph} {} ", consts::LABEL_SIMAPI),
@@ -55,7 +55,7 @@ pub fn simapi_span(exists: bool, live: bool) -> Span<'static> {
     } else if live {
         (consts::LED_ON, theme::COLOR_OK, consts::SIMAPI_LIVE)
     } else {
-        (consts::LED_OFF, theme::COLOR_WARN, consts::SIMAPI_ZEROED)
+        (consts::LED_ON, theme::COLOR_MUTED, consts::SIMAPI_MAPPED)
     };
     Span::styled(
         format!(" {glyph} {} {label} ", consts::LABEL_SIMAPI),
@@ -86,7 +86,7 @@ pub fn pipeline_lines(
     simapi_exists: bool,
     simapi_live: bool,
     pit: bool,
-    mtick: u64,
+    flow_frame: u64,
 ) -> Vec<Line<'static>> {
     let (primary, extras) = split_games(games);
     let mut lines = vec![pipeline_line(
@@ -95,10 +95,10 @@ pub fn pipeline_lines(
         simapi_exists,
         simapi_live,
         pit,
-        mtick,
+        flow_frame,
     )];
     for game in extras {
-        lines.push(game_overflow_line(game, mtick));
+        lines.push(game_overflow_line(game, flow_frame));
     }
     lines
 }
@@ -116,16 +116,18 @@ pub fn pipeline_line(
     simapi_exists: bool,
     simapi_live: bool,
     pit: bool,
-    mtick: u64,
+    flow_frame: u64,
 ) -> Line<'static> {
-    let sending = game.map(|item| item.sending).unwrap_or(false);
+    let game_flow = game.map(|item| item.sending).unwrap_or(false);
+    let shm_flow = simapi_live;
+    let into_game = game_flow || shm_flow;
     Line::from(vec![
         led_span(consts::BINARY_SIMD, simd, consts::STATUS_RUNNING, consts::STATUS_STOPPED),
-        flow_arrow(sending, mtick),
-        game_span(game, mtick),
-        flow_arrow(sending, mtick),
+        flow_arrow(into_game, flow_frame),
+        game_span(game, flow_frame),
+        flow_arrow(shm_flow, flow_frame),
         simapi_span(simapi_exists, simapi_live),
-        Span::styled(consts::PIPELINE_ARROW, theme::style_muted()),
+        flow_arrow(shm_flow && pit, flow_frame),
         led_span(
             consts::BINARY_CARGOPIT,
             pit,
@@ -135,11 +137,11 @@ pub fn pipeline_line(
     ])
 }
 
-fn game_overflow_line(game: &RunningGame, mtick: u64) -> Line<'static> {
+fn game_overflow_line(game: &RunningGame, flow_frame: u64) -> Line<'static> {
     Line::from(vec![
         Span::raw(consts::MOTOR_ROW_INDENT),
-        game_span(Some(game), mtick),
-        flow_arrow(game.sending, mtick),
+        game_span(Some(game), flow_frame),
+        flow_arrow(game.sending, flow_frame),
         Span::styled(game.status_label, overflow_style(game.sending)),
     ])
 }
@@ -148,44 +150,45 @@ fn overflow_style(sending: bool) -> ratatui::style::Style {
     if sending {
         theme::style_ok()
     } else {
-        theme::style_muted()
+        theme::style_ok().add_modifier(Modifier::DIM)
     }
 }
 
-fn game_span(game: Option<&RunningGame>, mtick: u64) -> Span<'static> {
+fn game_span(game: Option<&RunningGame>, flow_frame: u64) -> Span<'static> {
     let Some(game) = game else {
         return Span::styled(
             format!(" {} {} ", consts::LED_OFF, consts::LABEL_NO_SIM),
             theme::style_muted(),
         );
     };
-    let glyph = if game.sending {
-        pulse_glyph(mtick)
-    } else {
-        consts::LED_OFF
-    };
-    let style = if game.sending {
-        theme::style_ok()
-    } else {
-        theme::style_warn()
-    };
+    let (glyph, style) = game_link_look(game, flow_frame);
     Span::styled(
         format!(" {glyph} {} {} ", game.name, game.status_label),
         style.add_modifier(Modifier::BOLD),
     )
 }
 
-fn flow_arrow(sending: bool, mtick: u64) -> Span<'static> {
+fn game_link_look(game: &RunningGame, flow_frame: u64) -> (&'static str, ratatui::style::Style) {
+    if game.sending {
+        return (pulse_glyph(flow_frame), theme::style_ok());
+    }
+    if game.status_label == consts::LABEL_TELEMETRY_RUNNING {
+        return (consts::LED_ON, theme::style_ok());
+    }
+    (consts::LED_OFF, theme::style_warn())
+}
+
+fn flow_arrow(sending: bool, flow_frame: u64) -> Span<'static> {
     if !sending {
         return Span::styled(consts::PIPELINE_ARROW, theme::style_muted());
     }
     let frames = consts::TELEMETRY_FLOW_FRAMES;
-    let index = (mtick as usize) % frames.len();
+    let index = (flow_frame as usize) % frames.len();
     Span::styled(frames[index], theme::style_ok())
 }
 
-fn pulse_glyph(mtick: u64) -> &'static str {
-    if mtick % 2 == 0 {
+fn pulse_glyph(flow_frame: u64) -> &'static str {
+    if flow_frame % 2 == 0 {
         consts::TELEMETRY_PULSE_ON
     } else {
         consts::TELEMETRY_PULSE_OFF
@@ -513,6 +516,38 @@ mod tests {
         let empty = pipeline_lines(false, &[], false, false, false, 0);
         let dump = format!("{:?}", empty);
         assert!(dump.contains(consts::LABEL_NO_SIM));
+    }
+
+    #[test]
+    fn running_game_is_lit_without_flow_animation() {
+        let running = RunningGame {
+            name: "DirtRally2".into(),
+            game_id: 690790,
+            sending: false,
+            status_label: consts::LABEL_TELEMETRY_RUNNING,
+        };
+        let first = pipeline_lines(true, &[running.clone()], true, false, true, 0);
+        let second = pipeline_lines(true, &[running], true, false, true, 1);
+        assert_eq!(format!("{:?}", first), format!("{:?}", second));
+        let dump = format!("{:?}", first);
+        assert!(dump.contains(consts::LABEL_TELEMETRY_RUNNING));
+        assert!(dump.contains(consts::SIMAPI_MAPPED));
+        assert!(dump.contains(consts::LED_ON));
+    }
+
+    #[test]
+    fn simapi_to_cargopit_animates_when_live() {
+        let running = RunningGame {
+            name: "DirtRally2".into(),
+            game_id: 690790,
+            sending: false,
+            status_label: consts::LABEL_TELEMETRY_RUNNING,
+        };
+        let first = pipeline_lines(true, &[running.clone()], true, true, true, 0);
+        let second = pipeline_lines(true, &[running], true, true, true, 1);
+        assert_ne!(format!("{:?}", first), format!("{:?}", second));
+        let dump = format!("{:?}", first);
+        assert!(dump.contains(consts::TELEMETRY_FLOW_FRAMES[0]) || dump.contains("►"));
     }
 
     #[test]

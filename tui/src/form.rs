@@ -30,6 +30,12 @@ impl DeviceForm {
         self.device != self.original || self.edit_buffer.is_some()
     }
 
+    pub fn mark_saved(&mut self) {
+        self.original = self.device.clone();
+        self.is_new = false;
+        self.error = None;
+    }
+
     pub fn blank() -> Self {
         let mut device = DeviceEntry::new();
         schema::apply_defaults(&mut device, DeviceClass::Sound, consts::TYPE_HAPTIC);

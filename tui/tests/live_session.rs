@@ -33,8 +33,7 @@ fn live_session_shows_dr2_on_signal_path() {
     assert_eq!(first.valid, 1);
     thread::sleep(LIVE_WAIT);
     let second = session.sample().expect("second telemetry sample");
-    let mtick_changed = first.mtick != second.mtick;
-    let sending = simapi_shm::telemetry_sending(&second, mtick_changed);
+    let sending = simapi_shm::telemetry_sending(&second, Some(simapi_shm::flow_snapshot(&first)));
 
     let mut app = App::new().expect("app");
     app.tick();
@@ -56,11 +55,20 @@ fn live_session_shows_dr2_on_signal_path() {
     if sending {
         assert!(dump.contains(consts::LABEL_TELEMETRY_LIVE), "{dump}");
         assert!(app.telemetry_live);
+        let marching = consts::TELEMETRY_FLOW_FRAMES
+            .iter()
+            .any(|frame| dump.contains(frame.trim()));
+        assert!(marching, "live telemetry should march the signal path\n{dump}");
     } else {
         assert!(
-            dump.contains(consts::LABEL_TELEMETRY_IDLE)
+            dump.contains(consts::LABEL_TELEMETRY_RUNNING)
+                || dump.contains(consts::LABEL_TELEMETRY_IDLE)
                 || dump.contains(consts::LABEL_TELEMETRY_MENU),
-            "expected idle/menu telemetry marker\n{dump}"
+            "expected running/idle/menu telemetry marker\n{dump}"
+        );
+        assert!(
+            dump.contains(consts::SIMAPI_MAPPED) || dump.contains(consts::SIMAPI_LIVE),
+            "SIMAPI should be mapped or live while DR2 is up\n{dump}"
         );
     }
     eprintln!(

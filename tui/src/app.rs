@@ -5,17 +5,18 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 
 use crate::config::{self, CargopitConfig, DeviceEntry, SimProfile};
 use crate::consts;
 use crate::diagnostics::{self, Diagnostics};
 use crate::form::DeviceForm;
 use crate::hardware::Discovery;
-use crate::libconfig::Value;
 use crate::logs::LogState;
 use crate::paths;
-use crate::process::{self, ChildSession, ProcessStatus, SessionKind};
+use crate::process::{self, ChildSession, ProcessStatus, SessionKind, TestScope};
 use crate::schema::{DeviceClass, FieldId};
 use crate::simapi_shm::{self, RunningGame, SimApiSession, TelemetryView};
 use crate::simd_config::{self, SimdConfig, SimdSim};
@@ -28,6 +29,7 @@ pub enum Screen {
     Dashboard,
     Devices,
     Settings,
+    Telemetry,
     Logs,
     DeviceForm,
     DeviceTune,
@@ -95,10 +97,12 @@ pub struct App {
     pub should_quit: bool,
     pub telemetry: TelemetryView,
     pub telemetry_live: bool,
+    pub flow_frame: u64,
     pub running_games: Vec<RunningGame>,
     shm: SimApiSession,
-    prev_mtick: Option<u64>,
+    prev_flow: Option<simapi_shm::FlowSnapshot>,
     extra_games: Vec<RunningGame>,
+    last_flow: Option<Instant>,
     child_rx: Option<Receiver<(SessionKind, String)>>,
     child: Option<ChildSession>,
 }
@@ -155,20 +159,17 @@ impl App {
             should_quit: false,
             telemetry: TelemetryView::default(),
             telemetry_live: false,
+            flow_frame: 0,
             running_games: Vec::new(),
             shm: SimApiSession::new(),
-            prev_mtick: None,
+            prev_flow: None,
             extra_games: Vec::new(),
+            last_flow: None,
             child_rx: None,
             child: None,
         };
         app.logs.refresh_files();
-        if app.shm.mapped() {
-            app.extra_games = simapi_shm::extras_from_listing(
-                &app.simd,
-                &process::process_listing(),
-            );
-        }
+        app.refresh_extra_games();
         app.sample_telemetry();
         Ok(app)
     }
@@ -212,24 +213,26 @@ impl App {
         self.shm.mapped()
     }
 
+    pub fn test_running(&self) -> bool {
+        self.child
+            .as_ref()
+            .is_some_and(|session| session.kind == SessionKind::Test)
+    }
+
     pub fn tick(&mut self) {
         let shm_event = self.shm.drain();
         if shm_event {
-            if self.shm.mapped() {
-                self.extra_games = simapi_shm::extras_from_listing(
-                    &self.simd,
-                    &process::process_listing(),
-                );
-            } else {
-                self.extra_games.clear();
-                self.prev_mtick = None;
+            if !self.shm.mapped() {
+                self.prev_flow = None;
+                self.last_flow = None;
             }
+            self.refresh_extra_games();
         }
-        self.sample_telemetry();
         if self.last_tick.elapsed() >= Duration::from_millis(consts::STATUS_REFRESH_MS) {
             self.status = process::check_processes();
             self.discovery = Discovery::live();
             self.logs.refresh_files();
+            self.refresh_extra_games();
             if !self.status.cleaned_pid_files.is_empty() {
                 self.message = format!(
                     "Cleaned stale PID files: {}",
@@ -238,26 +241,83 @@ impl App {
             }
             self.last_tick = Instant::now();
         }
+        self.sample_telemetry();
         self.drain_child();
+        if self.child.is_some() {
+            self.logs.refresh_files();
+        }
+    }
+
+    fn refresh_extra_games(&mut self) {
+        self.extra_games = simapi_shm::extras_from_listing(
+            &self.simd,
+            &process::process_listing(),
+        );
     }
 
     fn sample_telemetry(&mut self) {
         let Some(view) = self.shm.sample() else {
             self.telemetry = TelemetryView::default();
-            self.telemetry_live = false;
-            self.prev_mtick = None;
-            self.running_games = self.extra_games.clone();
+            self.telemetry_live = self.test_running();
+            self.prev_flow = None;
+            if self.telemetry_live {
+                self.last_flow = Some(Instant::now());
+                self.advance_flow_frame();
+            }
+            self.running_games = simapi_shm::games_with_flow(&self.extra_games, self.telemetry_live);
+            self.ensure_test_pipeline_node();
             return;
         };
-        let mtick_changed = self.prev_mtick.map(|prev| prev != view.mtick).unwrap_or(false);
-        self.prev_mtick = Some(view.mtick);
-        self.telemetry_live = simapi_shm::telemetry_sending(&view, mtick_changed);
+        let changed = simapi_shm::telemetry_sending(&view, self.prev_flow);
+        self.prev_flow = Some(simapi_shm::flow_snapshot(&view));
+        if changed || self.test_running() {
+            self.last_flow = Some(Instant::now());
+        }
+        self.telemetry_live = self.test_running()
+            || changed
+            || simapi_shm::flow_hold_active(self.last_flow, Instant::now());
+        if self.telemetry_live {
+            self.advance_flow_frame();
+        }
         self.telemetry = view;
         self.running_games = simapi_shm::resolve_games(
             &self.simd,
             &view,
             self.telemetry_live,
             &self.extra_games,
+        );
+        self.ensure_test_pipeline_node();
+    }
+
+    fn advance_flow_frame(&mut self) {
+        self.flow_frame = self.flow_frame.wrapping_add(1);
+    }
+
+    pub fn pipeline_pit(&self) -> bool {
+        self.status.cargopit_running || self.test_running()
+    }
+
+    fn ensure_test_pipeline_node(&mut self) {
+        if !self.test_running() {
+            return;
+        }
+        if let Some(game) = self
+            .running_games
+            .iter_mut()
+            .find(|game| game.name == consts::LABEL_TEST)
+        {
+            game.sending = true;
+            game.status_label = consts::LABEL_TELEMETRY_LIVE;
+            return;
+        }
+        self.running_games.insert(
+            0,
+            RunningGame {
+                name: consts::LABEL_TEST.to_string(),
+                game_id: 0,
+                sending: true,
+                status_label: consts::LABEL_TELEMETRY_LIVE,
+            },
         );
     }
 
@@ -279,7 +339,7 @@ impl App {
         };
         match session.child.try_wait() {
             Ok(Some(status)) => {
-                self.message = format!("{} exited {status}", session.kind.as_str());
+                self.message = process::session_exit_message(session.kind, status);
                 self.child = None;
             }
             Ok(None) => {}
@@ -287,6 +347,17 @@ impl App {
                 self.message = format!("wait failed: {err}");
                 self.child = None;
             }
+        }
+    }
+
+    pub fn handle_event(&mut self, event: Event) -> Result<()> {
+        match event {
+            Event::Key(key) => self.handle_key(key),
+            Event::Mouse(mouse) => {
+                self.handle_mouse(mouse);
+                Ok(())
+            }
+            _ => Ok(()),
         }
     }
 
@@ -307,6 +378,7 @@ impl App {
             Screen::Dashboard => self.handle_dashboard(key.code),
             Screen::Devices => self.handle_devices(key.code),
             Screen::Settings => self.handle_settings(key.code),
+            Screen::Telemetry => self.handle_telemetry(key.code),
             Screen::Logs => self.handle_logs(key.code),
             Screen::DeviceForm => self.handle_form(key.code)?,
             Screen::DeviceTune => self.handle_tune(key.code)?,
@@ -318,6 +390,22 @@ impl App {
         Ok(())
     }
 
+    fn handle_mouse(&mut self, mouse: MouseEvent) {
+        if !matches!(self.screen, Screen::SettingsSub(SettingsSub::Simd)) {
+            return;
+        }
+        let delta = match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollLeft => -1,
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollRight => 1,
+            _ => return,
+        };
+        if simd_wheel_pans_columns(mouse) {
+            self.simd_field = step_saturating(self.simd_field, self.simd_column_count(), delta);
+            return;
+        }
+        self.simd_index = step_saturating(self.simd_index, self.simd.sims.len(), delta);
+    }
+
     fn switch_tab_key(&mut self, code: KeyCode) {
         let tab = match code {
             consts::KEY_TAB => (self.tab + 1) % consts::TAB_COUNT,
@@ -325,7 +413,8 @@ impl App {
             consts::KEY_START => consts::TAB_DASHBOARD,
             consts::KEY_TAB2 => consts::TAB_DEVICES,
             consts::KEY_TAB3 => consts::TAB_SETTINGS,
-            consts::KEY_TAB4 => consts::TAB_LOGS,
+            consts::KEY_TAB4 => consts::TAB_TELEMETRY,
+            consts::KEY_TAB5 => consts::TAB_LOGS,
             _ => return,
         };
         self.set_tab(tab);
@@ -336,6 +425,7 @@ impl App {
         self.screen = match tab {
             consts::TAB_DEVICES => Screen::Devices,
             consts::TAB_SETTINGS => Screen::Settings,
+            consts::TAB_TELEMETRY => Screen::Telemetry,
             consts::TAB_LOGS => Screen::Logs,
             _ => Screen::Dashboard,
         };
@@ -359,6 +449,13 @@ impl App {
                 );
             }
             consts::KEY_ENTER => self.run_dashboard_action(self.dashboard_index),
+            _ => {}
+        }
+    }
+
+    fn handle_telemetry(&mut self, code: KeyCode) {
+        match code {
+            consts::KEY_QUIT | consts::KEY_QUIT_UPPER | consts::KEY_ESC => self.should_quit = true,
             _ => {}
         }
     }
@@ -397,12 +494,52 @@ impl App {
     }
 
     fn start_test(&mut self) {
-        match process::spawn_session(SessionKind::Test, &self.tui_state.play_flags, &self.config_path)
+        self.launch_test(TestScope::default(), true);
+    }
+
+    fn start_editor_test(&mut self) {
+        if !self.commit_form(false) {
+            return;
+        }
+        let scope = TestScope {
+            config_index: Some(self.profile_index),
+            device_index: Some(self.device_index),
+        };
+        self.launch_test(scope, false);
+    }
+
+    fn launch_test(&mut self, scope: TestScope, switch_to_logs: bool) {
+        self.status = process::check_processes();
+        if switch_to_logs
+            && self
+                .child
+                .as_ref()
+                .is_some_and(|session| session.kind == SessionKind::Test)
         {
+            self.message = consts::MSG_TEST_ALREADY_RUNNING.into();
+            return;
+        }
+        self.kill_tracked_child();
+        if self.status.cargopit_running {
+            let _ = process::stop_play();
+            self.status = process::check_processes();
+        }
+        match process::spawn_session_with_scope(
+            SessionKind::Test,
+            &self.tui_state.play_flags,
+            &self.config_path,
+            scope,
+        ) {
             Ok(session) => {
                 self.attach_child(session);
-                self.message = consts::MSG_STARTED_TEST.into();
-                self.set_tab(consts::TAB_LOGS);
+                self.message = if scope.device_index.is_some() {
+                    consts::MSG_STARTED_DEVICE_TEST.into()
+                } else {
+                    consts::MSG_STARTED_TEST.into()
+                };
+                if switch_to_logs {
+                    self.set_tab(consts::TAB_LOGS);
+                }
             }
             Err(err) => self.message = err.to_string(),
         }
@@ -563,10 +700,7 @@ impl App {
             consts::KEY_ENTER => self.form.begin_edit(),
             consts::KEY_SAVE => self.save_form()?,
             consts::KEY_BACKSPACE => self.form.clear_current(),
-            consts::KEY_TEST => {
-                self.save_form()?;
-                self.start_test();
-            }
+            consts::KEY_TEST => self.start_editor_test(),
             _ => {}
         }
         Ok(())
@@ -588,16 +722,21 @@ impl App {
     }
 
     fn save_form(&mut self) -> Result<()> {
+        let _ = self.commit_form(true);
+        Ok(())
+    }
+
+    fn commit_form(&mut self, leave: bool) -> bool {
         if let Err(err) = self.form.validate() {
-            self.form.error = Some(err);
-            self.message = self.form.error.clone().unwrap_or_default();
-            return Ok(());
+            self.form.error = Some(err.clone());
+            self.message = err;
+            return false;
         }
         let device = self.form.device.clone();
         let is_new = self.form.is_new;
         let index = self.device_index;
         let Some(profile) = self.current_profile_mut() else {
-            return Ok(());
+            return false;
         };
         if is_new {
             profile.devices.push(device);
@@ -606,11 +745,15 @@ impl App {
             *slot = device;
         }
         self.persist_config();
+        self.form.mark_saved();
+        if !leave {
+            return true;
+        }
         self.screen = Screen::Devices;
         if self.status.cargopit_running {
             self.open_confirm(ConfirmKind::RestartAfterSave);
         }
-        Ok(())
+        true
     }
 
     fn handle_tune(&mut self, code: KeyCode) -> Result<()> {
@@ -642,6 +785,7 @@ impl App {
                 }
             }
             consts::KEY_SAVE => self.save_form()?,
+            consts::KEY_TEST => self.start_editor_test(),
             consts::KEY_APPLY => {
                 self.save_form()?;
                 if self.form.error.is_some() {
@@ -913,27 +1057,68 @@ impl App {
             consts::KEY_ADD => {
                 if self.simd.sims.is_empty() {
                     self.simd = simd_config::stub_from_bundled();
+                    self.simd_index = 0;
                 } else {
                     self.simd.sims.push(SimdSim { settings: Vec::new() });
+                    self.simd_index = self.simd.sims.len() - 1;
                 }
+                self.simd_field = 0;
                 simd_config::save(&paths::simd_config_path(), &self.simd)?;
             }
             consts::KEY_DELETE => {
                 if self.simd_index < self.simd.sims.len() {
                     self.simd.sims.remove(self.simd_index);
                     simd_config::save(&paths::simd_config_path(), &self.simd)?;
+                    self.clamp_simd_selection();
                 }
             }
             consts::KEY_UP | consts::KEY_K => {
-                self.simd_index = wrap_index(self.simd_index, self.simd.sims.len().max(1), -1);
+                self.simd_index = step_saturating(self.simd_index, self.simd.sims.len(), -1);
             }
             consts::KEY_DOWN | consts::KEY_J => {
-                self.simd_index = wrap_index(self.simd_index, self.simd.sims.len().max(1), 1);
+                self.simd_index = step_saturating(self.simd_index, self.simd.sims.len(), 1);
+            }
+            consts::KEY_LEFT | consts::KEY_H => {
+                self.simd_field = step_saturating(self.simd_field, self.simd_column_count(), -1);
+            }
+            consts::KEY_RIGHT | consts::KEY_L => {
+                self.simd_field = step_saturating(self.simd_field, self.simd_column_count(), 1);
+            }
+            consts::KEY_PAGE_UP => {
+                let delta = -(consts::SIMD_PAGE_ROWS as i32);
+                self.simd_index = step_saturating(self.simd_index, self.simd.sims.len(), delta);
+            }
+            consts::KEY_PAGE_DOWN => {
+                let delta = consts::SIMD_PAGE_ROWS as i32;
+                self.simd_index = step_saturating(self.simd_index, self.simd.sims.len(), delta);
+            }
+            consts::KEY_HOME => self.simd_index = 0,
+            consts::KEY_END => {
+                self.simd_index = self.simd.sims.len().saturating_sub(1);
             }
             consts::KEY_SAVE => simd_config::save(&paths::simd_config_path(), &self.simd)?,
             _ => {}
         }
         Ok(())
+    }
+
+    fn simd_column_count(&self) -> usize {
+        simd_config::table_columns(&self.simd).len().max(1)
+    }
+
+    fn clamp_simd_selection(&mut self) {
+        if self.simd.sims.is_empty() {
+            self.simd_index = 0;
+            self.simd_field = 0;
+            return;
+        }
+        if self.simd_index >= self.simd.sims.len() {
+            self.simd_index = self.simd.sims.len() - 1;
+        }
+        let columns = self.simd_column_count();
+        if self.simd_field >= columns {
+            self.simd_field = columns - 1;
+        }
     }
 
     fn handle_lua(&mut self, code: KeyCode) -> Result<()> {
@@ -1096,6 +1281,21 @@ fn wrap_index(current: usize, len: usize, delta: isize) -> usize {
     (current as isize + delta).rem_euclid(len as isize) as usize
 }
 
+fn step_saturating(current: usize, len: usize, delta: i32) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let last = (len - 1) as i32;
+    (current as i32 + delta).clamp(0, last) as usize
+}
+
+fn simd_wheel_pans_columns(mouse: MouseEvent) -> bool {
+    matches!(
+        mouse.kind,
+        MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight
+    ) || !mouse.modifiers.contains(KeyModifiers::SHIFT)
+}
+
 fn is_global_tab(code: KeyCode) -> bool {
     matches!(
         code,
@@ -1105,13 +1305,18 @@ fn is_global_tab(code: KeyCode) -> bool {
             | consts::KEY_TAB2
             | consts::KEY_TAB3
             | consts::KEY_TAB4
+            | consts::KEY_TAB5
     )
 }
 
 fn is_main_tab(screen: &Screen) -> bool {
     matches!(
         screen,
-        Screen::Dashboard | Screen::Devices | Screen::Settings | Screen::Logs
+        Screen::Dashboard
+            | Screen::Devices
+            | Screen::Settings
+            | Screen::Telemetry
+            | Screen::Logs
     )
 }
 
@@ -1147,20 +1352,4 @@ pub fn tune_fields(form: &DeviceForm) -> Vec<FieldId> {
 
 fn index_of_field(form: &DeviceForm, field: FieldId) -> usize {
     form.fields().iter().position(|item| *item == field).unwrap_or(0)
-}
-
-pub fn simd_field_pairs(sim: &SimdSim) -> Vec<(String, String)> {
-    sim.settings
-        .iter()
-        .map(|(k, v)| {
-            let display = match v {
-                Value::String(s) => s.clone(),
-                Value::Int(n) => n.to_string(),
-                Value::Float(n) => n.to_string(),
-                Value::Bool(b) => b.to_string(),
-                _ => "?".into(),
-            };
-            (k.clone(), display)
-        })
-        .collect()
 }

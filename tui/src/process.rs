@@ -30,6 +30,12 @@ pub enum SessionKind {
     Test,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TestScope {
+    pub config_index: Option<usize>,
+    pub device_index: Option<usize>,
+}
+
 impl SessionKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -193,7 +199,30 @@ fn pid_matches_service(pid: &str, path: &str) -> bool {
     comm.contains(service)
 }
 
+pub fn session_exit_message(kind: SessionKind, status: std::process::ExitStatus) -> String {
+    if status.success() {
+        return match kind {
+            SessionKind::Play => consts::MSG_PLAY_EXITED.to_string(),
+            SessionKind::Test => consts::MSG_TEST_FINISHED.to_string(),
+        };
+    }
+    let prefix = match kind {
+        SessionKind::Play => consts::MSG_PLAY_FAILED,
+        SessionKind::Test => consts::MSG_TEST_FAILED,
+    };
+    format!("{prefix} ({status})")
+}
+
 pub fn spawn_args(kind: SessionKind, flags: &PlayFlags, config_path: &Path) -> Vec<String> {
+    spawn_args_with_scope(kind, flags, config_path, TestScope::default())
+}
+
+pub fn spawn_args_with_scope(
+    kind: SessionKind,
+    flags: &PlayFlags,
+    config_path: &Path,
+    scope: TestScope,
+) -> Vec<String> {
     let mut args = vec![match kind {
         SessionKind::Play => consts::WHICH_CARGOPIT_PLAY.to_string(),
         SessionKind::Test => consts::WHICH_CARGOPIT_TEST.to_string(),
@@ -211,7 +240,21 @@ pub fn spawn_args(kind: SessionKind, flags: &PlayFlags, config_path: &Path) -> V
     }
     args.push(consts::CLI_FLAG_CONFIG_FILE.to_string());
     args.push(config_path.to_string_lossy().into_owned());
+    if kind == SessionKind::Test {
+        push_test_scope(&mut args, scope);
+    }
     args
+}
+
+fn push_test_scope(args: &mut Vec<String>, scope: TestScope) {
+    if let Some(index) = scope.config_index {
+        args.push(consts::CLI_FLAG_CONFIG_INDEX.to_string());
+        args.push(index.to_string());
+    }
+    if let Some(index) = scope.device_index {
+        args.push(consts::CLI_FLAG_DEVICE_INDEX.to_string());
+        args.push(index.to_string());
+    }
 }
 
 fn push_play_only_flags(args: &mut Vec<String>, flags: &PlayFlags) {
@@ -233,9 +276,18 @@ pub fn spawn_session(
     flags: &PlayFlags,
     config_path: &Path,
 ) -> Result<ChildSession> {
+    spawn_session_with_scope(kind, flags, config_path, TestScope::default())
+}
+
+pub fn spawn_session_with_scope(
+    kind: SessionKind,
+    flags: &PlayFlags,
+    config_path: &Path,
+    scope: TestScope,
+) -> Result<ChildSession> {
     let bin = find_binary(consts::BINARY_CARGOPIT)
         .ok_or_else(|| anyhow!("{} binary not found", consts::BINARY_CARGOPIT))?;
-    let args = spawn_args(kind, flags, config_path);
+    let args = spawn_args_with_scope(kind, flags, config_path, scope);
     let mut cmd = Command::new(bin);
     detach_from_tui(&mut cmd);
     let child = cmd
@@ -399,5 +451,34 @@ mod tests {
         assert!(args.contains(&"/tmp/c.config".to_string()));
         assert!(!args.contains(&consts::CLI_FLAG_UDP.to_string()));
         assert!(!args.contains(&consts::CLI_FLAG_FPS.to_string()));
+        assert!(!args.contains(&consts::CLI_FLAG_DEVICE_INDEX.to_string()));
+    }
+
+    #[test]
+    fn spawn_device_test_includes_indexes() {
+        let scope = TestScope {
+            config_index: Some(1),
+            device_index: Some(3),
+        };
+        let args = spawn_args_with_scope(
+            SessionKind::Test,
+            &PlayFlags::default(),
+            Path::new("/tmp/c.config"),
+            scope,
+        );
+        assert!(args.contains(&consts::CLI_FLAG_CONFIG_INDEX.to_string()));
+        assert!(args.contains(&"1".to_string()));
+        assert!(args.contains(&consts::CLI_FLAG_DEVICE_INDEX.to_string()));
+        assert!(args.contains(&"3".to_string()));
+    }
+
+    #[test]
+    fn test_success_exit_is_not_a_fault() {
+        use std::os::unix::process::ExitStatusExt;
+        let status = std::process::ExitStatus::from_raw(0);
+        assert_eq!(
+            session_exit_message(SessionKind::Test, status),
+            consts::MSG_TEST_FINISHED
+        );
     }
 }

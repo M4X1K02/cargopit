@@ -53,6 +53,7 @@ pub const MIN_TERMINAL_HEIGHT: u16 = 20;
 
 pub const STATUS_REFRESH_MS: u64 = 1000;
 pub const EVENT_POLL_MS: u64 = 200;
+pub const FLOW_HOLD_MS: u64 = 1000;
 pub const PROCESS_STOP_WAIT_MS: u64 = 1000;
 pub const PROCESS_KILL_PAUSE_MS: u64 = 100;
 pub const LOG_TAIL_MAX_LINES: usize = 500;
@@ -100,10 +101,11 @@ pub const NUDGE_FLOAT_LARGE: f64 = 0.2;
 pub const TAB_DASHBOARD: usize = 0;
 pub const TAB_DEVICES: usize = 1;
 pub const TAB_SETTINGS: usize = 2;
-pub const TAB_LOGS: usize = 3;
-pub const TAB_COUNT: usize = 4;
-pub const TAB_TITLES: [&str; TAB_COUNT] = ["Dashboard", "Devices", "Settings", "Logs"];
-pub const TAB_KEYS: [&str; TAB_COUNT] = ["1", "2", "3", "4"];
+pub const TAB_TELEMETRY: usize = 3;
+pub const TAB_LOGS: usize = 4;
+pub const TAB_COUNT: usize = 5;
+pub const TAB_TITLES: [&str; TAB_COUNT] = ["Dashboard", "Devices", "Settings", "Telemetry", "Logs"];
+pub const TAB_KEYS: [&str; TAB_COUNT] = ["1", "2", "3", "4", "5"];
 
 pub const KEY_QUIT: KeyCode = KeyCode::Char('q');
 pub const KEY_QUIT_UPPER: KeyCode = KeyCode::Char('Q');
@@ -140,6 +142,11 @@ pub const KEY_START: KeyCode = KeyCode::Char('1');
 pub const KEY_TAB2: KeyCode = KeyCode::Char('2');
 pub const KEY_TAB3: KeyCode = KeyCode::Char('3');
 pub const KEY_TAB4: KeyCode = KeyCode::Char('4');
+pub const KEY_TAB5: KeyCode = KeyCode::Char('5');
+pub const KEY_PAGE_UP: KeyCode = KeyCode::PageUp;
+pub const KEY_PAGE_DOWN: KeyCode = KeyCode::PageDown;
+pub const KEY_HOME: KeyCode = KeyCode::Home;
+pub const KEY_END: KeyCode = KeyCode::End;
 pub const KEY_BACKSPACE: KeyCode = KeyCode::Backspace;
 pub const KEY_CONFIRM_YES: KeyCode = KeyCode::Char('y');
 pub const KEY_CONFIRM_NO: KeyCode = KeyCode::Char('n');
@@ -346,6 +353,8 @@ pub const CLI_FLAG_DISABLE_AUDIO: &str = "--disable_audio";
 pub const CLI_FLAG_UDP: &str = "--udp";
 pub const CLI_FLAG_FPS: &str = "--fps";
 pub const CLI_FLAG_CONFIG_FILE: &str = "--config-file";
+pub const CLI_FLAG_DEVICE_INDEX: &str = "--device-index";
+pub const CLI_FLAG_CONFIG_INDEX: &str = "--config-index";
 pub const CLI_FLAG_LOG: &str = "--log";
 pub const CLI_CONFIG_TACHOMETER: &str = "config";
 pub const CLI_TACHOMETER: &str = "tachometer";
@@ -372,7 +381,13 @@ pub const ACTION_HINTS: &[&str] = &[
 
 pub const MSG_STARTED_PLAY: &str = "Started cargopit play";
 pub const MSG_STARTED_TEST: &str = "Started cargopit test";
+pub const MSG_STARTED_DEVICE_TEST: &str = "Started test for this device";
 pub const MSG_PLAY_ALREADY_RUNNING: &str = "cargopit play is already running";
+pub const MSG_TEST_ALREADY_RUNNING: &str = "cargopit test is already running";
+pub const MSG_TEST_FINISHED: &str = "Hardware test finished";
+pub const MSG_PLAY_EXITED: &str = "cargopit play exited";
+pub const MSG_TEST_FAILED: &str = "Hardware test failed";
+pub const MSG_PLAY_FAILED: &str = "cargopit play failed";
 pub const MSG_NO_SERVICES: &str = "No running services found to stop";
 
 pub const PROFILE_FIELD_SIM: usize = 0;
@@ -380,6 +395,8 @@ pub const PROFILE_FIELD_CAR: usize = 1;
 pub const PROFILE_FIELD_COUNT: usize = 2;
 
 pub const TOO_SMALL_TITLE: &str = "Terminal too small";
+pub const TEST_PANEL_IDLE: &str = "Idle - press t to test this device";
+pub const TEST_PANEL_RUNNING: &str = "Testing this device";
 pub const TUNING_OFFLINE_HINT: &str =
     "Offline tune: save writes disk. Apply restarts play if it was running. Live IPC is not implemented.";
 pub const RAW_VIEW_HINT: &str = "Read-only view of the last on-disk file (comments are lost on save).";
@@ -405,6 +422,7 @@ pub const MOTOR_CELL_GAP: &str = "            ";
 pub const MOTOR_ROW_INDENT: &str = "  ";
 pub const MOTOR_AXIS_INDENT: &str = "          ";
 pub const TITLE_DEVICE_EDITOR: &str = "Device editor";
+pub const TITLE_DEVICE_TEST: &str = "Device test";
 pub const TITLE_TUNE: &str = "Tune (offline)";
 pub const TITLE_PROFILE: &str = "Profile";
 pub const TITLE_TEMPLATES: &str = "Templates (insert)";
@@ -419,16 +437,40 @@ pub const TITLE_TYRES: &str = "Tyre diameters";
 pub const TITLE_DIAGNOSTICS: &str = "Diagnostics";
 pub const TITLE_RAW: &str = "On-disk cargopit.config";
 pub const TITLE_LOGS: &str = "Logs";
+pub const TITLE_TELEMETRY: &str = "Live telemetry";
+pub const TITLE_TELEMETRY_SESSION: &str = "Session";
+pub const TITLE_TELEMETRY_CONTROLS: &str = "Controls";
 pub const LABEL_SIMAPI: &str = "SIMAPI";
 pub const SIMAPI_LIVE: &str = "live";
-pub const SIMAPI_ZEROED: &str = "zeroed";
+pub const SIMAPI_MAPPED: &str = "mapped";
 pub const SIMAPI_MISSING: &str = "missing";
 pub const LABEL_NO_SIM: &str = "no sim";
+pub const LABEL_TEST: &str = "test";
 pub const LABEL_SIM_ID: &str = "sim";
 pub const LABEL_TELEMETRY_LIVE: &str = "live";
+pub const LABEL_TELEMETRY_RUNNING: &str = "running";
 pub const LABEL_TELEMETRY_IDLE: &str = "idle";
 pub const LABEL_TELEMETRY_MENU: &str = "menu";
 pub const LABEL_RPM: &str = "rpm";
+pub const LABEL_GEAR: &str = "gear";
+pub const LABEL_THROTTLE: &str = "throttle";
+pub const LABEL_BRAKE: &str = "brake";
+pub const LABEL_CLUTCH: &str = "clutch";
+pub const LABEL_STEER: &str = "steer";
+pub const LABEL_FUEL: &str = "fuel";
+pub const LABEL_LAP: &str = "lap";
+pub const LABEL_POSITION: &str = "pos";
+pub const LABEL_VELOCITY: &str = "speed";
+pub const LABEL_ABS: &str = "abs";
+pub const LABEL_MTICK: &str = "mtick";
+pub const LABEL_CAR: &str = "car";
+pub const LABEL_TRACK: &str = "track";
+pub const LABEL_MAXRPM: &str = "redline";
+pub const LABEL_LOCAL_VEL: &str = "local vel";
+pub const TELEMETRY_GEARC_LEN: usize = 4;
+pub const TELEMETRY_NAME_LEN: usize = 32;
+pub const TELEMETRY_DASH_VALUE: &str = "—";
+pub const TELEMETRY_LABEL_WIDTH: usize = 10;
 pub const LABEL_DEVICES: &str = "devices";
 pub const LABEL_CONNECTED: &str = "connected";
 pub const LABEL_MISSING: &str = "missing";
@@ -444,9 +486,15 @@ pub const LABEL_MOTOR_FR: &str = "M2";
 pub const LABEL_MOTOR_RR: &str = "M3";
 pub const LABEL_MOTOR_RL: &str = "M4";
 pub const LOG_FILTER_PREFIX: &str = "filter=";
+pub const SLOG_TAG_ERROR: &str = "<error>";
+pub const SLOG_TAG_WARN: &str = "<warn>";
+pub const SLOG_TAG_FATAL: &str = "<fatal>";
+pub const SLOG_TAG_INFO: &str = "<info>";
+pub const ANSI_ESC: char = '\u{1b}';
+pub const ANSI_CSI: char = '[';
 pub const STATUS_SEP: &str = " │ ";
 pub const PIPELINE_ARROW: &str = " ──► ";
-pub const TELEMETRY_FLOW_FRAMES: [&str; 3] = [" ──► ", " ─►─ ", " ►── "];
+pub const TELEMETRY_FLOW_FRAMES: [&str; 4] = ["►─── ", "─►── ", "──►─ ", "───► "];
 pub const TELEMETRY_PULSE_ON: &str = "◉";
 pub const TELEMETRY_PULSE_OFF: &str = "●";
 pub const LED_ON: &str = "●";
@@ -466,18 +514,20 @@ pub const FIELD_LABEL_WIDTH: usize = 16;
 pub const TAB_PAD: &str = " ";
 pub const TAB_ACTIVE_LEFT: &str = "[";
 pub const TAB_ACTIVE_RIGHT: &str = "]";
-pub const HELP_DASHBOARD: &str = "Tab/1-4 pages  j/k select  Enter run  q quit";
+pub const HELP_DASHBOARD: &str = "Tab/1-5 pages  j/k select  Enter run  q quit";
+pub const HELP_TELEMETRY: &str = "Tab/1-5 pages  live SIMAPI sample  q quit";
 pub const HELP_DEVICES: &str =
     "j/k list  a add  e edit  y dup  d del  space enable  J/K move  T template  Enter tune  [ ] profile";
 pub const HELP_SETTINGS: &str = "j/k  Enter open  Esc back  q quit";
 pub const HELP_LOGS: &str = "j/k scroll  space filter  q quit";
 pub const HELP_FORM: &str =
-    "j/k field  h/l cycle  Enter type  Bksp unset  s save  t test  Esc cancel";
-pub const HELP_TUNE: &str = "h/l nudge  Bksp unset  s save  A apply/restart  Esc back";
+    "j/k field  h/l cycle  Enter type  Bksp unset  s save  t test this device  Esc cancel";
+pub const HELP_TUNE: &str =
+    "h/l nudge  Bksp unset  s save  t test this device  A apply/restart  Esc back";
 pub const HELP_CONFIRM: &str = "y confirm  n/Esc cancel";
 pub const HELP_BACK: &str = "Esc back  q quit";
 pub const HELP_FLAGS: &str = "j/k field  h/l cycle  Bksp unset  s save  Esc cancel";
-pub const HELP_SIMD: &str = "j/k sim  a add  d delete  s save  Esc back";
+pub const HELP_SIMD: &str = "h/l/wheel columns  j/k rows  a add  d delete  s save  Esc back";
 pub const HELP_LUA: &str = "j/k template  Enter copy into ~/.config/cargopit  Esc back";
 pub const HELP_TACH: &str = "j/k field  h/l nudge  Enter generate XML  Esc back";
 pub const HELP_TYRES: &str = "j/k car  a add  d delete  s save  Esc back";
@@ -490,7 +540,6 @@ pub const CONFIRM_DISCARD_UNSAVED: &str = "Unsaved changes. Discard without savi
 pub const PROFILE_HINT: &str = "a add empty profile   y duplicate current   Enter/s save   Esc cancel";
 pub const SIMD_EMPTY: &str = "No simd.config — press a to create from the simapi example.";
 pub const SIMD_UNNAMED: &str = "(unnamed)";
-pub const SIMD_NO_FIELDS: &str = "No fields in this sim entry.";
 pub const FLAG_LOG_DEFAULT: &str = "(default)";
 pub const FIELD_UNSET: &str = "(unset)";
 
@@ -501,13 +550,18 @@ pub const LAYOUT_BORDER_LINES: u16 = 2;
 pub const LAYOUT_DASHBOARD_PIPELINE_HEIGHT: u16 = 7;
 pub const LAYOUT_DASHBOARD_SPLIT_LEFT: u16 = 55;
 pub const LAYOUT_DASHBOARD_SPLIT_RIGHT: u16 = 45;
+pub const LAYOUT_TELEMETRY_SPLIT_LEFT: u16 = 50;
+pub const LAYOUT_TELEMETRY_SPLIT_RIGHT: u16 = 50;
 pub const LAYOUT_FORM_DIAGRAM_WIDTH: u16 = 34;
 pub const LAYOUT_FORM_LIST_MIN: u16 = 36;
 pub const LAYOUT_FORM_HELP_HEIGHT: u16 = 8;
+pub const LAYOUT_FORM_TEST_MIN_HEIGHT: u16 = 10;
+pub const LAYOUT_FORM_DIAGRAM_MIN_HEIGHT: u16 = 6;
 pub const LAYOUT_TYRE_DIAGRAM_WIDTH: u16 = 28;
 pub const LAYOUT_CONFIRM_WIDTH: u16 = 56;
 pub const LAYOUT_CONFIRM_HEIGHT: u16 = 5;
 pub const LIST_HIGHLIGHT_SYMBOL: &str = "▸ ";
+pub const LIST_HIGHLIGHT_WIDTH: u16 = 2;
 pub const MOTOR_SLOT_COUNT: usize = 4;
 pub const ACTION_COLUMN_WIDTH: usize = 10;
 pub const LABEL_YES: &str = "yes";
@@ -558,6 +612,28 @@ pub const SIMD_FIELD_LIVEEXE: &str = "liveexe";
 pub const SIMD_FIELD_BRIDGEDELAY: &str = "bridgedelay";
 pub const SIMD_FIELD_SIMAPI: &str = "simapi";
 pub const SIMD_FIELD_USEUDP: &str = "useudp";
+pub const SIMD_FIELD_COUNT: usize = 7;
+pub const SIMD_TABLE_COLUMNS: [&str; SIMD_FIELD_COUNT] = [
+    SIMD_FIELD_NAME,
+    SIMD_FIELD_GAMEID,
+    SIMD_FIELD_LAUNCHEXE,
+    SIMD_FIELD_LIVEEXE,
+    SIMD_FIELD_BRIDGEDELAY,
+    SIMD_FIELD_SIMAPI,
+    SIMD_FIELD_USEUDP,
+];
+pub const SIMD_VALUE_COMPLEX: &str = "?";
+pub const SIMD_COL_NAME_MIN: u16 = 16;
+pub const SIMD_COL_GAMEID: u16 = 7;
+pub const SIMD_COL_EXE_MIN: u16 = 10;
+pub const SIMD_COL_BRIDGE: u16 = 11;
+pub const SIMD_COL_SIMAPI: u16 = 6;
+pub const SIMD_COL_USEUDP: u16 = 6;
+pub const SIMD_COL_EXTRA_MIN: u16 = 8;
+pub const SIMD_COL_SPACING: u16 = 1;
+pub const LAYOUT_SIMD_TABLE_MIN: u16 = 6;
+pub const LAYOUT_SIMD_HELP_HEIGHT: u16 = 5;
+pub const SIMD_PAGE_ROWS: usize = 8;
 
 pub const SIMD_FIELD_HELP: &[(&str, &str)] = &[
     (SIMD_FIELD_NAME, "Simulator title as simd matches it"),
@@ -584,7 +660,7 @@ pub const SIMULATOR_API_LMU: u8 = 10;
 pub const SIMULATOR_API_WRECKFEST2: u8 = 11;
 pub const SIMULATOR_API_RBR: u8 = 12;
 pub const SIMULATOR_API_LABELS: &[(u8, &str)] = &[
-    (SIMULATOR_API_TEST, "simapi test"),
+    (SIMULATOR_API_TEST, LABEL_TEST),
     (SIMULATOR_API_ASSETTO_CORSA, "Assetto Corsa"),
     (SIMULATOR_API_RFACTOR2, "rFactor 2"),
     (SIMULATOR_API_PROJECTCARS2, "Project CARS 2"),

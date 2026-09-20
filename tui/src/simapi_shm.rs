@@ -13,17 +13,71 @@ use crate::consts;
 use crate::simd_config::SimdConfig;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TelemetryView {
     pub mtick: u64,
     pub simexe: u64,
     pub simstatus: u32,
     pub velocity: u32,
     pub rpms: u32,
+    pub gear: u32,
+    pub maxrpm: u32,
+    pub idlerpm: u32,
+    pub lap: u32,
+    pub position: u32,
+    pub numlaps: u32,
     pub simapi: u8,
     pub simon: u8,
     pub simapiversion: u8,
     pub valid: u8,
+    pub gearc: [u8; consts::TELEMETRY_GEARC_LEN],
+    pub car: [u8; consts::TELEMETRY_NAME_LEN],
+    pub track: [u8; consts::TELEMETRY_NAME_LEN],
+    pub gas: f64,
+    pub brake: f64,
+    pub clutch: f64,
+    pub steer: f64,
+    pub fuel: f64,
+    pub fuelcapacity: f64,
+    pub abs: f64,
+    pub xvelocity: f64,
+    pub yvelocity: f64,
+    pub zvelocity: f64,
+}
+
+impl Default for TelemetryView {
+    fn default() -> Self {
+        Self {
+            mtick: 0,
+            simexe: 0,
+            simstatus: 0,
+            velocity: 0,
+            rpms: 0,
+            gear: 0,
+            maxrpm: 0,
+            idlerpm: 0,
+            lap: 0,
+            position: 0,
+            numlaps: 0,
+            simapi: 0,
+            simon: 0,
+            simapiversion: 0,
+            valid: 0,
+            gearc: [0; consts::TELEMETRY_GEARC_LEN],
+            car: [0; consts::TELEMETRY_NAME_LEN],
+            track: [0; consts::TELEMETRY_NAME_LEN],
+            gas: 0.0,
+            brake: 0.0,
+            clutch: 0.0,
+            steer: 0.0,
+            fuel: 0.0,
+            fuelcapacity: 0.0,
+            abs: 0.0,
+            xvelocity: 0.0,
+            yvelocity: 0.0,
+            zvelocity: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,14 +118,38 @@ pub fn write_fixture(bytes: &mut [u8], view: &TelemetryView) -> bool {
     rc == 0
 }
 
-pub fn telemetry_sending(view: &TelemetryView, mtick_changed: bool) -> bool {
-    if view.valid == 0 || view.simon == 0 {
+pub fn c_string(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FlowSnapshot {
+    pub mtick: u64,
+    pub rpms: u32,
+    pub velocity: u32,
+    pub simstatus: u32,
+    pub simon: u8,
+}
+
+pub fn flow_snapshot(view: &TelemetryView) -> FlowSnapshot {
+    FlowSnapshot {
+        mtick: view.mtick,
+        rpms: view.rpms,
+        velocity: view.velocity,
+        simstatus: view.simstatus,
+        simon: view.simon,
+    }
+}
+
+pub fn telemetry_sending(view: &TelemetryView, prev: Option<FlowSnapshot>) -> bool {
+    if view.valid == 0 {
         return false;
     }
-    if view.simstatus < consts::SIMAPI_STATUS_ACTIVEPLAY {
-        return false;
+    match prev {
+        Some(prev) => flow_snapshot(view) != prev,
+        None => false,
     }
-    mtick_changed
 }
 
 pub fn status_label(view: &TelemetryView, sending: bool) -> &'static str {
@@ -84,7 +162,10 @@ pub fn status_label(view: &TelemetryView, sending: bool) -> &'static str {
     if view.simstatus == consts::SIMAPI_STATUS_MENU {
         return consts::LABEL_TELEMETRY_MENU;
     }
-    consts::LABEL_TELEMETRY_IDLE
+    if view.simon != 0 || view.simstatus >= consts::SIMAPI_STATUS_ACTIVEPLAY {
+        return consts::LABEL_TELEMETRY_IDLE;
+    }
+    consts::LABEL_TELEMETRY_RUNNING
 }
 
 pub fn simulator_api_label(simapi: u8) -> Option<&'static str> {
@@ -101,10 +182,18 @@ pub fn resolve_games(
     extra: &[RunningGame],
 ) -> Vec<RunningGame> {
     if view.valid == 0 {
-        return extra.to_vec();
+        return with_flow(extra, sending);
     }
-    if view.simexe == 0 && view.simapi == 0 && view.simon == 0 {
-        return extra.to_vec();
+    if !shm_has_identity(view) {
+        if extra.is_empty() && view.simon != 0 {
+            return vec![RunningGame {
+                name: consts::LABEL_TEST.to_string(),
+                game_id: 0,
+                sending,
+                status_label: status_label(view, sending),
+            }];
+        }
+        return with_flow(extra, sending);
     }
     let mut games = Vec::new();
     games.push(RunningGame {
@@ -120,9 +209,42 @@ pub fn resolve_games(
         if game.game_id == 0 && games.iter().any(|item| item.name == game.name) {
             continue;
         }
-        games.push(game.clone());
+        games.push(with_flow_one(game, sending));
     }
     games
+}
+
+fn shm_has_identity(view: &TelemetryView) -> bool {
+    view.simexe != 0 || view.simapi != 0
+}
+
+fn with_flow(games: &[RunningGame], sending: bool) -> Vec<RunningGame> {
+    games.iter().map(|game| with_flow_one(game, sending)).collect()
+}
+
+pub fn games_with_flow(games: &[RunningGame], sending: bool) -> Vec<RunningGame> {
+    with_flow(games, sending)
+}
+
+pub fn flow_hold_active(last_flow: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    match last_flow {
+        Some(at) => {
+            now.saturating_duration_since(at) <= std::time::Duration::from_millis(consts::FLOW_HOLD_MS)
+        }
+        None => false,
+    }
+}
+
+fn with_flow_one(game: &RunningGame, sending: bool) -> RunningGame {
+    if !sending {
+        return game.clone();
+    }
+    RunningGame {
+        name: game.name.clone(),
+        game_id: game.game_id,
+        sending: true,
+        status_label: consts::LABEL_TELEMETRY_LIVE,
+    }
 }
 
 fn display_name(simd: &SimdConfig, view: &TelemetryView) -> String {
@@ -300,7 +422,7 @@ pub fn extras_from_listing(simd: &SimdConfig, listing: &str) -> Vec<RunningGame>
             name: sim.name().to_string(),
             game_id: sim.game_id().unwrap_or(0),
             sending: false,
-            status_label: consts::LABEL_TELEMETRY_IDLE,
+            status_label: consts::LABEL_TELEMETRY_RUNNING,
         });
     }
     extras
@@ -339,10 +461,14 @@ mod tests {
             simstatus: consts::SIMAPI_STATUS_ACTIVEPLAY,
             velocity: 12,
             rpms: 4500,
+            gear: 3,
+            maxrpm: 8000,
+            gas: 0.4,
             simapi: 1,
             simon: 1,
             simapiversion: consts::SIMAPI_VERSION,
             valid: 1,
+            ..TelemetryView::default()
         };
         assert!(write_fixture(&mut buf, &input));
         let parsed = read_simdata(&buf).expect("view");
@@ -351,18 +477,98 @@ mod tests {
         assert_eq!(parsed.simstatus, input.simstatus);
         assert_eq!(parsed.rpms, input.rpms);
         assert_eq!(parsed.simon, 1);
+        assert_eq!(parsed.gear, input.gear);
+        assert_eq!(parsed.gas, input.gas);
     }
 
     #[test]
-    fn sending_requires_mtick_change() {
+    fn flow_hold_covers_the_window() {
+        let now = std::time::Instant::now();
+        assert!(!flow_hold_active(None, now));
+        assert!(flow_hold_active(Some(now), now));
+        let still = now
+            .checked_sub(std::time::Duration::from_millis(consts::FLOW_HOLD_MS))
+            .unwrap_or(now);
+        assert!(flow_hold_active(Some(still), now));
+        let expired = now
+            .checked_sub(std::time::Duration::from_millis(consts::FLOW_HOLD_MS + 1))
+            .unwrap_or(now);
+        if still != expired {
+            assert!(!flow_hold_active(Some(expired), now));
+        }
+    }
+
+    #[test]
+    fn sending_requires_a_field_change() {
         let view = TelemetryView {
+            valid: 1,
+            mtick: 10,
+            rpms: 100,
+            ..TelemetryView::default()
+        };
+        assert!(!telemetry_sending(&view, None));
+        assert!(!telemetry_sending(&view, Some(flow_snapshot(&view))));
+        let prev = FlowSnapshot {
+            mtick: 9,
+            rpms: 100,
+            ..FlowSnapshot::default()
+        };
+        assert!(telemetry_sending(&view, Some(prev)));
+        let rpm_prev = FlowSnapshot {
+            mtick: 10,
+            rpms: 90,
+            ..FlowSnapshot::default()
+        };
+        assert!(telemetry_sending(&view, Some(rpm_prev)));
+        let blank = TelemetryView::default();
+        assert!(!telemetry_sending(&blank, Some(FlowSnapshot::default())));
+    }
+
+    #[test]
+    fn blank_shm_still_animates_process_games_when_flowing() {
+        let simd = simd_with("DirtRally2", 690790, "dirtrally2.exe");
+        let extras = extras_from_listing(&simd, "  PID COMM ARGS\n  1 wine dirtrally2.exe\n");
+        let view = TelemetryView {
+            valid: 1,
+            ..TelemetryView::default()
+        };
+        let live = resolve_games(&simd, &view, true, &extras);
+        assert_eq!(live[0].name, "DirtRally2");
+        assert!(live[0].sending);
+        assert_eq!(live[0].status_label, consts::LABEL_TELEMETRY_LIVE);
+        let parked = resolve_games(&simd, &view, false, &extras);
+        assert!(!parked[0].sending);
+        assert_eq!(parked[0].status_label, consts::LABEL_TELEMETRY_RUNNING);
+        let named_but_blank_api = TelemetryView {
             valid: 1,
             simon: 1,
             simstatus: consts::SIMAPI_STATUS_ACTIVEPLAY,
+            mtick: 8,
             ..TelemetryView::default()
         };
-        assert!(!telemetry_sending(&view, false));
-        assert!(telemetry_sending(&view, true));
+        let flowing = resolve_games(&simd, &named_but_blank_api, true, &extras);
+        assert_eq!(flowing[0].name, "DirtRally2");
+        assert!(flowing[0].sending);
+        assert_eq!(flowing[0].status_label, consts::LABEL_TELEMETRY_LIVE);
+    }
+
+    #[test]
+    fn extras_from_listing_are_running_not_idle() {
+        let simd = simd_with("DirtRally2", 690790, "dirtrally2.exe");
+        let listing = "  PID COMM ARGS\n  1 wine dirtrally2.exe -novr\n";
+        let extras = extras_from_listing(&simd, listing);
+        assert_eq!(extras.len(), 1);
+        assert_eq!(extras[0].name, "DirtRally2");
+        assert!(!extras[0].sending);
+        assert_eq!(extras[0].status_label, consts::LABEL_TELEMETRY_RUNNING);
+        let blank = TelemetryView {
+            valid: 1,
+            ..TelemetryView::default()
+        };
+        let games = resolve_games(&simd, &blank, false, &extras);
+        assert_eq!(games[0].name, "DirtRally2");
+        assert_eq!(games[0].status_label, consts::LABEL_TELEMETRY_RUNNING);
+        assert!(!games[0].sending);
     }
 
     #[test]
@@ -379,6 +585,21 @@ mod tests {
         let games = resolve_games(&simd, &view, true, &[]);
         assert_eq!(games.len(), 1);
         assert_eq!(games[0].name, "Assetto Corsa");
+        assert!(games[0].sending);
+    }
+
+    #[test]
+    fn resolve_games_labels_simapi_test() {
+        let simd = simd_with("Assetto Corsa", 244210, "acs.exe");
+        let view = TelemetryView {
+            valid: 1,
+            simon: 1,
+            simapi: consts::SIMULATOR_API_TEST,
+            simstatus: consts::SIMAPI_STATUS_ACTIVEPLAY,
+            ..TelemetryView::default()
+        };
+        let games = resolve_games(&simd, &view, true, &[]);
+        assert_eq!(games[0].name, consts::LABEL_TEST);
         assert!(games[0].sending);
     }
 
