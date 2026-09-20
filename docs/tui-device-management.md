@@ -63,7 +63,7 @@ Play and test load **one** selected `configs[]` index (`--config-index`, default
 | `numlights` | ShiftLights | **No** |
 | `granularity` | Tachometer (`1`, `2`, `4` — not `3`) | Tachometer |
 | `volume` / `streamVolume` | Sound; C prefers `streamVolume`, falls back to `volume`, clamp `0..100` | Volume (nudge writes both) |
-| `pan` / `channels` / `noise` | Sound | Yes |
+| `channelMask` / `pan` / `channels` / `noise` | Sound. `channelMask` is the speaker bitfield; legacy `pan` index/`-1` still loads | Output (←→ + space), Channels combo 1/2/4/6/8 |
 | `value0` / `value1` | Present in `conf/cargopit.config` CSL Elite examples | **No**, and **C never reads them** (colours are hardcoded in `cslelitev3.c`) |
 
 USB hardware list in `USB_HARDWARE_SUBTYPES` is also incomplete versus `strtodevsubsubtype()`: missing `SIMAGICGTNEO` and the `MozaR9` alias (`MozaNew`).
@@ -161,7 +161,7 @@ class USB:
 class Sound:
   types: Haptic
   identity: Pulse/PipeWire sink (name + description)
-  volume via streamVolume (0..100), pan, channels, noise, haptic block
+  volume via streamVolume (0..100), channelMask/output speakers, channels, noise, haptic block
 
 class Serial:
   types: ShiftLights | SimWind | Haptic | Wheel | Simleds | Custom

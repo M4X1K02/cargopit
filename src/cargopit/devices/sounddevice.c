@@ -409,7 +409,7 @@ int sounddev_init(SoundDevice* sounddevice, const char* devname, SoundDeviceSett
 
 
     slogi("pipewire stream volume is: %i", sds.volume);
-    slogi("pan is: %i", sds.pan);
+    slogi("channel mask is: %u", sds.channelmask);
     slogi("channels is: %i", sds.channels);
     slogi("noise is: %i", sds.noise);
 
@@ -474,7 +474,7 @@ int sounddev_init(SoundDevice* sounddevice, const char* devname, SoundDeviceSett
     // shook. Being undefined behaviour it varied by build, which is why the
     // same config worked against a locally compiled cargopit and not the
     // packaged one.
-    return usb_generic_shaker_init(sounddevice, mainloop, context, devname, sds.volume, sds.pan, sds.channels, streamname);
+    return usb_generic_shaker_init(sounddevice, mainloop, context, devname, sds.volume, sds.channelmask, sds.channels, streamname);
 }
 
 static const vtable engine_sound_simdevice_vtable = { &sounddev_engine_update, &sounddev_free };

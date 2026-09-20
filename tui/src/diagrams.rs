@@ -269,28 +269,49 @@ pub fn led_strip(count: i64, start: i64, end: i64) -> Line<'static> {
     Line::from(spans)
 }
 
-pub fn pan_line(pan: i64, channels: i64) -> Line<'static> {
-    let slots = channels.max(2);
-    let marker = pan.clamp(0, slots.saturating_sub(1));
-    let mut spans = vec![Span::styled(
-        format!("{} ", consts::LABEL_PAN_LEFT),
-        theme::style_muted(),
-    )];
+pub fn pan_compact_line(mask: u32, channels: i64, focus: Option<usize>) -> Line<'static> {
+    pan_channel_line(mask, channels, focus, false)
+}
+
+pub fn pan_legend_line(mask: u32, channels: i64, focus: Option<usize>) -> Line<'static> {
+    pan_channel_line(mask, channels, focus, true)
+}
+
+fn pan_channel_line(
+    mask: u32,
+    channels: i64,
+    focus: Option<usize>,
+    labeled: bool,
+) -> Line<'static> {
+    let slots = channels.clamp(
+        consts::SOUND_CHANNEL_COUNT_MIN,
+        consts::SOUND_CHANNEL_COUNT_MAX,
+    ) as usize;
+    let mut spans = Vec::new();
     for index in 0..slots {
-        let on = index == marker;
-        let glyph = if on {
-            consts::LED_ON.to_string()
-        } else {
-            consts::GAUGE_EMPTY.to_string()
-        };
-        let style = if on {
+        if index > 0 {
+            spans.push(Span::raw(consts::SOUND_OUTPUT_SEP.to_string()));
+        }
+        let on = mask & schema::sound_channel_bit(index as i64) != 0;
+        let glyph = if on { consts::LED_ON } else { consts::LED_OFF };
+        let focused = focus == Some(index);
+        let style = if focused {
+            theme::style_selected()
+        } else if on {
             theme::style_ok()
         } else {
             theme::style_muted()
         };
-        spans.push(Span::styled(format!("{glyph} "), style));
+        let text = if labeled {
+            format!(
+                "{}{glyph}",
+                schema::sound_channel_label(slots as i64, index)
+            )
+        } else {
+            glyph.to_string()
+        };
+        spans.push(Span::styled(text, style));
     }
-    spans.push(Span::styled(consts::LABEL_PAN_RIGHT, theme::style_muted()));
     Line::from(spans)
 }
 
@@ -397,9 +418,6 @@ pub fn field_ratio(device: &DeviceEntry, field: FieldId) -> Option<f64> {
         FieldId::Noise => device
             .get_i64(consts::KEY_NOISE)
             .map(|v| int_ratio(v, consts::GAUGE_NOISE_MAX as i64)),
-        FieldId::Channels => device
-            .get_i64(consts::KEY_CHANNELS)
-            .map(|v| int_ratio(v, consts::GAUGE_CHANNELS_MAX as i64)),
         FieldId::Baud => device
             .get_i64(consts::KEY_BAUD)
             .map(|v| int_ratio(v, consts::GAUGE_BAUD_MAX as i64)),
@@ -415,14 +433,6 @@ pub fn field_ratio(device: &DeviceEntry, field: FieldId) -> Option<f64> {
         FieldId::Ampfactor => device
             .get_f64(consts::KEY_AMPFACTOR)
             .map(|v| v / consts::GAUGE_AMPFACTOR_MAX),
-        FieldId::Pan => {
-            let pan = device.get_i64(consts::KEY_PAN)?;
-            let channels = device
-                .get_i64(consts::KEY_CHANNELS)
-                .unwrap_or(consts::DEFAULT_CHANNELS)
-                .max(1);
-            Some(int_ratio(pan, channels.saturating_sub(1).max(1)))
-        }
         _ => None,
     }
 }
@@ -500,17 +510,13 @@ fn led_device_line(device: &DeviceEntry, type_name: &str) -> Line<'static> {
 
 fn sound_gauge_lines(device: &DeviceEntry) -> Vec<Line<'static>> {
     let volume = field_ratio(device, FieldId::Volume).unwrap_or(0.0);
-    let channels = device
-        .get_i64(consts::KEY_CHANNELS)
-        .unwrap_or(consts::DEFAULT_CHANNELS);
-    let pan = device
-        .get_i64(consts::KEY_PAN)
-        .unwrap_or(consts::DEFAULT_PAN);
+    let channels = schema::sound_channel_count(device);
+    let mask = schema::sound_resolve_channel_mask(device);
     vec![
         Line::from(Span::styled(FieldId::Volume.label(), theme::style_title())),
         Line::from(theme::bar(volume, consts::GAUGE_WIDTH)),
         Line::from(Span::styled(FieldId::Pan.label(), theme::style_title())),
-        pan_line(pan, channels),
+        pan_legend_line(mask, channels, None),
     ]
 }
 

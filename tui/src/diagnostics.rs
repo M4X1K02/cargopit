@@ -22,6 +22,44 @@ pub struct Diagnostics {
     pub missing: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthScore {
+    pub met: usize,
+    pub total: usize,
+}
+
+impl HealthScore {
+    pub fn ratio(self) -> f64 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        (self.met as f64 / self.total as f64).clamp(0.0, 1.0)
+    }
+
+    pub fn all_met(self) -> bool {
+        self.total > 0 && self.met == self.total
+    }
+
+    pub fn label(self) -> String {
+        if self.all_met() {
+            return consts::HEALTH_LABEL_READY.to_string();
+        }
+        format!("{}/{}", self.met, self.total)
+    }
+}
+
+pub fn health_score(simd: bool, pit: bool, simapi: bool, devices_ok: bool) -> HealthScore {
+    let checks = [simd, pit, simapi, devices_ok];
+    HealthScore {
+        met: checks.iter().filter(|check| **check).count(),
+        total: checks.len(),
+    }
+}
+
+pub fn devices_healthy(configured: usize, missing: usize) -> bool {
+    configured > 0 && missing == 0
+}
+
 pub fn collect(discovery: &Discovery, devices: &[(DeviceClass, String, String)]) -> Diagnostics {
     let mut diag = collect_host();
     apply_presence(&mut diag, discovery, devices);
@@ -113,4 +151,34 @@ pub fn copy_lua_template(name: &str) -> anyhow::Result<std::path::PathBuf> {
     let dest = dest_dir.join(name);
     std::fs::copy(&src, &dest)?;
     Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn health_score_counts_services_and_devices() {
+        let none = health_score(false, false, false, false);
+        assert_eq!(none.total, consts::HEALTH_CHECK_COUNT);
+        assert_eq!(none.met, 0);
+        assert_eq!(none.label(), format!("0/{}", consts::HEALTH_CHECK_COUNT));
+        assert!(!none.all_met());
+
+        let services = health_score(true, true, true, false);
+        assert_eq!(services.met, 3);
+        assert!(!services.all_met());
+
+        let ready = health_score(true, true, true, true);
+        assert!(ready.all_met());
+        assert_eq!(ready.label(), consts::HEALTH_LABEL_READY);
+        assert_eq!(ready.ratio(), 1.0);
+    }
+
+    #[test]
+    fn devices_healthy_requires_configured_and_none_missing() {
+        assert!(!devices_healthy(0, 0));
+        assert!(!devices_healthy(2, 1));
+        assert!(devices_healthy(2, 0));
+    }
 }

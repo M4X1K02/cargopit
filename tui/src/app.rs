@@ -488,7 +488,7 @@ impl App {
             return Ok(());
         }
         if is_profile_cycle_key(key.code) && is_main_tab(&self.screen) {
-            let delta = if key.code == consts::KEY_PREV_PROFILE {
+            let delta = if matches!(key.code, consts::KEY_PREV_PROFILE | consts::KEY_LEFT) {
                 -1
             } else {
                 1
@@ -498,12 +498,12 @@ impl App {
         }
         match self.screen {
             Screen::Dashboard => self.handle_dashboard(key.code),
-            Screen::Devices => self.handle_devices(key.code),
+            Screen::Devices => self.handle_devices(key),
             Screen::Settings => self.handle_settings(key.code),
             Screen::Telemetry => self.handle_telemetry(key.code),
             Screen::Logs => self.handle_logs(key.code),
             Screen::DeviceForm => self.handle_form(key.code)?,
-            Screen::DeviceTune => self.handle_tune(key.code)?,
+            Screen::DeviceTune => self.handle_tune(key)?,
             Screen::ProfileEdit => self.handle_profile_edit(key.code)?,
             Screen::TemplatePicker => self.handle_templates(key.code),
             Screen::Confirm(ref kind) => self.handle_confirm(key.code, kind.clone())?,
@@ -564,7 +564,9 @@ impl App {
                 self.dashboard_index =
                     wrap_index(self.dashboard_index, consts::DASHBOARD_ACTIONS.len(), 1);
             }
-            consts::KEY_ENTER => self.run_dashboard_action(self.dashboard_index),
+            consts::KEY_ENTER | consts::KEY_SPACE => {
+                self.run_dashboard_action(self.dashboard_index)
+            }
             consts::KEY_TEST => self.toggle_test(),
             _ => {}
         }
@@ -725,11 +727,24 @@ impl App {
         self.message = consts::MSG_STOPPED_TEST.into();
     }
 
-    fn handle_devices(&mut self, code: KeyCode) {
-        match code {
+    fn handle_devices(&mut self, key: KeyEvent) {
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        match key.code {
             consts::KEY_QUIT | consts::KEY_QUIT_UPPER => self.should_quit = true,
-            consts::KEY_UP | consts::KEY_K => self.move_device(-1),
-            consts::KEY_DOWN | consts::KEY_J => self.move_device(1),
+            consts::KEY_UP | consts::KEY_K => {
+                if shift {
+                    self.reorder_device(-1);
+                } else {
+                    self.move_device(-1);
+                }
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                if shift {
+                    self.reorder_device(1);
+                } else {
+                    self.move_device(1);
+                }
+            }
             consts::KEY_G_UPPER => self.reorder_device(1),
             consts::KEY_K_UPPER => self.reorder_device(-1),
             consts::KEY_SPACE => self.toggle_enabled(),
@@ -852,6 +867,7 @@ impl App {
             consts::KEY_RIGHT | consts::KEY_L | consts::KEY_PLUS | consts::KEY_EQUALS => {
                 self.form.cycle_current(&self.discovery, 1);
             }
+            consts::KEY_SPACE => self.form.activate_current(&self.discovery),
             consts::KEY_ENTER => self.form.begin_edit(),
             consts::KEY_SAVE => self.save_form()?,
             consts::KEY_BACKSPACE => self.form.clear_current(),
@@ -911,9 +927,10 @@ impl App {
         true
     }
 
-    fn handle_tune(&mut self, code: KeyCode) -> Result<()> {
+    fn handle_tune(&mut self, key: KeyEvent) -> Result<()> {
         let fields = tune_fields(&self.form);
-        match code {
+        let large = key.modifiers.contains(KeyModifiers::SHIFT);
+        match key.code {
             consts::KEY_ESC => self.leave_or_confirm_discard(),
             consts::KEY_UP | consts::KEY_K => {
                 self.tune_index = wrap_index(self.tune_index, fields.len().max(1), -1);
@@ -924,13 +941,27 @@ impl App {
             consts::KEY_LEFT | consts::KEY_H | consts::KEY_MINUS => {
                 if let Some(field) = fields.get(self.tune_index).copied() {
                     self.form.field_index = index_of_field(&self.form, field);
-                    self.form.nudge(field, -1, true);
+                    if field == FieldId::Pan {
+                        self.form.move_output_slot(-1);
+                    } else {
+                        self.form.nudge(field, -1, large);
+                    }
                 }
             }
             consts::KEY_RIGHT | consts::KEY_L | consts::KEY_PLUS | consts::KEY_EQUALS => {
                 if let Some(field) = fields.get(self.tune_index).copied() {
                     self.form.field_index = index_of_field(&self.form, field);
-                    self.form.nudge(field, 1, true);
+                    if field == FieldId::Pan {
+                        self.form.move_output_slot(1);
+                    } else {
+                        self.form.nudge(field, 1, large);
+                    }
+                }
+            }
+            consts::KEY_SPACE => {
+                if let Some(field) = fields.get(self.tune_index).copied() {
+                    self.form.field_index = index_of_field(&self.form, field);
+                    self.form.activate_current(&self.discovery);
                 }
             }
             consts::KEY_BACKSPACE => {
@@ -1015,7 +1046,7 @@ impl App {
             consts::KEY_DOWN | consts::KEY_J => {
                 self.template_index = wrap_index(self.template_index, count, 1);
             }
-            consts::KEY_ENTER => {
+            consts::KEY_ENTER | consts::KEY_SPACE => {
                 self.open_confirm(ConfirmKind::ApplyTemplate(self.template_index));
             }
             _ => {}
@@ -1024,7 +1055,7 @@ impl App {
 
     fn handle_confirm(&mut self, code: KeyCode, kind: ConfirmKind) -> Result<()> {
         match code {
-            consts::KEY_CONFIRM_YES => {
+            consts::KEY_CONFIRM_YES | consts::KEY_SPACE => {
                 let previous = self.previous.clone();
                 self.apply_confirm(kind.clone())?;
                 self.screen = match kind {
@@ -1095,7 +1126,7 @@ impl App {
                 self.settings_index =
                     wrap_index(self.settings_index, consts::SETTINGS_ITEMS.len(), 1);
             }
-            consts::KEY_ENTER => {
+            consts::KEY_ENTER | consts::KEY_SPACE => {
                 let sub = match self.settings_index {
                     consts::SETTINGS_INDEX_FLAGS => SettingsSub::Flags,
                     consts::SETTINGS_INDEX_SIMD => SettingsSub::Simd,
@@ -1141,7 +1172,9 @@ impl App {
                 self.flags_field = wrap_index(self.flags_field, consts::FLAG_FIELD_COUNT, 1);
             }
             consts::KEY_LEFT | consts::KEY_H => self.nudge_flag(-1),
-            consts::KEY_RIGHT | consts::KEY_L | consts::KEY_ENTER => self.nudge_flag(1),
+            consts::KEY_RIGHT | consts::KEY_L | consts::KEY_ENTER | consts::KEY_SPACE => {
+                self.nudge_flag(1)
+            }
             consts::KEY_BACKSPACE => self.clear_flag(),
             consts::KEY_SAVE => {
                 self.tui_state
@@ -1241,7 +1274,7 @@ impl App {
             consts::KEY_END => {
                 self.simd_index = self.simd.sims.len().saturating_sub(1);
             }
-            consts::KEY_ENTER | consts::KEY_PLUS | consts::KEY_EQUALS => {
+            consts::KEY_ENTER | consts::KEY_SPACE | consts::KEY_PLUS | consts::KEY_EQUALS => {
                 self.cycle_simd_telemetry(1)?;
             }
             consts::KEY_MINUS => self.cycle_simd_telemetry(-1)?,
@@ -1299,7 +1332,7 @@ impl App {
             consts::KEY_DOWN | consts::KEY_J => {
                 self.lua_index = wrap_index(self.lua_index, count, 1);
             }
-            consts::KEY_ENTER => {
+            consts::KEY_ENTER | consts::KEY_SPACE => {
                 if let Some(name) = consts::BUNDLED_LUA.get(self.lua_index) {
                     match diagnostics::copy_lua_template(name) {
                         Ok(path) => self.message = format!("Copied {}", path.display()),
@@ -1476,7 +1509,10 @@ fn simd_wheel_pans_columns(mouse: MouseEvent) -> bool {
 }
 
 fn is_profile_cycle_key(code: KeyCode) -> bool {
-    matches!(code, consts::KEY_PREV_PROFILE | consts::KEY_NEXT_PROFILE)
+    matches!(
+        code,
+        consts::KEY_PREV_PROFILE | consts::KEY_NEXT_PROFILE | consts::KEY_LEFT | consts::KEY_RIGHT
+    )
 }
 
 fn truncate_profile_name(name: &str) -> String {

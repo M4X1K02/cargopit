@@ -84,6 +84,16 @@ pub fn style_gauge() -> Style {
     Style::default().fg(COLOR_OK).bg(COLOR_GAUGE_BG)
 }
 
+pub fn style_health_gauge(all_met: bool, any_met: bool) -> Style {
+    if all_met {
+        return style_gauge();
+    }
+    if any_met {
+        return Style::default().fg(COLOR_WARN).bg(COLOR_GAUGE_BG);
+    }
+    Style::default().fg(COLOR_ERR).bg(COLOR_GAUGE_BG)
+}
+
 pub fn style_dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
@@ -144,16 +154,34 @@ pub fn bar(ratio: f64, width: usize) -> String {
         return String::new();
     }
     let clamped = ratio.clamp(0.0, 1.0);
-    let filled = (clamped * width as f64).round() as usize;
-    let filled = filled.min(width);
+    let levels = width.saturating_mul(consts::GAUGE_FRACTION_COUNT);
+    let filled_levels = (clamped * levels as f64).round() as usize;
+    let filled_levels = filled_levels.min(levels);
+    let full_cells = filled_levels / consts::GAUGE_FRACTION_COUNT;
+    let remainder = filled_levels % consts::GAUGE_FRACTION_COUNT;
     let mut out = String::with_capacity(width);
-    for _ in 0..filled {
+    for _ in 0..full_cells {
         out.push(consts::GAUGE_FILL);
     }
-    for _ in filled..width {
+    let mut cells = full_cells;
+    if remainder > 0 && cells < width {
+        out.push(fraction_glyph(remainder));
+        cells += 1;
+    }
+    for _ in cells..width {
         out.push(consts::GAUGE_EMPTY);
     }
     out
+}
+
+fn fraction_glyph(eighths: usize) -> char {
+    if eighths == 0 {
+        return consts::GAUGE_EMPTY;
+    }
+    if eighths >= consts::GAUGE_FRACTION_COUNT {
+        return consts::GAUGE_FILL;
+    }
+    consts::GAUGE_FRACTION_GLYPHS[eighths]
 }
 
 pub fn percent(ratio: f64) -> u16 {
@@ -177,6 +205,23 @@ mod tests {
         assert!(bar(1.0, consts::GAUGE_WIDTH)
             .chars()
             .all(|ch| ch == consts::GAUGE_FILL));
+    }
+
+    #[test]
+    fn bar_shows_each_percent_step() {
+        let max = f64::from(consts::GAUGE_PERCENT_MAX);
+        for step in 0..consts::GAUGE_PERCENT_MAX {
+            let current = bar(f64::from(step) / max, consts::GAUGE_WIDTH);
+            let next = bar(f64::from(step + 1) / max, consts::GAUGE_WIDTH);
+            assert_eq!(current.chars().count(), consts::GAUGE_WIDTH);
+            assert_eq!(next.chars().count(), consts::GAUGE_WIDTH);
+            assert_ne!(
+                current,
+                next,
+                "percent {step} and {} rendered the same bar",
+                step + 1
+            );
+        }
     }
 
     #[test]
