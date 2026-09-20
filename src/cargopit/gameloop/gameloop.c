@@ -19,10 +19,91 @@
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../simulatorapi/simapi/simapi/simmapper.h"
 #include "../simulatorapi/simapi/simapi/simmap.h"
+#include "../simulatorapi/simapi/simapi/dirt2.h"
 #include "../slog/slog.h"
 
 #define DEFAULT_UPDATE_RATE      240.0
 #define SIM_CHECK_RATE           1.0
+#define SIMAPI_DAEMON_PROBE_US   50000
+#define SIM_UDP_PORT_DIRT_RALLY_2_NATIVE 20777
+#define TEST_TICK_US                 16000
+#define TEST_PHASE_HOLD_US           3000000
+#define TEST_IDLE_HOLD_US            1000000
+#define TEST_WHEEL_COUNT             4
+#define TEST_RPM_IDLE                1000
+#define TEST_RPM_MID_LOW             2000
+#define TEST_RPM_MID                 4000
+#define TEST_RPM_HIGH                7000
+#define TEST_RPM_MAX                 8000
+#define TEST_RPM_SWEEP_STEP          50
+#define TEST_VELOCITY_IDLE           16
+#define TEST_VELOCITY_SLOW           100
+#define TEST_VELOCITY_CRUISE         160
+#define TEST_VELOCITY_FAST           200
+#define TEST_VELOCITY_TOP            300
+#define TEST_VELOCITY_SPIN           15
+#define TEST_VELOCITY_LOCK           150
+#define TEST_YVELOCITY               100
+#define TEST_PEDAL_APPLIED           0.85
+#define TEST_GAS_CRUISE              0.40
+#define TEST_SLIP_SPIN               (-0.45)
+#define TEST_SLIP_LOCK               0.85
+#define TEST_GEAR_PULSE_TICKS        8
+#define TEST_SLIP_ABS_A              0.40
+#define TEST_SLIP_ABS_B              0.72
+#define TEST_ABS_OFF                 0.0
+#define TEST_ABS_ACTIVE              1.0
+#define TEST_ABS_PULSE_TICKS         2
+#define TEST_BRAKE_TEMP_HOT          0.90
+#define TEST_SUSP_VEL_A              2.0
+#define TEST_SUSP_VEL_B              18.0
+#define TEST_TYRE_DIAMETER_UNSET     (-1.0)
+#define TEST_TYRE_DIAMETER_FL        0.638636385206394
+#define TEST_TYRE_DIAMETER_FR        0.633384434597093
+#define TEST_TYRE_DIAMETER_RL        0.710475735564615
+#define TEST_TYRE_DIAMETER_RR        0.710475735564615
+#define TEST_TYRE_RPS_SPIN           50.0
+#define TEST_TYRE_RPS_LOCK           25.0
+#define TEST_CAR_NAME                "CAR"
+#define TEST_GEAR_CHAR_NEUTRAL       'N'
+#define TEST_GEAR_CHAR_FIRST         '1'
+#define TEST_GEAR_CHAR_SECOND        '2'
+#define TEST_GEAR_CHAR_THIRD         '3'
+#define TEST_GEAR_CHAR_FOURTH        '4'
+#define TEST_MSG_REV                 "Revving rpm from idle to redline and back"
+#define TEST_MSG_RPM_IDLE            "Setting rpms to idle"
+#define TEST_MSG_GREEN               "Green Flag!"
+#define TEST_MSG_FIRST               "Shifting into first gear"
+#define TEST_MSG_SPEED_SLOW          "Setting speed to 100"
+#define TEST_MSG_SPIN                "Testing wheel spin"
+#define TEST_MSG_BUTTONS             "Lighting brake button LEDs"
+#define TEST_MSG_LOCK                "Testing wheel lock"
+#define TEST_MSG_SECOND              "Shifting into second gear"
+#define TEST_MSG_ABS                 "Testing ABS"
+#define TEST_MSG_SPEED_FAST          "Setting speed to 200"
+#define TEST_MSG_YELLOW              "Yellow Flag!"
+#define TEST_MSG_THIRD               "Shifting into third gear"
+#define TEST_MSG_RPM_MID_LOW         "Setting rpms to 2000"
+#define TEST_MSG_BLUE                "Blue Flag!"
+#define TEST_MSG_RPM_MID             "Setting rpms to 4000"
+#define TEST_MSG_FOURTH              "Shifting into fourth gear"
+#define TEST_MSG_SPEED_TOP           "Setting speed to 300"
+#define TEST_MSG_RPM_HIGH            "Setting rpms to 7000"
+#define TEST_MSG_RED                 "Red Flag!"
+#define TEST_MSG_RPM_MAX             "Setting rpms to redline"
+#define TEST_MSG_SUSPENSION          "Testing suspension"
+#define TEST_MSG_COAST               "Returning to idle"
+#define TESTER_CAP_RPM               (1u << 0)
+#define TESTER_CAP_FLAG              (1u << 1)
+#define TESTER_CAP_GEAR              (1u << 2)
+#define TESTER_CAP_SPIN              (1u << 3)
+#define TESTER_CAP_LOCK              (1u << 4)
+#define TESTER_CAP_ABS               (1u << 5)
+#define TESTER_CAP_BUTTONS           (1u << 6)
+#define TESTER_CAP_SUSP              (1u << 7)
+#define TESTER_CAP_SPEED             (1u << 8)
+#define TESTER_CAP_HARDWARE          (TESTER_CAP_RPM | TESTER_CAP_FLAG | TESTER_CAP_BUTTONS | TESTER_CAP_SPEED)
+
 bool go = false;
 bool go2 = false;
 struct sigaction act;
@@ -611,14 +692,93 @@ static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf,
     free(rcvbuf->base);
 }
 
+int startudp(int port);
+
+static void close_simapi_map(SimMap* simmap)
+{
+    if (simmap == NULL)
+    {
+        return;
+    }
+    if (simmap->addr != NULL)
+    {
+        munmap(simmap->addr, sizeof(SimData));
+        simmap->addr = NULL;
+    }
+    if (simmap->fd != -1)
+    {
+        close(simmap->fd);
+        simmap->fd = -1;
+    }
+    simmap->hasSimApiDat = false;
+}
+
+static bool simapi_daemon_advancing(SimData* simdata, SimMap* simmap)
+{
+    uint64_t first_tick;
+
+    if (simdata == NULL || simmap == NULL || simmap->addr == NULL)
+    {
+        return false;
+    }
+    if (simdata->simon == false)
+    {
+        return false;
+    }
+    first_tick = simdata->mtick;
+    usleep(SIMAPI_DAEMON_PROBE_US);
+    simapi_datamap(simdata, simmap, SIMULATORAPI_SIMAPI_TEST, false, NULL);
+    return simdata->mtick != first_tick;
+}
+
+static void discover_sim(loop_data* f, SimData* simdata, SimMap* simmap)
+{
+    f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, false);
+    if (f->siminfo.mapapi != SIMULATORAPI_SIMAPI_TEST)
+    {
+        return;
+    }
+    if (simapi_daemon_advancing(simdata, simmap))
+    {
+        return;
+    }
+    slogd("SIMAPI.DAT is not advancing; mapping the simulator directly");
+    close_simapi_map(simmap);
+    f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, true);
+}
+
+static void ensure_play_publishes_simapi(SimMap* simmap, SimData* simdata, SimulatorAPI mapapi)
+{
+    if (mapapi == SIMULATORAPI_SIMAPI_TEST)
+    {
+        return;
+    }
+    if (simmap == NULL || simmap->addr != NULL)
+    {
+        return;
+    }
+    simapi_universalmap_open(simmap, simdata);
+}
+
+static int bind_udp_port(int port)
+{
+    struct sockaddr_in recv_addr;
+
+    uv_ip4_addr("0.0.0.0", port, &recv_addr);
+    return uv_udp_bind(&recv_socket, (const struct sockaddr*) &recv_addr, UV_UDP_REUSEADDR);
+}
+
 int startudp(int port)
 {
+    int bind_port = port;
+    int err;
 
-    struct sockaddr_in recv_addr;
-    uv_ip4_addr("0.0.0.0", port, &recv_addr);
-    int err = uv_udp_bind(&recv_socket, (const struct sockaddr *) &recv_addr, UV_UDP_REUSEADDR);
-
-    slogt("initial udp error is %i", err);
+    if (port == DIRT_RALLY_2_UDP_PORT)
+    {
+        bind_port = SIM_UDP_PORT_DIRT_RALLY_2_NATIVE;
+    }
+    err = bind_udp_port(bind_port);
+    slogi("udp bind port %i result %i", bind_port, err);
     return err;
 }
 
@@ -634,6 +794,31 @@ void udpstart(CargopitSettings* sms, loop_data* f, SimData* simdata, SimMap* sim
     }
 }
 
+static void begin_live_mapping(uv_timer_t* handle, loop_data* f, SimData* simdata, SimMap* simmap)
+{
+    int interval;
+
+    appstate++;
+    doui = true;
+    simdata->tyrediameter[0] = -1;
+    simdata->tyrediameter[1] = -1;
+    simdata->tyrediameter[2] = -1;
+    simdata->tyrediameter[3] = -1;
+    ensure_play_publishes_simapi(simmap, simdata, f->siminfo.mapapi);
+    if (f->use_udp == true || f->siminfo.SimUsesUDP == true)
+    {
+        slogt("starting udp receive loop");
+        udpstart(f->ms, f, simdata, simmap);
+        uv_udp_recv_start(&recv_socket, on_alloc, on_udp_recv);
+        slogt("udp receive loop started");
+        uv_timer_stop(handle);
+        return;
+    }
+    interval = 1000 / f->ms->fps;
+    slogd("starting telemetry mapping at %i fps (%i ms ticks)", f->ms->fps, interval);
+    uv_timer_start(&datamaptimer, shmdatamapcallback, 2000, interval);
+}
+
 void datacheckcallback(uv_timer_t* handle)
 {
     void* b = uv_handle_get_data((uv_handle_t*) handle);
@@ -641,55 +826,43 @@ void datacheckcallback(uv_timer_t* handle)
     SimData* simdata = f->simdata;
     SimMap* simmap = f->simmap;
 
-    if ( appstate == 1 )
-    {
-        f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, startudp, false);
-
-        if(f->ms->force_udp_mode == true)
-        {
-            f->use_udp = true;
-        }
-    }
-    if (f->siminfo.isSimOn == true && simdata->simstatus >= 2)
-    {
-        if ( appstate == 1 )
-        {
-            appstate++;
-            doui = true;
-            simdata->tyrediameter[0] = -1;
-            simdata->tyrediameter[1] = -1;
-            simdata->tyrediameter[2] = -1;
-            simdata->tyrediameter[3] = -1;
-
-            if(f->use_udp == true || f->siminfo.SimUsesUDP == true)
-            {
-                slogt("starting udp receive loop");
-                udpstart(f->ms, f, simdata, simmap);
-                uv_udp_recv_start(&recv_socket, on_alloc, on_udp_recv);
-                slogt("udp receive loop started");
-            }
-            else
-            {
-                int interval = 1000 / f->ms->fps;
-                slogd("starting telemetry mapping at %i fps (%i ms ticks)", f->ms->fps, interval);
-                uv_timer_start(&datamaptimer, shmdatamapcallback, 2000, interval);
-            }
-        }
-        if(appstate == 2)
-        {
-            f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, NULL, false);
-            if(f->siminfo.isSimOn == false)
-            {
-                appstate = 1;
-                releaseloop(f, simdata, simmap);
-            }
-        }
-    }
-
     if (appstate == 0)
     {
         slogi("stopped checking for data");
         uv_timer_stop(handle);
+        return;
+    }
+
+    if (appstate == 1)
+    {
+        discover_sim(f, simdata, simmap);
+        if (f->ms->force_udp_mode == true)
+        {
+            f->use_udp = true;
+        }
+    }
+
+    if (f->siminfo.isSimOn == false || simdata->simstatus < SIMAPI_STATUS_ACTIVEPLAY)
+    {
+        return;
+    }
+
+    if (appstate == 1)
+    {
+        begin_live_mapping(handle, f, simdata, simmap);
+        return;
+    }
+
+    if (f->siminfo.mapapi != SIMULATORAPI_SIMAPI_TEST)
+    {
+        return;
+    }
+
+    f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, NULL, false);
+    if (f->siminfo.isSimOn == false)
+    {
+        appstate = 1;
+        releaseloop(f, simdata, simmap);
     }
 }
 
@@ -1041,56 +1214,110 @@ int cargopit_mainloop(CargopitSettings* ms)
     return 0;
 }
 
+static void tester_fill_corners(double* dest, double value)
+{
+    int i;
+    for (i = 0; i < TEST_WHEEL_COUNT; i++)
+    {
+        dest[i] = value;
+    }
+}
+
+static void tester_set_gear(SimData* simdata, uint32_t gear, char gear_char)
+{
+    simdata->gear = gear;
+    simdata->gearc[0] = gear_char;
+    simdata->gearc[1] = '\0';
+}
+
+static void tester_set_tyre_fallback(SimData* simdata, double rps)
+{
+    tester_fill_corners(simdata->tyreRPS, rps);
+    simdata->tyrediameter[0] = TEST_TYRE_DIAMETER_FL;
+    simdata->tyrediameter[1] = TEST_TYRE_DIAMETER_FR;
+    simdata->tyrediameter[2] = TEST_TYRE_DIAMETER_RL;
+    simdata->tyrediameter[3] = TEST_TYRE_DIAMETER_RR;
+}
+
+static void tester_clear_effects(SimData* simdata)
+{
+    simdata->gas = 0.0;
+    simdata->brake = 0.0;
+    simdata->abs = TEST_ABS_OFF;
+    tester_fill_corners(simdata->tyreslipratio, 0.0);
+    tester_fill_corners(simdata->braketemp, 0.0);
+    tester_fill_corners(simdata->suspvelocity, 0.0);
+    tester_fill_corners(simdata->tyreRPS, 0.0);
+    tester_fill_corners(simdata->tyrediameter, TEST_TYRE_DIAMETER_UNSET);
+}
+
 void set_basic_simdata(SimData* simdata)
 {
-    simdata->car[0] = 'C';
-    simdata->car[1] = 'A';
-    simdata->car[2] = 'R';
-    simdata->car[3] = '\0';
-    simdata->gear = SIMAPI_GEAR_NEUTRAL;
-    simdata->gearc[0] = 0x4e;
-    simdata->gearc[1] = 0;
-    simdata->velocity = 160;
-    simdata->rpms = 7000;
-    simdata->maxrpm = 8000;
-    simdata->abs = 0;
-    simdata->tyrediameter[0] = -1;
-    simdata->tyrediameter[1] = -1;
-    simdata->tyrediameter[2] = -1;
-    simdata->tyrediameter[3] = -1;
-    simdata->tyreslipratio[0] = 0;
-    simdata->tyreslipratio[1] = 0;
-    simdata->tyreslipratio[2] = 0;
-    simdata->tyreslipratio[3] = 0;
-    simdata->Xvelocity = 0;
-    simdata->Yvelocity = 100;
-    simdata->Zvelocity = 0;
+    snprintf(simdata->car, sizeof(simdata->car), "%s", TEST_CAR_NAME);
+    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
+    simdata->velocity = TEST_VELOCITY_CRUISE;
+    simdata->rpms = TEST_RPM_IDLE;
+    simdata->maxrpm = TEST_RPM_MAX;
+    simdata->idlerpm = TEST_RPM_IDLE;
+    tester_clear_effects(simdata);
+    simdata->Xvelocity = 0.0;
+    simdata->Yvelocity = TEST_YVELOCITY;
+    simdata->Zvelocity = 0.0;
+}
+
+static void tester_set_rolling(SimData* simdata)
+{
+    simdata->Yvelocity = TEST_YVELOCITY;
+    simdata->Zvelocity = 0.0;
 }
 
 void set_wheel_spin_simdata(SimData* simdata)
 {
-    simdata->velocity = 15;
-    simdata->tyreRPS[0] = 50;
-    simdata->tyreRPS[1] = 50;
-    simdata->tyreRPS[2] = 50;
-    simdata->tyreRPS[3] = 50;
-    simdata->tyrediameter[0] = 0.638636385206394;
-    simdata->tyrediameter[1] = 0.633384434597093;
-    simdata->tyrediameter[2] = 0.710475735564615;
-    simdata->tyrediameter[3] = 0.710475735564615;
+    tester_set_rolling(simdata);
+    simdata->velocity = TEST_VELOCITY_SPIN;
+    simdata->gas = TEST_PEDAL_APPLIED;
+    simdata->brake = 0.0;
+    simdata->abs = TEST_ABS_OFF;
+    tester_fill_corners(simdata->tyreslipratio, TEST_SLIP_SPIN);
+    tester_fill_corners(simdata->braketemp, 0.0);
+    tester_set_tyre_fallback(simdata, TEST_TYRE_RPS_SPIN);
 }
 
 void set_wheel_lock_simdata(SimData* simdata)
 {
-    simdata->velocity = 150;
-    simdata->tyreRPS[0] = 25;
-    simdata->tyreRPS[1] = 25;
-    simdata->tyreRPS[2] = 25;
-    simdata->tyreRPS[3] = 25;
-    simdata->tyrediameter[0] = 0.638636385206394;
-    simdata->tyrediameter[1] = 0.633384434597093;
-    simdata->tyrediameter[2] = 0.710475735564615;
-    simdata->tyrediameter[3] = 0.710475735564615;
+    tester_set_rolling(simdata);
+    simdata->velocity = TEST_VELOCITY_LOCK;
+    simdata->gas = 0.0;
+    simdata->brake = TEST_PEDAL_APPLIED;
+    simdata->abs = TEST_ABS_OFF;
+    tester_fill_corners(simdata->tyreslipratio, TEST_SLIP_LOCK);
+    tester_fill_corners(simdata->braketemp, TEST_BRAKE_TEMP_HOT);
+    tester_set_tyre_fallback(simdata, TEST_TYRE_RPS_LOCK);
+}
+
+static void tester_set_brake_heat(SimData* simdata)
+{
+    tester_set_rolling(simdata);
+    simdata->velocity = TEST_VELOCITY_LOCK;
+    simdata->gas = 0.0;
+    simdata->brake = TEST_PEDAL_APPLIED;
+    simdata->abs = TEST_ABS_OFF;
+    tester_fill_corners(simdata->tyreslipratio, 0.0);
+    tester_fill_corners(simdata->braketemp, TEST_BRAKE_TEMP_HOT);
+    tester_fill_corners(simdata->tyreRPS, 0.0);
+    tester_fill_corners(simdata->tyrediameter, TEST_TYRE_DIAMETER_UNSET);
+}
+
+static void tester_set_abs(SimData* simdata)
+{
+    tester_set_rolling(simdata);
+    simdata->velocity = TEST_VELOCITY_LOCK;
+    simdata->gas = 0.0;
+    simdata->brake = TEST_PEDAL_APPLIED;
+    simdata->abs = TEST_ABS_ACTIVE;
+    tester_fill_corners(simdata->tyreslipratio, TEST_SLIP_ABS_A);
+    tester_fill_corners(simdata->braketemp, TEST_BRAKE_TEMP_HOT);
+    tester_set_tyre_fallback(simdata, TEST_TYRE_RPS_LOCK);
 }
 
 // Drives every initialized device with the current test simdata, then
@@ -1114,238 +1341,597 @@ static void update_devices(SimDevice* devices, int numdevices, SimData* simdata,
     }
 }
 
-int tester(SimDevice* devices, int numdevices)
+static int tester_enter_raw_stdin(struct termios* saved)
 {
+    struct termios raw;
+    if (!isatty(STDIN_FILENO))
+    {
+        return 0;
+    }
+    tcgetattr(STDIN_FILENO, saved);
+    raw = *saved;
+    raw.c_lflag &= (~ICANON & ~ECHO);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    return 1;
+}
 
-    slogi("preparing test with %i devices...", numdevices);
-    SimData* simdata = malloc(sizeof(SimData));
-    memset(simdata, 0, sizeof(SimData));
+static void tester_restore_stdin(int raw_applied, const struct termios* saved)
+{
+    if (!raw_applied)
+    {
+        return;
+    }
+    tcsetattr(STDIN_FILENO, TCSANOW, saved);
+}
+
+static void tester_set_identity(SimData* simdata)
+{
     simdata->simon = true;
     simdata->simstatus = SIMAPI_STATUS_ACTIVEPLAY;
+    simdata->simapi = SIMULATORAPI_SIMAPI_TEST;
+    simdata->simexe = SIMULATOREXE_SIMAPI_TEST_NONE;
+    simdata->simapiversion = SIMAPI_VERSION;
+}
 
-    SimMap* testsimmap = malloc(sizeof(SimMap));
-    memset(testsimmap, 0, sizeof(SimMap));
-    int shmerr = simapi_universalmap_open(testsimmap, simdata);
-    if (shmerr != SIMAPI_ERROR_NONE)
-    {
-        slog_warn("Could not open shared telemetry memory for test mode (error %i) - test sequence will still drive local devices, but external tools won't see it", shmerr);
-        free(testsimmap);
-        testsimmap = NULL;
-    }
-
-    struct termios newsettings, canonicalmode;
-    tcgetattr(0, &canonicalmode);
-    newsettings = canonicalmode;
-    newsettings.c_lflag &= (~ICANON & ~ECHO);
-    newsettings.c_cc[VMIN] = 1;
-    newsettings.c_cc[VTIME] = 0;
-    tcsetattr(0, TCSANOW, &newsettings);
-
-    fprintf(stdout, "\n");
-    simdata->car[0] = 'C';
-    simdata->car[1] = 'A';
-    simdata->car[2] = 'R';
-    simdata->car[3] = '\0';
-
-    simdata->gear = SIMAPI_GEAR_NEUTRAL;
-    simdata->gearc[0] = 0x4e;
-    simdata->gearc[1] = 0;
-    simdata->velocity = 16;
-    simdata->rpms = 100;
-    simdata->maxrpm = 8000;
-    simdata->abs = 0;
-    simdata->tyrediameter[0] = -1;
-    simdata->tyrediameter[1] = -1;
-    simdata->tyrediameter[2] = -1;
-    simdata->tyrediameter[3] = -1;
-    simdata->tyreslipratio[0] = 0;
-    simdata->tyreslipratio[1] = 0;
-    simdata->tyreslipratio[2] = 0;
-    simdata->tyreslipratio[3] = 0;
-    simdata->Xvelocity = 0;
-    simdata->Yvelocity = 100;
-    simdata->Zvelocity = 0;
-
-    sleep(1);
-
-    fprintf(stdout, "Revving rpm from 1000 to 8000 and back\n");
-    // TODO: look into this, my serial leds make this hang
-    for (int r = 0; r < 8000; r += 3)
-    {
-        simdata->rpms = 1000 + r;
-        update_devices(devices, numdevices, simdata, testsimmap);
-        usleep(1000);
-    }
-
-    for (int r = 0; r < 8000; r += 3)
-    {
-        simdata->rpms = 9000 - r;
-        update_devices(devices, numdevices, simdata, testsimmap);
-        usleep(1000);
-    }
-
-    fprintf(stdout, "Setting rpms to 1000\n");
-    simdata->rpms = 1000;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Green Flag!\n");
-    simdata->playerflag = SIMAPI_FLAG_GREEN;
-
-    fprintf(stdout, "Shifting into first gear\n");
-    simdata->gear = SIMAPI_GEAR_FIRST;
-    simdata->gearc[0] = 0x31;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Setting speed to 100\n");
-    simdata->velocity = 100;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "testing wheel spin\n");
-    simdata->velocity = 15;
-    simdata->tyreRPS[0] = 50;
-    simdata->tyreRPS[1] = 50;
-    simdata->tyreRPS[2] = 50;
-    simdata->tyreRPS[3] = 50;
-    simdata->tyrediameter[0] = 0.638636385206394;
-    simdata->tyrediameter[1] = 0.633384434597093;
-    simdata->tyrediameter[2] = 0.710475735564615;
-    simdata->tyrediameter[3] = 0.710475735564615;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Testing wheel Lock\n");
-    simdata->tyreRPS[0] = 25;
-    simdata->tyreRPS[1] = 25;
-    simdata->tyreRPS[2] = 25;
-    simdata->tyreRPS[3] = 25;
-    simdata->velocity = 150;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Shifting into second gear\n");
-    simdata->tyreRPS[0] = 0;
-    simdata->tyreRPS[1] = 0;
-    simdata->tyreRPS[2] = 0;
-    simdata->tyreRPS[3] = 0;
-    simdata->tyrediameter[0] = -1;
-    simdata->tyrediameter[1] = -1;
-    simdata->tyrediameter[2] = -1;
-    simdata->tyrediameter[3] = -1;
-    simdata->abs = 0;
-    simdata->gear = SIMAPI_GEAR_SECOND;
-    simdata->gearc[0] = 0x32;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Testing abs brake lock Lock\n");
-    simdata->tyreRPS[0] = 50;
-    simdata->tyreRPS[1] = 50;
-    simdata->tyreRPS[2] = 50;
-    simdata->tyreRPS[3] = 50;
-    simdata->tyrediameter[0] = 0.638636385206394;
-    simdata->tyrediameter[1] = 0.633384434597093;
-    simdata->tyrediameter[2] = 0.710475735564615;
-    simdata->tyrediameter[3] = 0.710475735564615;
-    simdata->abs = .11;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Setting speed to 200\n");
-    simdata->tyreRPS[0] = 0;
-    simdata->tyreRPS[1] = 0;
-    simdata->tyreRPS[2] = 0;
-    simdata->tyreRPS[3] = 0;
-    simdata->tyrediameter[0] = -1;
-    simdata->tyrediameter[1] = -1;
-    simdata->tyrediameter[2] = -1;
-    simdata->tyrediameter[3] = -1;
-    simdata->abs = 0;
-    simdata->velocity = 200;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Yellow Flag!\n");
-    simdata->playerflag = SIMAPI_FLAG_YELLOW;
-
-    fprintf(stdout, "Shifting into third gear\n");
-    simdata->gear = SIMAPI_GEAR_THIRD;
-    simdata->gearc[0] = 0x33;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Setting rpms to 2000\n");
-    simdata->rpms = 2000;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Blue Flag!\n");
-    simdata->playerflag = SIMAPI_FLAG_BLUE;
-
-    fprintf(stdout, "Setting rpms to 4000\n");
-    simdata->rpms = 4000;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Shifting into fourth gear\n");
-    simdata->gear = SIMAPI_GEAR_FOURTH;
-    simdata->gearc[0] = 0x34;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Setting speed to 300\n");
-    simdata->velocity = 300;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Setting rpms to 7000\n");
-    simdata->rpms = 7000;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(3);
-
-    fprintf(stdout, "Red Flag!\n");
-    simdata->playerflag = SIMAPI_FLAG_RED;
-
-    fprintf(stdout, "Setting rpms to 8000\n");
-    simdata->rpms = 8000;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    for(int x = 0; x < 100; x++)
-    {
-        update_devices(devices, numdevices, simdata, testsimmap);
-    }
-    sleep(3);
-
-    simdata->velocity = 0;
-    simdata->rpms = 100;
-    simdata->gear = SIMAPI_GEAR_NEUTRAL;
-    simdata->gearc[0] = 0x4e;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    sleep(1);
-
+static void tester_enable_log_flush(void)
+{
+    slog_config_t cfg;
+    slog_config_get(&cfg);
+    cfg.nFlush = 1;
+    slog_config_set(&cfg);
     fflush(stdout);
-    tcsetattr(0, TCSANOW, &canonicalmode);
+    fflush(stderr);
+}
 
-    // Not shm_unlink()'d - the segment itself stays behind, the same way a
-    // real sim's shared memory file stays around after that sim exits - but
-    // its *contents* are reset to an inactive frame first. Leaving the last
-    // active-play frame in place made every external reader (e.g.
-    // typiql-tauri) see this test run as a sim that's still actively
-    // driving forever, since nothing else ever writes to SIMAPI.DAT again
-    // until the next `cargopit test`/`cargopit play`.
-    if (testsimmap != NULL)
+static void tester_announce(const char* msg)
+{
+    slogi("%s", msg);
+    fflush(stdout);
+}
+
+static int tester_hold_ticks(unsigned int hold_us)
+{
+    return (int)(hold_us / TEST_TICK_US);
+}
+
+typedef void (*tester_mod_fn)(SimData* simdata, int tick);
+
+static void tester_drive(
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata,
+    SimMap* testsimmap,
+    int ticks,
+    tester_mod_fn modify)
+{
+    int tick;
+    for (tick = 0; tick < ticks; tick++)
     {
-        simdata->simon = false;
-        simdata->simstatus = SIMAPI_STATUS_OFF;
+        if (modify != NULL)
+        {
+            modify(simdata, tick);
+        }
         update_devices(devices, numdevices, simdata, testsimmap);
+        usleep(TEST_TICK_US);
+    }
+}
 
-        munmap(testsimmap->addr, sizeof(SimData));
-        close(testsimmap->fd);
-        free(testsimmap);
+static void tester_hold(
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata,
+    SimMap* testsimmap,
+    unsigned int hold_us)
+{
+    tester_drive(devices, numdevices, simdata, testsimmap, tester_hold_ticks(hold_us), NULL);
+}
+
+static void tester_mod_abs(SimData* simdata, int tick)
+{
+    double slip = TEST_SLIP_ABS_A;
+    if ((tick / TEST_ABS_PULSE_TICKS) % 2 == 1)
+    {
+        slip = TEST_SLIP_ABS_B;
+    }
+    tester_fill_corners(simdata->tyreslipratio, slip);
+}
+
+static void tester_mod_suspension(SimData* simdata, int tick)
+{
+    double vel = TEST_SUSP_VEL_A;
+    if ((tick % 2) == 1)
+    {
+        vel = TEST_SUSP_VEL_B;
+    }
+    tester_fill_corners(simdata->suspvelocity, vel);
+}
+
+static uint32_t tester_pulse_gear;
+static char tester_pulse_gear_char;
+
+static void tester_mod_gear(SimData* simdata, int tick)
+{
+    if ((tick / TEST_GEAR_PULSE_TICKS) % 2 == 0)
+    {
+        tester_set_gear(simdata, tester_pulse_gear, tester_pulse_gear_char);
+        return;
+    }
+    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
+}
+
+static const char* tester_effect_name(VibrationEffectType effect)
+{
+    switch (effect)
+    {
+        case EFFECT_GEARSHIFT:
+            return "gear";
+        case EFFECT_TYRELOCK:
+            return "tyre lock";
+        case EFFECT_ABSBRAKES:
+            return "ABS";
+        case EFFECT_TYRESLIP:
+            return "tyre slip";
+        case EFFECT_SUSPENSION:
+            return "suspension";
+        default:
+            return "effect";
+    }
+}
+
+static int tester_has_effect(SimDevice* devices, int numdevices, VibrationEffectType effect)
+{
+    int i;
+    for (i = 0; i < numdevices; i++)
+    {
+        if (devices[i].initialized == false)
+        {
+            continue;
+        }
+        if (devices[i].hapticeffect.effecttype != effect)
+        {
+            continue;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static unsigned tester_effect_cap(VibrationEffectType effect)
+{
+    switch (effect)
+    {
+        case EFFECT_ENGINERPM:
+            return TESTER_CAP_RPM;
+        case EFFECT_GEARSHIFT:
+            return TESTER_CAP_GEAR;
+        case EFFECT_ABSBRAKES:
+            return TESTER_CAP_ABS;
+        case EFFECT_TYRESLIP:
+            return TESTER_CAP_SPIN;
+        case EFFECT_TYRELOCK:
+            return TESTER_CAP_LOCK;
+        case EFFECT_SUSPENSION:
+            return TESTER_CAP_SUSP;
+        default:
+            return 0;
+    }
+}
+
+static unsigned tester_device_caps(const SimDevice* device)
+{
+    unsigned caps;
+    if (device->initialized == false)
+    {
+        return 0;
+    }
+    caps = tester_effect_cap(device->hapticeffect.effecttype);
+    if (device->type == SIMDEV_USB || device->type == SIMDEV_SERIAL)
+    {
+        caps |= TESTER_CAP_HARDWARE;
+    }
+    return caps;
+}
+
+static unsigned tester_caps(SimDevice* devices, int numdevices)
+{
+    unsigned caps = 0;
+    int i;
+    for (i = 0; i < numdevices; i++)
+    {
+        caps |= tester_device_caps(&devices[i]);
+    }
+    return caps;
+}
+
+static int tester_has_cap(unsigned caps, unsigned need)
+{
+    return (caps & need) != 0;
+}
+
+static void tester_warn_if_missing(SimDevice* devices, int numdevices, VibrationEffectType effect)
+{
+    if (tester_has_effect(devices, numdevices, effect))
+    {
+        return;
+    }
+    slogw("No enabled %s device in this config; that test step will not shake", tester_effect_name(effect));
+}
+
+static void tester_log_slip_play(
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata,
+    VibrationEffectType effect)
+{
+    int i;
+    for (i = 0; i < numdevices; i++)
+    {
+        double play;
+        if (devices[i].initialized == false)
+        {
+            continue;
+        }
+        if (devices[i].hapticeffect.effecttype != effect)
+        {
+            continue;
+        }
+        play = slipeffect(
+            simdata,
+            &devices[i].hapticeffect,
+            devices[i].hapticeffect.useconfig,
+            devices[i].hapticeffect.configcheck,
+            devices[i].hapticeffect.tyrediameterconfig);
+        slogi(
+            "%s test play=%f threshold=%f brake=%f gas=%f yvel=%f slip=%f",
+            tester_effect_name(effect),
+            play,
+            devices[i].hapticeffect.threshold,
+            simdata->brake,
+            simdata->gas,
+            simdata->Yvelocity,
+            simdata->tyreslipratio[0]);
+        return;
+    }
+    tester_warn_if_missing(devices, numdevices, effect);
+}
+
+static uint32_t tester_next_rpm(uint32_t rpm, uint32_t to, int signed_step)
+{
+    int next = (int)rpm + signed_step;
+    if (signed_step > 0 && next >= (int)to)
+    {
+        return to;
+    }
+    if (signed_step < 0 && next <= (int)to)
+    {
+        return to;
+    }
+    return (uint32_t)next;
+}
+
+static void tester_sweep_rpm(
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata,
+    SimMap* testsimmap,
+    uint32_t from,
+    uint32_t to,
+    int step)
+{
+    int signed_step = step;
+    uint32_t rpm = from;
+    if (to < from)
+    {
+        signed_step = -step;
+    }
+    while (1)
+    {
+        simdata->rpms = rpm;
+        update_devices(devices, numdevices, simdata, testsimmap);
+        usleep(TEST_TICK_US);
+        if (rpm == to)
+        {
+            return;
+        }
+        rpm = tester_next_rpm(rpm, to, signed_step);
+    }
+}
+
+static SimMap* tester_open_map(SimData* simdata)
+{
+    SimMap* testsimmap = malloc(sizeof(SimMap));
+    int shmerr;
+    memset(testsimmap, 0, sizeof(SimMap));
+    shmerr = simapi_universalmap_open(testsimmap, simdata);
+    if (shmerr == SIMAPI_ERROR_NONE)
+    {
+        return testsimmap;
+    }
+    slog_warn("Could not open shared telemetry memory for test mode (error %i) - test sequence will still drive local devices, but external tools won't see it", shmerr);
+    free(testsimmap);
+    return NULL;
+}
+
+static void tester_close_map(
+    SimMap* testsimmap,
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata)
+{
+    if (testsimmap == NULL)
+    {
+        return;
+    }
+    simdata->simon = false;
+    simdata->simstatus = SIMAPI_STATUS_OFF;
+    update_devices(devices, numdevices, simdata, testsimmap);
+    munmap(testsimmap->addr, sizeof(SimData));
+    close(testsimmap->fd);
+    free(testsimmap);
+}
+
+static void tester_phase(
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata,
+    SimMap* testsimmap,
+    const char* msg,
+    unsigned int hold_us,
+    tester_mod_fn modify)
+{
+    tester_announce(msg);
+    tester_drive(devices, numdevices, simdata, testsimmap, tester_hold_ticks(hold_us), modify);
+}
+
+static void tester_phase_gear(
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata,
+    SimMap* testsimmap,
+    const char* msg,
+    uint32_t gear,
+    char gear_char)
+{
+    tester_pulse_gear = gear;
+    tester_pulse_gear_char = gear_char;
+    tester_set_gear(simdata, gear, gear_char);
+    tester_phase(devices, numdevices, simdata, testsimmap, msg, TEST_PHASE_HOLD_US, tester_mod_gear);
+}
+
+int tester(SimDevice* devices, int numdevices)
+{
+    SimData* simdata;
+    SimMap* testsimmap;
+    struct termios canonicalmode;
+    int raw_applied;
+    unsigned caps;
+
+    tester_enable_log_flush();
+    slogi("preparing test with %i devices...", numdevices);
+
+    simdata = malloc(sizeof(SimData));
+    memset(simdata, 0, sizeof(SimData));
+    tester_set_identity(simdata);
+    testsimmap = tester_open_map(simdata);
+    raw_applied = tester_enter_raw_stdin(&canonicalmode);
+    caps = tester_caps(devices, numdevices);
+
+    set_basic_simdata(simdata);
+    simdata->velocity = TEST_VELOCITY_IDLE;
+    tester_hold(devices, numdevices, simdata, testsimmap, TEST_IDLE_HOLD_US);
+
+    if (tester_has_cap(caps, TESTER_CAP_RPM))
+    {
+        simdata->gas = TEST_GAS_CRUISE;
+        tester_announce(TEST_MSG_REV);
+        tester_sweep_rpm(devices, numdevices, simdata, testsimmap, TEST_RPM_IDLE, TEST_RPM_MAX, TEST_RPM_SWEEP_STEP);
+        tester_sweep_rpm(devices, numdevices, simdata, testsimmap, TEST_RPM_MAX, TEST_RPM_IDLE, TEST_RPM_SWEEP_STEP);
+        simdata->rpms = TEST_RPM_IDLE;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_IDLE, TEST_PHASE_HOLD_US, NULL);
     }
 
-    free(simdata);
+    if (tester_has_cap(caps, TESTER_CAP_FLAG))
+    {
+        simdata->playerflag = SIMAPI_FLAG_GREEN;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_GREEN, TEST_PHASE_HOLD_US, NULL);
+    }
 
+    if (tester_has_cap(caps, TESTER_CAP_GEAR))
+    {
+        tester_phase_gear(
+            devices, numdevices, simdata, testsimmap,
+            TEST_MSG_FIRST, SIMAPI_GEAR_FIRST, TEST_GEAR_CHAR_FIRST);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_SPEED))
+    {
+        simdata->velocity = TEST_VELOCITY_SLOW;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPEED_SLOW, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_SPIN))
+    {
+        set_wheel_spin_simdata(simdata);
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPIN, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_BUTTONS))
+    {
+        tester_set_brake_heat(simdata);
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_BUTTONS, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_LOCK))
+    {
+        set_wheel_lock_simdata(simdata);
+        tester_log_slip_play(devices, numdevices, simdata, EFFECT_TYRELOCK);
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_LOCK, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    tester_clear_effects(simdata);
+    if (tester_has_cap(caps, TESTER_CAP_GEAR))
+    {
+        tester_phase_gear(
+            devices, numdevices, simdata, testsimmap,
+            TEST_MSG_SECOND, SIMAPI_GEAR_SECOND, TEST_GEAR_CHAR_SECOND);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_ABS))
+    {
+        tester_set_abs(simdata);
+        tester_log_slip_play(devices, numdevices, simdata, EFFECT_ABSBRAKES);
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_ABS, TEST_PHASE_HOLD_US, tester_mod_abs);
+    }
+
+    tester_clear_effects(simdata);
+    if (tester_has_cap(caps, TESTER_CAP_SPEED))
+    {
+        simdata->velocity = TEST_VELOCITY_FAST;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPEED_FAST, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_FLAG))
+    {
+        simdata->playerflag = SIMAPI_FLAG_YELLOW;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_YELLOW, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_GEAR))
+    {
+        tester_phase_gear(
+            devices, numdevices, simdata, testsimmap,
+            TEST_MSG_THIRD, SIMAPI_GEAR_THIRD, TEST_GEAR_CHAR_THIRD);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_RPM))
+    {
+        simdata->rpms = TEST_RPM_MID_LOW;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_MID_LOW, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_FLAG))
+    {
+        simdata->playerflag = SIMAPI_FLAG_BLUE;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_BLUE, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_RPM))
+    {
+        simdata->rpms = TEST_RPM_MID;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_MID, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_GEAR))
+    {
+        tester_phase_gear(
+            devices, numdevices, simdata, testsimmap,
+            TEST_MSG_FOURTH, SIMAPI_GEAR_FOURTH, TEST_GEAR_CHAR_FOURTH);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_SPEED))
+    {
+        simdata->velocity = TEST_VELOCITY_TOP;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPEED_TOP, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_RPM))
+    {
+        simdata->rpms = TEST_RPM_HIGH;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_HIGH, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_FLAG))
+    {
+        simdata->playerflag = SIMAPI_FLAG_RED;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RED, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_RPM))
+    {
+        simdata->rpms = TEST_RPM_MAX;
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_MAX, TEST_PHASE_HOLD_US, NULL);
+    }
+
+    if (tester_has_cap(caps, TESTER_CAP_SUSP))
+    {
+        simdata->gas = TEST_GAS_CRUISE;
+        tester_fill_corners(simdata->suspvelocity, TEST_SUSP_VEL_A);
+        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SUSPENSION, TEST_PHASE_HOLD_US, tester_mod_suspension);
+    }
+
+    tester_clear_effects(simdata);
+    simdata->velocity = 0;
+    simdata->rpms = TEST_RPM_IDLE;
+    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
+    tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_COAST, TEST_IDLE_HOLD_US, NULL);
+
+    tester_restore_stdin(raw_applied, &canonicalmode);
+    tester_close_map(testsimmap, devices, numdevices, simdata);
+    free(simdata);
     return 0;
+}
+
+static void free_loaded_device_settings(DeviceSettings* ds, int configureddevices)
+{
+    int i;
+    if (ds == NULL)
+    {
+        return;
+    }
+    for (i = 0; i < configureddevices; i++)
+    {
+        settingsfree(ds[i]);
+    }
+    free(ds);
+}
+
+int run_hardware_test(CargopitSettings* ms, int config_index, int device_index)
+{
+    int confignum;
+    DeviceSettings* ds;
+    int configureddevices;
+    int numdevices;
+    SimDevice* simdevices;
+    SimInfo* siminfo;
+    int error;
+    int i;
+
+    confignum = resolve_config_index(ms->config_str, config_index);
+    if (confignum < 0)
+    {
+        sloge("Could not resolve config index for test");
+        return CARGOPIT_ERROR_INVALID_DEV;
+    }
+
+    ds = NULL;
+    configureddevices = 0;
+    numdevices = load_devices_for_test(
+        ms->config_str, confignum, device_index, ms, &ds, &configureddevices);
+    slogd("loading confignum %i, with %i devices.", confignum, configureddevices);
+    if (numdevices <= 0)
+    {
+        sloge("No devices loaded for test");
+        free_loaded_device_settings(ds, configureddevices);
+        return CARGOPIT_ERROR_INVALID_DEV;
+    }
+
+    simdevices = malloc(numdevices * sizeof(SimDevice));
+    siminfo = malloc(sizeof(SimInfo));
+    simapi_set_faux_siminfo(siminfo);
+    (void)devinit(simdevices, siminfo, numdevices, ds, ms);
+    free_loaded_device_settings(ds, configureddevices);
+
+    error = tester(simdevices, numdevices);
+    for (i = 0; i < numdevices; i++)
+    {
+        if (simdevices[i].initialized == true)
+        {
+            simdevices[i].free(&simdevices[i]);
+        }
+    }
+    free(simdevices);
+    free(siminfo);
+    return error;
 }

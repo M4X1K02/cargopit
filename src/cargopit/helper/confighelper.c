@@ -1,6 +1,7 @@
 #include <dirent.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <ctype.h>
@@ -1113,6 +1114,83 @@ int getsingledevice(const char* config_file_str, int confignum, int devicenum, C
 
     config_destroy(&cfg);
     return numdevices;
+}
+
+int resolve_config_index(const char* config_file_str, int requested_index)
+{
+    int configs = getNumberOfConfigs(config_file_str);
+    if (requested_index >= 0)
+    {
+        if (requested_index >= configs)
+        {
+            sloge("config-index %i is out of range (%i configs)", requested_index, configs);
+            return TEST_CONFIG_INDEX_DEFAULT;
+        }
+        return requested_index;
+    }
+    return getconfigtouse(config_file_str, "default", configs - 1);
+}
+
+static int load_single_test_device(
+    const char* config_file_str,
+    int confignum,
+    int device_index,
+    CargopitSettings* ms,
+    DeviceSettings** ds,
+    int* configureddevices)
+{
+    DeviceSettings* settings;
+    int loaded;
+
+    settings = calloc(1, sizeof(DeviceSettings));
+    if (settings == NULL)
+    {
+        return 0;
+    }
+    loaded = getsingledevice(config_file_str, confignum, device_index, ms, settings);
+    if (loaded <= 0)
+    {
+        free(settings);
+        return 0;
+    }
+    settings->enabled = true;
+    *ds = settings;
+    *configureddevices = 1;
+    slogi("testing device index %i", device_index);
+    return loaded;
+}
+
+int load_devices_for_test(
+    const char* config_file_str,
+    int confignum,
+    int device_index,
+    CargopitSettings* ms,
+    DeviceSettings** ds,
+    int* configureddevices)
+{
+    if (config_file_str == NULL || ds == NULL || configureddevices == NULL)
+    {
+        return 0;
+    }
+    *ds = NULL;
+    *configureddevices = 0;
+    if (device_index >= 0)
+    {
+        return load_single_test_device(
+            config_file_str, confignum, device_index, ms, ds, configureddevices);
+    }
+    configcheck(config_file_str, confignum, configureddevices);
+    if (*configureddevices <= 0)
+    {
+        return 0;
+    }
+    *ds = calloc(*configureddevices, sizeof(DeviceSettings));
+    if (*ds == NULL)
+    {
+        *configureddevices = 0;
+        return 0;
+    }
+    return load_device_configs(config_file_str, confignum, *configureddevices, ms, *ds);
 }
 
 static const char *haptic_effect_type_to_string(VibrationEffectType effect)

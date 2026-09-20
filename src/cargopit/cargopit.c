@@ -287,26 +287,7 @@ int main(int argc, char** argv)
                 setupsound();
             }
             ms->useconfig = 0;
-
-            int configs = getNumberOfConfigs(ms->config_str);
-            int confignum = getconfigtouse(ms->config_str, "default", configs-1);
-            int configureddevices;
-            configcheck(ms->config_str, confignum, &configureddevices);
-
-            DeviceSettings* ds = malloc(configureddevices * sizeof(DeviceSettings));
-            slogd("loading confignum %i, with %i devices.", confignum, configureddevices);
-
-            int numdevices = load_device_configs(ms->config_str, confignum, configureddevices, ms, ds);
-            SimDevice* simdevices = malloc(numdevices * sizeof(SimDevice));
-            SimInfo* siminfo = malloc(sizeof(SimInfo));
-            simapi_set_faux_siminfo(siminfo);
-            int initdevices = devinit(simdevices, siminfo, configureddevices, ds, ms);
-            for( int i = 0; i < configureddevices; i++)
-            {
-                settingsfree(ds[i]);
-            }
-            free(ds);
-            error = tester(simdevices, numdevices);
+            error = run_hardware_test(ms, p->config_index, p->device_index);
             if (error == CARGOPIT_ERROR_NONE)
             {
                 slogi("Test exited succesfully with error code: %i", error);
@@ -314,13 +295,6 @@ int main(int argc, char** argv)
             else
             {
                 sloge("Test exited with error code: %i", error);
-            }
-            for (int x = 0; x < numdevices; x++)
-            {
-                if (simdevices[x].initialized == true)
-                {
-                    simdevices[x].free(&simdevices[x]);
-                }
             }
             if(ms->disable_audio == false)
             {
