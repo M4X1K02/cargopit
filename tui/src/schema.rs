@@ -20,11 +20,14 @@ impl DeviceClass {
     }
 
     pub fn cycle(self) -> Self {
-        match self {
-            DeviceClass::Usb => DeviceClass::Sound,
-            DeviceClass::Sound => DeviceClass::Serial,
-            DeviceClass::Serial => DeviceClass::Usb,
-        }
+        self.cycle_by(1)
+    }
+
+    pub fn cycle_by(self, delta: i32) -> Self {
+        let all = Self::all();
+        let index = all.iter().position(|item| *item == self).unwrap_or(0) as i32;
+        let next = (index + delta).rem_euclid(all.len() as i32) as usize;
+        all[next]
     }
 
     pub fn all() -> [DeviceClass; 3] {
@@ -615,6 +618,13 @@ pub fn catalog_field_ids() -> &'static [FieldId] {
 mod tests {
     use super::*;
     use crate::config::DeviceEntry;
+
+    #[test]
+    fn class_cycle_by_respects_direction() {
+        assert_eq!(DeviceClass::Usb.cycle_by(1), DeviceClass::Sound);
+        assert_eq!(DeviceClass::Usb.cycle_by(-1), DeviceClass::Serial);
+        assert_eq!(DeviceClass::Sound.cycle_by(-1), DeviceClass::Usb);
+    }
 
     #[test]
     fn rejects_bad_granularity_and_volume() {
