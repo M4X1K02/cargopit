@@ -11,6 +11,7 @@ Distribution: Fedora Linux
 Vendor: spacefreak18
 Packager: Paul Jones <paul@spacefreak18.xyz>
 Requires: pulseaudio-libs argtable libconfig hidapi libserialport libuv libxdg-basedir lua-libs libxml2 procps-ng
+BuildRequires: cmake gcc gcc-c++ make git cargo rust
 
 %description
 A device manager for Racing sims
@@ -41,6 +42,12 @@ make
 %install
 mkdir -p $RPM_BUILD_ROOT/usr/bin
 cp $RPM_BUILD_DIR/cargopit/build/cargopit $RPM_BUILD_ROOT/usr/bin/cargopit
+if [ -x $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui ]; then
+    cp $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
+elif [ -x $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui ]; then
+    cp $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
+fi
 
 %files
 /usr/bin/cargopit
+/usr/bin/cargopit-tui

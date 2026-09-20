@@ -1,0 +1,25 @@
+[package]
+name = "cargopit-tui"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Terminal UI for managing cargopit devices and processes"
+repository = "https://github.com/M4X1K02/cargopit"
+
+[[bin]]
+name = "cargopit-tui"
+path = "src/main.rs"
+
+[lib]
+name = "cargopit_tui"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+crossterm = "0.28"
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

@@ -24,7 +24,7 @@ Usage docs for sims, bridges, and hardware: [spacefreak18.github.io/simapi](http
 - Tachometers: Revburner only, including existing Revburner XML and `cargopit config tachometer` to write a calibration file.
 - Serial output to Arduino and ESP32. Sample sketches for shift lights, simwind, and motor haptics live in `src/arduino/`. Custom serial devices use a [Lua payload format](https://spacefreak18.github.io/simapi/serial_custom).
 - Wheels and pedals including Clubsport Elite V3, [Logitech G29](https://spacefreak18.github.io/simapi/logitechg29), Moza R3/R5/R8/R9/KS Pro, Cammus C5/C12, Simagic GT Neo / P1000, and Simnet. Full list: [third-party devices](https://spacefreak18.github.io/simapi/thirdpartydevices).
-- `cargopit-manager`: curses TUI to start, test, restart, and stop the stack.
+- `cargopit-tui`: ratatui TUI to start, test, restart, stop, and edit devices/config.
 - Starts [simd](https://spacefreak18.github.io/simapi/simd_usage) automatically when it is installed and not already running.
 
 ## Adding More Devices
@@ -49,9 +49,9 @@ simshmbridge is not packaged here; use the [prebuilt compatibility EXEs](https:/
 bash tools/distro/distrobox/install-distrobox.sh
 ```
 
-This creates an Arch Linux container, installs simapi and simd, builds cargopit from source, and sets up wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
+This creates an Arch Linux container, installs simapi and simd, builds cargopit from source, and sets up wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`, `cargopit-tui`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
 
-**Build from source** (Arch, Fedora, Debian/Ubuntu, openSUSE, and immutable distros via distrobox). Run the script in a terminal so prompts work (`curl | bash` cannot find `cargopit-manager` next to itself):
+**Build from source** (Arch, Fedora, Debian/Ubuntu, openSUSE, and immutable distros via distrobox). Run the script in a terminal so prompts work:
 
 ```bash
 git clone https://github.com/M4X1K02/cargopit.git
@@ -64,7 +64,7 @@ Installer options include `--skip-bridges`, `--build-bridges`, `--deps-only`, `-
 
 Installer CI (`.github/workflows/installer.yml`) runs these checks in containers: `bash tools/distro/test-install-containers.sh detect|mocks|immutable|full <distro>`.
 
-After install, run `start-cargopit` or `cargopit-manager`. simd is started automatically if it is not already running; you will only be asked to act if simd is not installed. Game and bridge setup: [simd usage](https://spacefreak18.github.io/simapi/simd_usage).
+After install, run `start-cargopit` or `cargopit-tui`. simd is started automatically if it is not already running; you will only be asked to act if simd is not installed. Game and bridge setup: [simd usage](https://spacefreak18.github.io/simapi/simd_usage).
 
 **Supported Games**
 [Supported Sims](https://spacefreak18.github.io/simapi/supportedsims).
@@ -88,7 +88,7 @@ cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`. Static analysis: `-Danalyze=on`.
+Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`, `BUILD_TUI` (default ON; needs cargo). Static analysis: `-Danalyze=on`.
 
 ### Dependencies
 
@@ -100,7 +100,8 @@ Vendored/static copies are listed so their licenses stay visible. PulseAudio is 
 - libuv — event loop
 - libxml2 — Revburner XML
 - argtable2, libconfig, xdg-basedir, lua, libproc2 (or libprocps)
-- python3 — `cargopit-manager` and some tests
+- python3 — some tests
+- rustc / cargo — `cargopit-tui`
 - [simapi](https://github.com/spacefreak18/simapi) (submodule)
 - [slog](https://github.com/kala13x/slog) (static, in-tree)
 - [simshmbridge](https://github.com/spacefreak18/simshmbridge) — optional; shared-memory titles such as Assetto Corsa and Project CARS–related sims
@@ -108,13 +109,13 @@ Vendored/static copies are listed so their licenses stay visible. PulseAudio is 
 **Arch**
 
 ```bash
-pacman -S --needed git cmake base-devel python curl libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 yder procps-ng
+pacman -S --needed git cmake base-devel python curl libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 yder procps-ng rust
 ```
 
 **Fedora / Nobara**
 
 ```bash
-dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel
+dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel cargo
 ```
 
 `yder-devel` (needed to build simd) is often missing from Fedora repos. `install.sh` builds yder from source when the package is absent. Extra packages: https://repo.spacefreak18.xyz/Packages/Fedora/43/
@@ -122,7 +123,7 @@ dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl libuv-dev
 **Debian / Ubuntu / Mint**
 
 ```bash
-apt install build-essential git cmake pkg-config python3 libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+apt install build-essential git cmake pkg-config python3 cargo rustc libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
 ```
 
 Use `liblua5.3-dev` if 5.4 is not in the repo, and `libprocps-dev` if `libproc2-dev` is absent. `libyder-dev` is similarly optional; the installer can build yder.
@@ -130,7 +131,7 @@ Use `liblua5.3-dev` if 5.4 is not in the repo, and `libprocps-dev` if `libproc2-
 **openSUSE**
 
 ```bash
-zypper install git cmake gcc gcc-c++ make pkg-config python3 libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel
+zypper install git cmake gcc gcc-c++ make pkg-config python3 cargo rust libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel
 ```
 
 End-user source install (compiles simapi, simd, and this tree):
@@ -141,7 +142,7 @@ End-user source install (compiles simapi, simd, and this tree):
 
 ## User Setup Guide
 
-See [HOW-TO-USE.md](HOW-TO-USE.md) to configure `~/.config/cargopit/cargopit.config`, udev/groups, Steam launch options, and simd. Keep only connected devices in the config, or set `enabled` to `false` on unused entries.
+See [HOW-TO-USE.md](HOW-TO-USE.md) to configure devices with `cargopit-tui`, udev/groups, Steam launch options, and simd. Keep only connected devices in the config, or set `enabled` to `false` on unused entries.
 
 ## Testing
 
@@ -191,12 +192,12 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 | slog | MIT | `src/cargopit/slog/slog.h` |
 | simapi (submodule) | LGPL-3.0 | https://github.com/Spacefreak18/simapi |
 | Lua 5.4 | MIT | `packaging/licenses/lua-5.4-LICENSE.txt` |
+| ratatui / crossterm (TUI) | MIT | Cargo crates linked into `cargopit-tui` |
 
 ## ToDo
 
 - frequency cap (low-pass filter) for sound haptic effects
 - road and kerb sound haptic effects
-- richer TUI device management
 - Windows port
 - more memory testing
 - cleanup tests which are copies of upstream examples

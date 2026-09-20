@@ -11,6 +11,15 @@
 
 static const char BUG_REPORT_URL[] = "github.com/M4X1K02/cargopit";
 
+static void apply_config_file_arg(struct arg_file* arg_conf, Parameters* p)
+{
+    if (arg_conf->count > 0)
+    {
+        p->config_filepath = strdup(arg_conf->filename[0]);
+        p->user_specified_config_file = true;
+    }
+}
+
 int freeparams(Parameters* p)
 {
 
@@ -65,7 +74,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     struct arg_rex* cmd1             = arg_rex1(NULL, NULL, "play", NULL, REG_ICASE, NULL);
     struct arg_lit* arg_udp          = arg_lit0("d", "udp", "force udp mode for sims which support it");
     struct arg_lit* arg_audio1       = arg_lit0("a", "disable_audio", "force disable of audio devices");
-    struct arg_file* arg_conf        = arg_file0("c", "uiconf", "<config_file>", NULL);
+    struct arg_file* arg_conf        = arg_file0("c", "config-file", "<config_file>", NULL);
     struct arg_file* arg_log         = arg_filen("l", "log", "<log_file>", 0, 1, NULL);
     struct arg_str* arg_confdir      = arg_str1(NULL, NULL, "configdir", "<config_dir>");
     struct arg_int* arg_fps          = arg_int0("f", "fps", "fps", "main data refresh rate");
@@ -87,11 +96,12 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     int nerrors2;
 
     struct arg_rex* cmd3             = arg_rex1(NULL, NULL, "test", NULL, REG_ICASE, NULL);
+    struct arg_file* arg_conf3       = arg_file0("c", "config-file", "<config_file>", NULL);
     struct arg_lit* arg_audio2       = arg_lit0("a", "disable_audio", "force disable of audio devices");
     struct arg_lit* help3            = arg_litn(NULL,"help", 0, 1, "print this help and exit");
     struct arg_lit* vers3            = arg_litn(NULL,"version", 0, 1, "print version information and exit");
     struct arg_end* end3             = arg_end(20);
-    void* argtable3[]                = {cmd3,arg_verbosity3,arg_audio2,help3,vers3,end3};
+    void* argtable3[]                = {cmd3,arg_conf3,arg_verbosity3,arg_audio2,help3,vers3,end3};
     int nerrors3;
 
     struct arg_lit*  help0           = arg_lit0(NULL,"help",     "print this help and exit");
@@ -115,6 +125,11 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         printf("%s: insufficient memory\n",progname);
         goto cleanup;
     }
+    if (arg_nullcheck(argtable3) != 0)
+    {
+        printf("%s: insufficient memory\n",progname);
+        goto cleanup;
+    }
 
     nerrors0 = arg_parse(argc,argv,argtable0);
     nerrors1 = arg_parse(argc,argv,argtable1);
@@ -134,11 +149,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         p->program_action = A_PLAY;
         p->verbosity_count = arg_verbosity1->count;
 
-        if(arg_conf->count > 0)
-        {
-            p->config_filepath = strdup(arg_conf->filename[0]);
-            p->user_specified_config_file = true;
-        }
+        apply_config_file_arg(arg_conf, p);
         if (arg_udp->count > 0)
         {
             p->udp = true;
@@ -197,6 +208,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         }
         p->program_action = A_TEST;
         p->verbosity_count = arg_verbosity3->count;
+        apply_config_file_arg(arg_conf3, p);
         if (arg_audio2->count > 0)
         {
             p->disable_audio = true;

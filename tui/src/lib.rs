@@ -1,0 +1,16 @@
+pub mod app;
+pub mod config;
+pub mod consts;
+pub mod diagnostics;
+pub mod form;
+pub mod hardware;
+pub mod libconfig;
+pub mod logs;
+pub mod paths;
+pub mod process;
+pub mod schema;
+pub mod simd_config;
+pub mod templates;
+pub mod tui_state;
+pub mod tyres;
+pub mod ui;

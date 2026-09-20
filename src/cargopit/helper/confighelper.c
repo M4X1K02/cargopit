@@ -977,7 +977,7 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
     return error;
 }
 
-int uiloadconfig(const char* config_file_str, int confignum, int configureddevices, CargopitSettings* ms, DeviceSettings* ds)
+int load_device_configs(const char* config_file_str, int confignum, int configureddevices, CargopitSettings* ms, DeviceSettings* ds)
 {
     int numdevices = 0;
     config_t cfg;

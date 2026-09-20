@@ -16,10 +16,12 @@ jobs:
         run: sudo apt update
       - name: Install dependencies
         # Same list as ci.yaml's ubuntu-latest leg.
-        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+        run: sudo apt install -y cmake pkg-config build-essential cargo rustc libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
       - name: Configure CMake
         run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
       - name: Build
         run: cmake --build build --config Debug
       - name: Run tests
         run: ctest --test-dir build --output-on-failure --timeout 30
+      - name: TUI tests
+        run: cargo test --manifest-path tui/Cargo.toml --target-dir build/tui

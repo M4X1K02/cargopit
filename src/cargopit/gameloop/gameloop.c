@@ -389,7 +389,7 @@ void looprun(CargopitSettings* ms, loop_data* f, SimData* simdata)
         configcheck(ms->config_str, confignum, &configureddevices);
         DeviceSettings* ds = malloc(configureddevices * sizeof(DeviceSettings));
         slogd("loading confignum %i, with %i devices.", confignum, configureddevices);
-        f->numdevices = uiloadconfig(ms->config_str, confignum, configureddevices, ms, ds);
+        f->numdevices = load_device_configs(ms->config_str, confignum, configureddevices, ms, ds);
 
         if(ms->useconfig == 1)
         {

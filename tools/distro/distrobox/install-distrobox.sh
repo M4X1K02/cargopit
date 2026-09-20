@@ -163,7 +163,7 @@ PACMANCONF_EOF
     # commands — installing the package is just the simplest reliable way
     # to get every lib32-* dependency it needs without hand-picking each
     # one).
-    sudo pacman -Syu --needed --noconfirm base-devel git cmake mingw-w64-gcc wine lib32-glibc libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 procps-ng
+    sudo pacman -Syu --needed --noconfirm base-devel git cmake rust mingw-w64-gcc wine lib32-glibc libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 procps-ng
 
     # Install yay (AUR helper) if not present
     if ! command -v yay &>/dev/null; then
@@ -204,6 +204,14 @@ PACMANCONF_EOF
         exit 1
     fi
     sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit" /usr/local/bin/cargopit
+    if [ -x "$CARGOPIT_SRC/build/tui/release/cargopit-tui" ]; then
+        sudo install -Dm755 "$CARGOPIT_SRC/build/tui/release/cargopit-tui" /usr/local/bin/cargopit-tui
+    elif [ -x "$CARGOPIT_SRC/build/tui/debug/cargopit-tui" ]; then
+        sudo install -Dm755 "$CARGOPIT_SRC/build/tui/debug/cargopit-tui" /usr/local/bin/cargopit-tui
+    else
+        echo "cargopit-tui binary was not produced (install rust/cargo)" >&2
+        exit 1
+    fi
 
     cd "$INSTALL_DIR"
     if [ ! -d "simshmbridge" ]; then
@@ -245,6 +253,12 @@ exec distrobox enter --root simracing -- cargopit test -vv "$@"
 EOF
 chmod +x "$BIN_DIR/test-cargopit"
 
+cat > "$BIN_DIR/cargopit-tui" << 'EOF'
+#!/usr/bin/env bash
+exec distrobox enter --root simracing -- cargopit-tui "$@"
+EOF
+chmod +x "$BIN_DIR/cargopit-tui"
+
 log_success "Wrapper scripts installed"
 
 # Setup cargopit config
@@ -285,7 +299,7 @@ echo "    AUR packages:  simapi-git, simd-git (in '$CONTAINER' container)"
 echo "    Cargopit:      built from source in the container"
 echo "    Bridge:        $INSTALL_DIR/simshmbridge/"
 echo "    Config:        $CONFIG_DIR/cargopit.config"
-echo "    Commands:      start-cargopit, test-cargopit (simd starts with cargopit)"
+    echo "    Commands:      start-cargopit, test-cargopit, cargopit-tui (simd starts with cargopit)"
 echo ""
 echo "  Next steps:"
 echo "    1. Set your device path in $CONFIG_DIR/cargopit.config"

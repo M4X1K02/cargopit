@@ -49,7 +49,7 @@ need_grep() {
 need_exec "$BIN_DIR/start-cargopit"
 need_exec "$BIN_DIR/start-simd"
 need_exec "$BIN_DIR/test-cargopit"
-need_exec "$BIN_DIR/cargopit-manager"
+need_exec "$BIN_DIR/cargopit-tui"
 
 need_grep "$BIN_DIR/start-cargopit" 'play'
 

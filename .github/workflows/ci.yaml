@@ -68,7 +68,7 @@ jobs:
           build-essential cmake pkg-config \
           libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev
+          libxml2-dev libpulse-dev libproc2-dev cargo rustc
 
     - uses: actions/checkout@v4
       with:
@@ -147,6 +147,11 @@ jobs:
         sed -i "s/^Version:.*/Version: ${{ steps.pkgver.outputs.version }}/" ./PKG_SOURCE/DEBIAN/control
         cp ./tools/distro/debian/dpkg/copyright ./PKG_SOURCE/DEBIAN/copyright
         cp ./build/cargopit ./PKG_SOURCE/usr/bin/cargopit
+        if [ -x ./build/tui/release/cargopit-tui ]; then
+          cp ./build/tui/release/cargopit-tui ./PKG_SOURCE/usr/bin/cargopit-tui
+        elif [ -x ./build/tui/debug/cargopit-tui ]; then
+          cp ./build/tui/debug/cargopit-tui ./PKG_SOURCE/usr/bin/cargopit-tui
+        fi
         cp ./tools/cargopit.desktop ./PKG_SOURCE/usr/share/applications/cargopit.desktop
         dpkg-deb --build PKG_SOURCE cargopit-${{ matrix.os }}.deb
         echo "--- control as packaged ---"
@@ -209,7 +214,7 @@ jobs:
             rpm-build cmake gcc gcc-c++ make git curl \
             pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel \
             libserialport-devel lua-devel libuv-devel libxdg-basedir-devel \
-            libxml2-devel procps-ng-devel && exit 0
+            libxml2-devel procps-ng-devel cargo && exit 0
           echo "dnf install failed (attempt $attempt), retrying in 15s..."
           sleep 15
         done
@@ -329,7 +334,7 @@ jobs:
           build-essential cmake pkg-config \
           libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev \
+          libxml2-dev libpulse-dev libproc2-dev cargo rustc \
           desktop-file-utils file patchelf wget
 
     # -std=gnu2x for the C23 enum syntax above: GCC 13 implements it but
@@ -461,13 +466,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder
           sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          sudo flatpak install -y --noninteractive flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+          sudo flatpak install -y --noninteractive flathub \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Build .flatpak
         working-directory: flatpak
         run: |
-          flatpak-builder --force-clean --repo=repo build-dir io.github.spacefreak18.monocoque.yml
-          flatpak build-bundle repo cargopit.flatpak io.github.spacefreak18.monocoque
+          flatpak-builder --force-clean --repo=repo build-dir io.github.M4X1K02.cargopit.yml
+          flatpak build-bundle repo cargopit.flatpak io.github.M4X1K02.cargopit
 
       - name: Upload .flatpak as a build artifact
         uses: actions/upload-artifact@v4

@@ -41,6 +41,7 @@ LOCAL_SRC=""
 CARGOPIT_SRC=""
 SIMD_BIN=""
 CARGOPIT_BIN=""
+CARGOPIT_TUI_BIN=""
 
 if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -183,12 +184,12 @@ manual_dep_hint() {
 Required build packages (names vary by distro):
   git cmake gcc make pkg-config
   libuv argtable libserialport libconfig hidapi lua libxdg-basedir libxml2 libpulse
-  yder (simd), python3
-  optional: mingw-w64 (only with --build-bridges)
+  yder (simd), cargo/rustc
+  optional: mingw-w64 (only with --build-bridges), python3 (tests)
 
-Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 python yder
-Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config python3
-Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config python3
+Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 rust python yder
+Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3
+Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3
 EOF
 }
 
@@ -242,7 +243,7 @@ install_yder_from_source() {
 
 install_deps_arch() {
     local deps=(
-        git cmake make gcc pkgconf python curl unzip
+        git cmake make gcc pkgconf python curl unzip rust
         libuv argtable libserialport libconfig hidapi lua54
         libpulse libxdg-basedir libxml2 yder procps-ng
     )
@@ -255,7 +256,7 @@ install_deps_arch() {
 
 install_deps_fedora() {
     local deps=(
-        git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates
+        git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
         pulseaudio-libs-devel procps-ng-devel
@@ -279,7 +280,7 @@ install_deps_debian() {
     run_root apt-get update
 
     local deps=(
-        build-essential git cmake pkg-config python3 curl unzip ca-certificates
+        build-essential git cmake pkg-config python3 curl unzip ca-certificates cargo
         libuv1-dev libargtable2-dev libserialport-dev libconfig-dev
         libhidapi-dev libxdg-basedir-dev libxml2-dev libpulse-dev
     )
@@ -306,7 +307,7 @@ install_deps_debian() {
 
 install_deps_opensuse() {
     local deps=(
-        git cmake gcc gcc-c++ make pkg-config python3 curl unzip
+        git cmake gcc gcc-c++ make pkg-config python3 curl unzip cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
         libpulse-devel procps-devel
@@ -457,6 +458,14 @@ build_cargopit() {
     CARGOPIT_BIN="$CARGOPIT_SRC/build/cargopit"
     if [ ! -x "$CARGOPIT_BIN" ]; then
         log_error "cargopit binary was not produced"
+        exit 1
+    fi
+    if [ -x "$CARGOPIT_SRC/build/tui/release/cargopit-tui" ]; then
+        CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/release/cargopit-tui"
+    elif [ -x "$CARGOPIT_SRC/build/tui/debug/cargopit-tui" ]; then
+        CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/debug/cargopit-tui"
+    else
+        log_error "cargopit-tui binary was not produced (install cargo/rustc)"
         exit 1
     fi
     log_success "cargopit built"
@@ -627,36 +636,19 @@ exec "\$BIN" test -vv "\$@"
 EOF
     chmod +x "$BIN_DIR/test-cargopit"
 
-    local search_paths=(
-        "$INSTALL_DIR/cargopit/tools/cargopit-manager"
-        "$INSTALL_DIR/cargopit/cargopit-manager"
-        "${CARGOPIT_SRC:-}/tools/cargopit-manager"
-        "${SCRIPT_DIR:-}/tools/cargopit-manager"
-        "${SCRIPT_DIR:-}/cargopit-manager"
-    )
-    local manager=""
-    local path
-    for path in "${search_paths[@]}"; do
-        [ -n "$path" ] || continue
-        if [ -f "$path" ]; then
-            manager="$path"
-            break
-        fi
-    done
-    if [ -z "$manager" ]; then
-        mkdir -p "$INSTALL_DIR"
-        if curl -fsSL -o "$INSTALL_DIR/cargopit-manager" \
-            "${CARGOPIT_RAW_MASTER_URL}/tools/cargopit-manager"; then
-            manager="$INSTALL_DIR/cargopit-manager"
-            log_info "Downloaded cargopit-manager from GitHub"
+    if [ -z "${CARGOPIT_TUI_BIN:-}" ]; then
+        if [ -x "${CARGOPIT_SRC:-}/build/tui/release/cargopit-tui" ]; then
+            CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/release/cargopit-tui"
+        elif [ -x "${CARGOPIT_SRC:-}/build/tui/debug/cargopit-tui" ]; then
+            CARGOPIT_TUI_BIN="$CARGOPIT_SRC/build/tui/debug/cargopit-tui"
         fi
     fi
-    if [ -n "$manager" ]; then
-        cp "$manager" "$BIN_DIR/cargopit-manager"
-        chmod +x "$BIN_DIR/cargopit-manager"
-        log_success "Installed cargopit-manager from $manager"
+    if [ -n "${CARGOPIT_TUI_BIN:-}" ] && [ -x "$CARGOPIT_TUI_BIN" ]; then
+        cp "$CARGOPIT_TUI_BIN" "$BIN_DIR/cargopit-tui"
+        chmod +x "$BIN_DIR/cargopit-tui"
+        log_success "Installed cargopit-tui from $CARGOPIT_TUI_BIN"
     else
-        log_warn "cargopit-manager not found (looked in cloned tree, not the directory you launched install.sh from)"
+        log_warn "cargopit-tui was not built (need cargo during cmake)"
     fi
 
     if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -746,10 +738,10 @@ verify_install() {
         log_error "simd binary missing"
         ok=0
     fi
-    if [ -f "$BIN_DIR/cargopit-manager" ]; then
-        log_success "manager: $BIN_DIR/cargopit-manager"
+    if [ -x "$BIN_DIR/cargopit-tui" ]; then
+        log_success "tui: $BIN_DIR/cargopit-tui"
     else
-        log_warn "cargopit-manager was not installed"
+        log_warn "cargopit-tui was not installed"
     fi
     if [ "$ok" -ne 1 ]; then
         exit 1
@@ -772,20 +764,20 @@ print_next_steps() {
     echo "  start-simd"
     echo "  start-cargopit"
     echo "  test-cargopit"
-    echo "  cargopit-manager"
+    echo "  cargopit-tui"
     echo ""
     echo "Confirm telemetry after the session is live:"
     echo "  hexdump /dev/shm/SIMAPI.DAT | head"
     echo "  hexdump /dev/shm/acpmf_physics | head     # AC / ACC"
     echo ""
-    echo "Start:         start-cargopit   (or cargopit-manager)"
+    echo "Start:         start-cargopit   (or cargopit-tui)"
     echo "simd is started automatically if it is not already running."
     echo "You will only be asked to act if simd is not installed."
     echo ""
-    echo "Edit devices:  $CONFIG_DIR/cargopit/cargopit.config"
+    echo "Edit devices:  cargopit-tui"
     echo "Examples:      $CONFIG_DIR/cargopit/cargopit.config.example"
     echo "Test devices:  test-cargopit"
-    echo "TUI:           cargopit-manager"
+    echo "TUI:           cargopit-tui"
     echo ""
     echo "Game setup:    https://spacefreak18.github.io/simapi/simd_usage"
     echo "Docs:          https://spacefreak18.github.io/simapi/"

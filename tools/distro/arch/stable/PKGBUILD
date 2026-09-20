@@ -21,6 +21,7 @@ depends=(
 makedepends=(
   git
   cmake
+  rust
 )
 
 source=("cargopit::git+https://github.com/M4X1K02/cargopit.git#commit=$_commit")
@@ -40,5 +41,10 @@ package() {
 
   mkdir -p "${pkgdir}/usr/bin/"
   cp "$srcdir/$_reponame"/build/cargopit "${pkgdir}/usr/bin/cargopit"
+  if [ -x "$srcdir/$_reponame"/build/tui/release/cargopit-tui ]; then
+    cp "$srcdir/$_reponame"/build/tui/release/cargopit-tui "${pkgdir}/usr/bin/cargopit-tui"
+  elif [ -x "$srcdir/$_reponame"/build/tui/debug/cargopit-tui ]; then
+    cp "$srcdir/$_reponame"/build/tui/debug/cargopit-tui "${pkgdir}/usr/bin/cargopit-tui"
+  fi
   install -D -m644 "$srcdir/$_reponame"/LICENSE.rst -t "${pkgdir}/usr/share/licenses/$_reponame"
 }

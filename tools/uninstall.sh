@@ -50,7 +50,7 @@ fi
 log_warn "This will remove:"
 echo "  • Cargopit installation ($INSTALL_DIR)"
 echo "  • Configuration files ($CONFIG_DIR/cargopit, $CONFIG_DIR/simd)"
-echo "  • Launcher scripts ($BIN_DIR/start-*, test-cargopit, cargopit-manager)"
+echo "  • Launcher scripts ($BIN_DIR/start-*, test-cargopit, cargopit-tui)"
 echo "  • systemd service files ($SYSTEMD_DIR/simd.service)"
 echo "  • Log files ($CACHE_DIR/cargopit)"
 echo ""
@@ -109,6 +109,7 @@ log_info "Removing launcher scripts..."
 rm -f "$BIN_DIR/start-simd" 2>/dev/null || true
 rm -f "$BIN_DIR/start-cargopit" 2>/dev/null || true
 rm -f "$BIN_DIR/test-cargopit" 2>/dev/null || true
+rm -f "$BIN_DIR/cargopit-tui" 2>/dev/null || true
 rm -f "$BIN_DIR/cargopit-manager" 2>/dev/null || true
 
 # Remove systemd services

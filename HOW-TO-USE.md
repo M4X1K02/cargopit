@@ -6,25 +6,27 @@ Game/bridge details live in the [simapi docs](https://spacefreak18.github.io/sim
 
 Prefer the method for your distro in the [README](README.md#quick-install). A packaged or `./install.sh` install should give you:
 
-* `start-simd`, `start-cargopit`, `test-cargopit` in `~/.local/bin`
+* `start-simd`, `start-cargopit`, `test-cargopit`, `cargopit-tui` in `~/.local/bin`
 * configs in `~/.config/simd/` and `~/.config/cargopit/`
 * optional user unit `~/.config/systemd/user/simd.service`
 
 To compile by hand instead:
 
-* build [cargopit](https://github.com/M4X1K02/cargopit) — `git submodule update --init --recursive`, then `cmake` / `make`
+* build [cargopit](https://github.com/M4X1K02/cargopit) — `git submodule update --init --recursive`, then `cmake` / `make` (needs cargo for `cargopit-tui`)
 * build [simd](https://github.com/Spacefreak18/simapi/tree/master/simd) (needs simapi installed first, including `simdata.h`)
 * get [simshmbridge](https://github.com/spacefreak18/simshmbridge) compatibility EXEs ([releases](https://github.com/spacefreak18/simshmbridge/releases)) unless you only use UDP titles
 
 ## Configure SIMD & Cargopit
 
-* `~/.config/simd/simd.config` — [example](https://github.com/Spacefreak18/simapi/blob/master/simd/conf/simd.config) (usually fine as-is)
-* `~/.config/cargopit/cargopit.config` — start from the installer stub or [conf/cargopit.config](https://github.com/M4X1K02/cargopit/blob/master/conf/cargopit.config)
-    * Keep only devices you have plugged in
-    * [Bass shaker config](https://spacefreak18.github.io/simapi/shakers)
-    * Test with `test-cargopit` or `./cargopit test -vv`
+Use `cargopit-tui` for device lists, play/test flags, simd.config, Lua scripts, tachometer calibration, and tyre diameters. A read-only raw view of `cargopit.config` is on the Settings tab.
 
-Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, plus the udev rules from `udev/69-cargopit.rules`.
+* `~/.config/simd/simd.config` — [example](https://github.com/Spacefreak18/simapi/blob/master/simd/conf/simd.config) (editable in the TUI)
+* `~/.config/cargopit/cargopit.config` — start from an empty profile in the TUI, or the installer stub / [conf/cargopit.config](https://github.com/M4X1K02/cargopit/blob/master/conf/cargopit.config)
+    * Keep only devices you have plugged in (or disable unused rows in the TUI)
+    * [Bass shaker config](https://spacefreak18.github.io/simapi/shakers)
+    * Test with `test-cargopit`, `cargopit test -vv`, or **t** in the TUI
+
+Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, plus the udev rules from `udev/69-cargopit.rules`. The TUI Diagnostics page reports groups, udev, binaries, and `SIMAPI.DAT`.
 
 ## Steam & Game Config
 
@@ -53,7 +55,7 @@ No extra in-game telemetry toggle. You still need the AC/ACC bridge EXE in the S
 
 ## Run
 
-Start a session with `start-cargopit`, `cargopit play`, or `cargopit-manager`. Cargopit starts simd itself when it is not already running. Launch the game from Steam as usual.
+Start a session with `start-cargopit`, `cargopit play`, or `cargopit-tui`. Cargopit starts simd itself when it is not already running. Launch the game from Steam as usual.
 
 If simd is not installed, that is the one case that needs a human: install simd and try again.
 
@@ -67,4 +69,4 @@ Shared-memory titles still need the bridge EXE in the Steam launch command (`SIM
 * AMS2: look for `/dev/shm/$pcars2$`
 * confirm the bridge EXE is actually running (`ps aux | grep -i bridge`)
 * if simd sees the game but cargopit shows no RPM/gear, re-check [game settings](#steam--game-config)
-* `cargopit-manager` can start/stop the two processes if `~/.local/bin` is on `PATH`
+* `cargopit-tui` can start/stop the two processes, edit devices, and show logs if `~/.local/bin` is on `PATH`

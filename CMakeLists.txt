@@ -12,6 +12,7 @@ SET_SOURCE_FILES_PROPERTIES( src/cargopit.c PROPERTIES LANGUAGE C)
 
 option(BUILD_SHARED "Build cargopit shared library" OFF)
 option(ENABLE_TESTS "Build test suite" OFF)
+option(BUILD_TUI "Build cargopit-tui (ratatui)" ON)
 
 
 project(cargopit)
@@ -173,5 +174,38 @@ if(ENABLE_TESTS AND NOT CARGOPIT_SUBPROJECT)
     add_subdirectory(tests)
 endif()
 
+if(BUILD_TUI)
+    find_program(CARGO_EXECUTABLE cargo)
+    if(NOT CARGO_EXECUTABLE)
+        message(FATAL_ERROR "cargo is required when BUILD_TUI is ON. Install rustc/cargo or pass -DBUILD_TUI=OFF")
+    endif()
+    set(TUI_TARGET_DIR "${CMAKE_BINARY_DIR}/tui")
+    set(CARGO_COMMAND ${CARGO_EXECUTABLE} build)
+    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(TUI_BIN "${TUI_TARGET_DIR}/debug/cargopit-tui")
+    else()
+        list(APPEND CARGO_COMMAND --release)
+        set(TUI_BIN "${TUI_TARGET_DIR}/release/cargopit-tui")
+    endif()
+    list(APPEND CARGO_COMMAND
+        --manifest-path "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
+        --target-dir "${TUI_TARGET_DIR}")
+    file(GLOB_RECURSE TUI_RUST_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/tui/src/*.rs")
+    add_custom_command(
+        OUTPUT "${TUI_BIN}"
+        COMMAND ${CARGO_COMMAND}
+        DEPENDS
+            ${TUI_RUST_SOURCES}
+            "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
+            "${CMAKE_SOURCE_DIR}/tui/Cargo.lock"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tui"
+        COMMENT "Building cargopit-tui with cargo"
+        VERBATIM)
+    add_custom_target(cargopit-tui ALL DEPENDS "${TUI_BIN}")
+    install(PROGRAMS "${TUI_BIN}" DESTINATION bin)
+endif()
+
 install(TARGETS cargopit-cli RUNTIME DESTINATION bin)
 install(FILES tools/cargopit.desktop DESTINATION share/applications)
+install(DIRECTORY conf/ DESTINATION share/cargopit/conf)

@@ -2,8 +2,8 @@
 Version=1.0
 Type=Application
 Name=Cargopit
-Comment=Launch Cargopit
-Exec=cargopit play
+Comment=Launch Cargopit TUI
+Exec=cargopit-tui
 Icon=monocoque
 Terminal=true
 Categories=Game;Development;
