@@ -46,6 +46,18 @@ impl SessionKind {
 }
 
 pub fn find_binary(name: &str) -> Option<PathBuf> {
+    if let Some(path) = which(name) {
+        if !is_managed_binary(&path, name) {
+            return Some(path);
+        }
+    }
+    managed_binaries(name)
+        .into_iter()
+        .chain(which(name))
+        .find(|path| is_executable(path))
+}
+
+fn managed_binaries(name: &str) -> [PathBuf; 3] {
     [
         paths::source_root().join(consts::BUILD_DIRNAME).join(name),
         paths::local_bin_dir().join(name),
@@ -54,9 +66,10 @@ pub fn find_binary(name: &str) -> Option<PathBuf> {
             .join(consts::BUILD_DIRNAME)
             .join(name),
     ]
-    .into_iter()
-    .chain(which(name))
-    .find(|path| is_executable(path))
+}
+
+fn is_managed_binary(path: &Path, name: &str) -> bool {
+    managed_binaries(name).iter().any(|managed| managed == path)
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -539,5 +552,15 @@ mod tests {
             consts::BINARY_TUI,
             "/opt/build/cargopit-tui",
         ));
+    }
+
+    #[test]
+    fn path_stub_is_not_a_managed_install() {
+        let stub = PathBuf::from("/tmp/walk/bin").join(consts::BINARY_CARGOPIT);
+        assert!(!is_managed_binary(&stub, consts::BINARY_CARGOPIT));
+        let source_build = paths::source_root()
+            .join(consts::BUILD_DIRNAME)
+            .join(consts::BINARY_CARGOPIT);
+        assert!(is_managed_binary(&source_build, consts::BINARY_CARGOPIT));
     }
 }
