@@ -395,8 +395,14 @@ pub const PROFILE_FIELD_CAR: usize = 1;
 pub const PROFILE_FIELD_COUNT: usize = 2;
 
 pub const TOO_SMALL_TITLE: &str = "Terminal too small";
-pub const TEST_PANEL_IDLE: &str = "Idle - press t to test this device";
+pub const TEST_PANEL_IDLE: &str = "Idle - press t to test";
 pub const TEST_PANEL_RUNNING: &str = "Testing this device";
+const _: () = assert!(
+    TEST_PANEL_IDLE.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize
+);
+const _: () = assert!(
+    TEST_PANEL_RUNNING.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize
+);
 pub const TUNING_OFFLINE_HINT: &str =
     "Offline tune: save writes disk. Apply restarts play if it was running. Live IPC is not implemented.";
 pub const RAW_VIEW_HINT: &str = "Read-only view of the last on-disk file (comments are lost on save).";

@@ -1258,7 +1258,7 @@ mod tests {
     }
 
     fn with_app<F: FnOnce(&mut App)>(f: F) {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var(consts::ENV_XDG_CONFIG_HOME, dir.path().join("config"));
         std::env::set_var(consts::ENV_XDG_CACHE_HOME, dir.path().join("cache"));
@@ -1347,6 +1347,7 @@ mod tests {
             assert!(dump.contains(consts::TITLE_TELEMETRY_SESSION), "{dump}");
             assert!(dump.contains(consts::TITLE_TELEMETRY_CONTROLS), "{dump}");
             assert!(dump.contains(consts::LABEL_RPM), "{dump}");
+            app.tab = consts::TAB_DEVICES;
             app.screen = Screen::DeviceForm;
             let dump = render_dump(app);
             assert!(dump.contains("Transport:"));
