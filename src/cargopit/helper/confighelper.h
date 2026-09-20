@@ -275,6 +275,8 @@ int configcheck(const char* config_file_str, int confignum, int* devices);
 int load_device_configs(const char* config_file_str, int confignum, int configureddevices, CargopitSettings* ms, DeviceSettings* ds);
 
 int getsingledevice(const char* config_file_str, int confignum, int devicenum, CargopitSettings* ms, DeviceSettings* ds);
+int resolve_config_index(const char* config_file_str, int requested_index);
+int load_devices_for_test(const char* config_file_str, int confignum, int device_index, CargopitSettings* ms, DeviceSettings** ds, int* configureddevices);
 
 int getNumberOfConfigs(const char* config_file_str);
 #endif

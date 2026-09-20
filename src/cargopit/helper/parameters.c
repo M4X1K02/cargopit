@@ -63,6 +63,8 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     p->user_specified_config_file = false;
     p->user_specified_log_file = false;
     p->user_specified_config_dir = false;
+    p->device_index = TEST_DEVICE_INDEX_ALL;
+    p->config_index = TEST_CONFIG_INDEX_DEFAULT;
 
     // setup argument handling structures
     const char* progname = "cargopit";
@@ -97,11 +99,13 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
 
     struct arg_rex* cmd3             = arg_rex1(NULL, NULL, "test", NULL, REG_ICASE, NULL);
     struct arg_file* arg_conf3       = arg_file0("c", "config-file", "<config_file>", NULL);
+    struct arg_int* arg_device_index = arg_int0(NULL, "device-index", "<n>", "test only this device (0-based)");
+    struct arg_int* arg_config_index = arg_int0(NULL, "config-index", "<n>", "config profile index");
     struct arg_lit* arg_audio2       = arg_lit0("a", "disable_audio", "force disable of audio devices");
     struct arg_lit* help3            = arg_litn(NULL,"help", 0, 1, "print this help and exit");
     struct arg_lit* vers3            = arg_litn(NULL,"version", 0, 1, "print version information and exit");
     struct arg_end* end3             = arg_end(20);
-    void* argtable3[]                = {cmd3,arg_conf3,arg_verbosity3,arg_audio2,help3,vers3,end3};
+    void* argtable3[]                = {cmd3,arg_conf3,arg_device_index,arg_config_index,arg_verbosity3,arg_audio2,help3,vers3,end3};
     int nerrors3;
 
     struct arg_lit*  help0           = arg_lit0(NULL,"help",     "print this help and exit");
@@ -209,6 +213,14 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         p->program_action = A_TEST;
         p->verbosity_count = arg_verbosity3->count;
         apply_config_file_arg(arg_conf3, p);
+        if (arg_device_index->count > 0)
+        {
+            p->device_index = arg_device_index->ival[0];
+        }
+        if (arg_config_index->count > 0)
+        {
+            p->config_index = arg_config_index->ival[0];
+        }
         if (arg_audio2->count > 0)
         {
             p->disable_audio = true;

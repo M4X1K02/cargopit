@@ -28,8 +28,14 @@ typedef struct
     char* log_filename_str;
     char* log_fullfilename_str;
     char* log_dirname_str;
+
+    int device_index;
+    int config_index;
 }
 Parameters;
+
+#define TEST_DEVICE_INDEX_ALL     (-1)
+#define TEST_CONFIG_INDEX_DEFAULT (-1)
 
 typedef enum
 {

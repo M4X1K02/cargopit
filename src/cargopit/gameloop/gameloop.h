@@ -5,6 +5,7 @@
 extern int appstate;
 
 int tester(SimDevice* devices, int numdevices);
+int run_hardware_test(CargopitSettings* ms, int config_index, int device_index);
 int looper(SimDevice* devices, int numdevices, Parameters* p);
 
 int cargopit_mainloop(CargopitSettings* ms);

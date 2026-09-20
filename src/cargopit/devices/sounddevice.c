@@ -438,7 +438,7 @@ int sounddev_init(SoundDevice* sounddevice, const char* devname, SoundDeviceSett
     const char* streamname= "Engine";
     switch (sounddevice->m.hapticeffect.effecttype) {
         case (EFFECT_GEARSHIFT):
-            sounddevice->sounddata.last_gear = 0;
+            sounddevice->sounddata.last_gear = SIMAPI_GEAR_NEUTRAL;
             sounddevice->sounddata.duration = sounddevice->m.hapticeffect.duration;
             if (sounddevice->sounddata.duration <= 0.0)
             {

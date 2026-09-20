@@ -14,6 +14,19 @@ add_executable(ensure_simd_test ensure_simd_test.c)
 target_link_libraries(ensure_simd_test helper config slog xml2 simulatorapi m ${PROC_LIBS})
 add_test(NAME ensure_simd_test COMMAND ensure_simd_test)
 
+add_executable(tester_simdata_test tester_simdata_test.c)
+target_link_libraries(tester_simdata_test
+    gameloop helper devices slog simulatorapi
+    m hidapi-hidraw pulse serialport xml2 config uv xdg-basedir
+    Lua::Lua ${PROC_LIBS})
+target_include_directories(tester_simdata_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/cargopit
+    ${CMAKE_SOURCE_DIR}/src/cargopit/gameloop
+    ${CMAKE_SOURCE_DIR}/src/cargopit/helper
+    ${CMAKE_SOURCE_DIR}/src/cargopit/devices
+    ${LUA_INCLUDE_DIR})
+add_test(NAME tester_simdata_test COMMAND tester_simdata_test)
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME startup_play_missing_simd
