@@ -323,6 +323,7 @@ impl App {
     }
 
     fn sample_telemetry(&mut self) {
+        self.shm.revalidate();
         let Some(view) = self.shm.sample() else {
             self.telemetry = TelemetryView::default();
             self.telemetry_live = self.test_running();

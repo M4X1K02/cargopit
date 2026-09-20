@@ -1,8 +1,9 @@
 //! Observe SIMAPI.DAT through a persistent mmap and inotify, without polling.
 
 use std::ffi::OsStr;
-use std::fs::File;
+use std::fs::{File, Metadata};
 use std::io;
+use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
@@ -195,6 +196,9 @@ pub fn resolve_games(
         }
         return with_flow(extra, sending);
     }
+    if !shm_game_confirmed(view, extra) {
+        return with_flow(extra, sending);
+    }
     let mut games = Vec::new();
     games.push(RunningGame {
         name: display_name(simd, view),
@@ -216,6 +220,14 @@ pub fn resolve_games(
 
 fn shm_has_identity(view: &TelemetryView) -> bool {
     view.simexe != 0 || view.simapi != 0
+}
+
+fn shm_game_confirmed(view: &TelemetryView, extra: &[RunningGame]) -> bool {
+    extra.iter().any(|game| extra_matches_view(game, view))
+}
+
+fn extra_matches_view(game: &RunningGame, view: &TelemetryView) -> bool {
+    view.simexe != 0 && game.game_id == view.simexe
 }
 
 fn with_flow(games: &[RunningGame], sending: bool) -> Vec<RunningGame> {
@@ -266,8 +278,14 @@ fn display_name(simd: &SimdConfig, view: &TelemetryView) -> String {
     consts::LABEL_NO_SIM.to_string()
 }
 
+struct MappedShm {
+    map: Mmap,
+    dev: u64,
+    ino: u64,
+}
+
 pub struct SimApiSession {
-    map: Option<Mmap>,
+    map: Option<MappedShm>,
     events: Option<Receiver<ShmEvent>>,
 }
 
@@ -322,12 +340,24 @@ impl SimApiSession {
     }
 
     pub fn sample(&self) -> Option<TelemetryView> {
-        let map = self.map.as_ref()?;
-        read_simdata(map)
+        let mapped = self.map.as_ref()?;
+        read_simdata(&mapped.map)
     }
 
     pub fn mapped(&self) -> bool {
         self.map.is_some()
+    }
+
+    pub fn revalidate(&mut self) {
+        let path = Path::new(consts::SIMAPI_DAT_PATH);
+        let meta = path.metadata().ok();
+        if map_matches_file(self.map.as_ref(), meta.as_ref()) {
+            return;
+        }
+        self.map = None;
+        if meta.is_some() {
+            self.remap();
+        }
     }
 
     fn remap(&mut self) {
@@ -335,13 +365,28 @@ impl SimApiSession {
     }
 }
 
-fn open_map(path: &Path) -> Option<Mmap> {
+fn map_matches_file(mapped: Option<&MappedShm>, meta: Option<&Metadata>) -> bool {
+    let Some(mapped) = mapped else {
+        return meta.is_none();
+    };
+    let Some(meta) = meta else {
+        return false;
+    };
+    meta.dev() == mapped.dev && meta.ino() == mapped.ino
+}
+
+fn open_map(path: &Path) -> Option<MappedShm> {
     let file = File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
     let map = unsafe { Mmap::map(&file).ok()? };
     if map.len() < simdata_size() {
         return None;
     }
-    Some(map)
+    Some(MappedShm {
+        map,
+        dev: meta.dev(),
+        ino: meta.ino(),
+    })
 }
 
 fn spawn_watcher() -> Option<Receiver<ShmEvent>> {
@@ -394,23 +439,50 @@ pub fn exe_matches_listing(listing: &str, exe: &str) -> bool {
     if exe.is_empty() {
         return false;
     }
-    let needle = exe.to_ascii_lowercase();
-    for line in listing.lines().skip(1) {
-        let mut parts = line.split_whitespace();
-        let Some(_pid) = parts.next() else {
-            continue;
-        };
-        let Some(comm) = parts.next() else {
-            continue;
-        };
-        let args = parts.collect::<Vec<_>>().join(" ");
-        if comm.to_ascii_lowercase().contains(&needle)
-            || args.to_ascii_lowercase().contains(&needle)
-        {
-            return true;
-        }
+    listing
+        .lines()
+        .skip(1)
+        .any(|line| listing_line_has_exe(line, exe))
+}
+
+fn listing_line_has_exe(line: &str, exe: &str) -> bool {
+    let mut parts = line.split_whitespace();
+    let Some(_pid) = parts.next() else {
+        return false;
+    };
+    let Some(comm) = parts.next() else {
+        return false;
+    };
+    if token_is_exe(comm, exe) {
+        return true;
     }
-    false
+    if !comm_hosts_sim_exe(comm) {
+        return false;
+    }
+    parts.any(|token| token_is_exe(token, exe))
+}
+
+fn comm_hosts_sim_exe(comm: &str) -> bool {
+    let base = exe_basename(comm);
+    let name = base.trim_end_matches(consts::WINDOWS_EXE_SUFFIX);
+    consts::SIM_EXE_HOST_COMMS.iter().any(|host| name == *host)
+}
+
+fn token_is_exe(token: &str, exe: &str) -> bool {
+    let exe = exe.trim_matches('"').to_ascii_lowercase();
+    if exe.is_empty() {
+        return false;
+    }
+    exe_basename(token) == exe
+}
+
+fn exe_basename(token: &str) -> String {
+    token
+        .trim_matches('"')
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(token)
+        .to_ascii_lowercase()
 }
 
 pub fn extras_from_listing(simd: &SimdConfig, listing: &str) -> Vec<RunningGame> {
@@ -577,6 +649,7 @@ mod tests {
     #[test]
     fn resolve_games_uses_simd_name() {
         let simd = simd_with("Assetto Corsa", 244210, "acs.exe");
+        let extras = extras_from_listing(&simd, "  PID COMM ARGS\n  1 acs.exe -w\n");
         let view = TelemetryView {
             valid: 1,
             simexe: 244210,
@@ -585,7 +658,7 @@ mod tests {
             simstatus: consts::SIMAPI_STATUS_ACTIVEPLAY,
             ..TelemetryView::default()
         };
-        let games = resolve_games(&simd, &view, true, &[]);
+        let games = resolve_games(&simd, &view, true, &extras);
         assert_eq!(games.len(), 1);
         assert_eq!(games[0].name, "Assetto Corsa");
         assert!(games[0].sending);
@@ -611,5 +684,89 @@ mod tests {
         let listing = "  PID COMM ARGS\n  1 bash acs.exe -w\n";
         assert!(exe_matches_listing(listing, "acs.exe"));
         assert!(!exe_matches_listing(listing, "ams2.exe"));
+    }
+
+    #[test]
+    fn exe_match_finds_acr_process() {
+        let listing = "  PID COMM ARGS\n  9 acr.exe Z:\\steam\\acr.exe\n";
+        assert!(exe_matches_listing(listing, consts::SIM_EXE_ACR));
+    }
+
+    #[test]
+    fn exe_match_ignores_pgrep_for_acr() {
+        let listing =
+            "  PID COMM ARGS\n  1 pgrep pgrep -f Assetto Corsa Rally/acr/Binaries/Win64/acr.exe\n";
+        assert!(!exe_matches_listing(listing, consts::SIM_EXE_ACR));
+        let simd = simd_with(
+            "AssettoCorsaRally",
+            consts::SIMULATOR_EXE_ASSETTO_CORSA_RALLY as i64,
+            consts::SIM_EXE_ACR,
+        );
+        assert!(extras_from_listing(&simd, listing).is_empty());
+    }
+
+    #[test]
+    fn exe_match_ignores_acr_watch_script() {
+        let listing = "  PID COMM ARGS\n  1 bash bash /home/user/.local/bin/acr-moza-watch\n";
+        assert!(!exe_matches_listing(listing, consts::SIM_EXE_ACR));
+    }
+
+    #[test]
+    fn exe_match_ignores_acr_path_in_steam_wrapper() {
+        let listing = format!(
+            "  PID COMM ARGS\n  1 reaper reaper SteamLaunch AppId={} -- proton waitforexitandrun /games/Assetto Corsa Rally/{}\n",
+            consts::SIMULATOR_EXE_ASSETTO_CORSA_RALLY,
+            consts::SIM_EXE_ACR,
+        );
+        assert!(!exe_matches_listing(&listing, consts::SIM_EXE_ACR));
+        let simd = simd_with(
+            "AssettoCorsaRally",
+            consts::SIMULATOR_EXE_ASSETTO_CORSA_RALLY as i64,
+            consts::SIM_EXE_ACR,
+        );
+        assert!(extras_from_listing(&simd, &listing).is_empty());
+    }
+
+    #[test]
+    fn parked_acr_shm_without_process_is_not_running() {
+        let simd = simd_with(
+            "AssettoCorsaRally",
+            consts::SIMULATOR_EXE_ASSETTO_CORSA_RALLY as i64,
+            consts::SIM_EXE_ACR,
+        );
+        let view = TelemetryView {
+            valid: 1,
+            simexe: consts::SIMULATOR_EXE_ASSETTO_CORSA_RALLY,
+            simapi: consts::SIMULATOR_API_ASSETTO_CORSA,
+            simon: 1,
+            simstatus: consts::SIMAPI_STATUS_ACTIVEPLAY,
+            ..TelemetryView::default()
+        };
+        let games = resolve_games(&simd, &view, true, &[]);
+        assert!(games.is_empty(), "parked ACR shm {games:?}");
+    }
+
+    #[test]
+    fn parked_acr_shm_with_process_stays_visible() {
+        let simd = simd_with(
+            "AssettoCorsaRally",
+            consts::SIMULATOR_EXE_ASSETTO_CORSA_RALLY as i64,
+            consts::SIM_EXE_ACR,
+        );
+        let listing = "  PID COMM ARGS\n  9 acr.exe Z:\\steam\\acr.exe\n";
+        let extras = extras_from_listing(&simd, listing);
+        assert_eq!(extras.len(), 1);
+        let view = TelemetryView {
+            valid: 1,
+            simexe: consts::SIMULATOR_EXE_ASSETTO_CORSA_RALLY,
+            simapi: consts::SIMULATOR_API_ASSETTO_CORSA,
+            simon: 1,
+            simstatus: consts::SIMAPI_STATUS_ACTIVEPLAY,
+            ..TelemetryView::default()
+        };
+        let games = resolve_games(&simd, &view, false, &extras);
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].name, "AssettoCorsaRally");
+        assert_eq!(games[0].status_label, consts::LABEL_TELEMETRY_IDLE);
     }
 }
