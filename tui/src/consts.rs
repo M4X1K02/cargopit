@@ -382,6 +382,7 @@ pub const SIMD_FIELD_LIVEEXE: &str = "liveexe";
 pub const SIMD_FIELD_BRIDGEDELAY: &str = "bridgedelay";
 pub const SIMD_FIELD_SIMAPI: &str = "simapi";
 pub const SIMD_FIELD_USEUDP: &str = "useudp";
+pub const SIMD_FIELD_UDP_FORWARD: &str = "udp_forward";
 
 pub const SIMD_FIELD_HELP: &[(&str, &str)] = &[
     (SIMD_FIELD_NAME, "Simulator title as simd matches it"),
@@ -391,6 +392,7 @@ pub const SIMD_FIELD_HELP: &[(&str, &str)] = &[
     (SIMD_FIELD_BRIDGEDELAY, "Seconds to wait for the shm bridge (default 5)"),
     (SIMD_FIELD_SIMAPI, "SimulatorAPI enum value from simapi.h"),
     (SIMD_FIELD_USEUDP, "Force UDP telemetry for this title when supported"),
+    (SIMD_FIELD_UDP_FORWARD, "Extra UDP copies of packets simd receives (ip/port list)"),
 ];
 
 pub const SETTINGS_ITEMS: &[&str] = &[
