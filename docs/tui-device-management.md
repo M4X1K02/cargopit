@@ -11,7 +11,7 @@ Goal: **every setting a user currently has to edit outside the TUI becomes edita
 | Tab | What it does today |
 | --- | --- |
 | Dashboard | simd / cargopit / `SIMAPI.DAT` status; Start / Test / Restart / Stop |
-| Devices | Switch `configs[]` entries with `[` / `]`; list devices; add / edit / delete; Enter opens a **stub** tuning page |
+| Devices | Shared `configs[]` profile (`,` / `.`); list devices; add / edit / delete; Enter tunes |
 | Logs | Tail `~/.cache/cargopit/*.log` plus child stdout/stderr |
 
 The device editor (`tui/src/form.rs`) is a single vertical field list. Visible fields depend on class (`USB` / `Sound` / `Serial`) and type. Save rewrites `~/.config/cargopit/cargopit.config` through the Rust libconfig subset (`tui/src/libconfig.rs`).
@@ -30,13 +30,13 @@ Top-level `configs` array. Each entry:
 
 | Key | Role | TUI today |
 | --- | --- | --- |
-| `sim` | Title (`default`, `ac`, `acc`, `ace`, `ams2`, `et`, `at`, `rf2`, …) | Display / switch only |
-| `car` | Car filter (`default` / `all` / name) | Display / switch only |
-| `api` | Optional API tag | Display only |
+| `name` | Optional display name | Edit on profile screen; shown in the status pin |
+| `sim` / `car` | Legacy labels in the file | Not used to select a profile |
+| `api` | Optional API tag | Preserved, not shown |
 | `devices` | Device list | Add / edit / delete |
-| unknown keys | Preserved in `SimConfig.extra` | Not shown, not editable |
+| unknown keys | Preserved in `SimProfile.extra` | Not shown, not editable |
 
-C selects the matching `configs[]` entry at play time (`getconfigtouse*` in `src/cargopit/helper/confighelper.c`). Multiple profiles are the intended way to have different device sets per sim/car. The TUI can **switch** them but cannot **create, rename, copy, or delete** them.
+Play and test load **one** selected `configs[]` index (`--config-index`, default 0). Profiles are a shared hardware map across titles. simd.config and play flags follow the live game. The TUI cycles the selected profile with `,` / `.` on main tabs and pins it in the status bar.
 
 ### 2. Device keys the C loader reads
 

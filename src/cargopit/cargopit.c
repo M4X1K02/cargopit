@@ -71,6 +71,7 @@ void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* config
 
     ms->force_udp_mode = false;
     ms->disable_audio = p->disable_audio;
+    ms->config_index = p->config_index;
 }
 
 int main(int argc, char** argv)

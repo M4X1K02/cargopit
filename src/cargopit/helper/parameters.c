@@ -80,10 +80,11 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     struct arg_file* arg_log         = arg_filen("l", "log", "<log_file>", 0, 1, NULL);
     struct arg_str* arg_confdir      = arg_str1(NULL, NULL, "configdir", "<config_dir>");
     struct arg_int* arg_fps          = arg_int0("f", "fps", "fps", "main data refresh rate");
+    struct arg_int* arg_config_index_play = arg_int0(NULL, "config-index", "<n>", "config profile index");
     struct arg_lit* help1            = arg_litn(NULL,"help", 0, 1, "print this help and exit");
     struct arg_lit* vers             = arg_litn(NULL,"version", 0, 1, "print version information and exit");
     struct arg_end* end1             = arg_end(20);
-    void* argtable1[]                = {cmd1,arg_log,arg_conf,arg_fps,arg_udp,arg_audio1,arg_verbosity1,help1,vers,end1};
+    void* argtable1[]                = {cmd1,arg_log,arg_conf,arg_fps,arg_udp,arg_audio1,arg_config_index_play,arg_verbosity1,help1,vers,end1};
     int nerrors1;
 
     struct arg_rex* cmd2a            = arg_rex1(NULL, NULL, "config", NULL, REG_ICASE, NULL);
@@ -165,6 +166,10 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         if(arg_fps->count > 0)
         {
             p->fps = arg_fps->ival[0];
+        }
+        if (arg_config_index_play->count > 0)
+        {
+            p->config_index = arg_config_index_play->ival[0];
         }
         if(arg_log->count > 0)
         {

@@ -42,11 +42,18 @@ fn walks_all_tui_features() {
     let shots = ShotSink::from_env();
     let mut step = 0;
 
-    shot(&mut step, &shots, &app, "dashboard", &[
-        consts::TAB_TITLES[consts::TAB_DASHBOARD],
-        consts::DIAGRAM_TITLE_PIPELINE,
-        consts::ACTION_START,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "dashboard",
+        &[
+            consts::TAB_TITLES[consts::TAB_DASHBOARD],
+            consts::DIAGRAM_TITLE_PIPELINE,
+            consts::ACTION_START,
+            consts::LABEL_PROFILE,
+        ],
+    );
     let dash = render_text(&app, SHOT_WIDTH, SHOT_HEIGHT);
     let game_visible = dash.contains(consts::LABEL_NO_SIM)
         || dash.contains(consts::LABEL_TELEMETRY_LIVE)
@@ -58,13 +65,19 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_DOWN);
     press(&mut app, consts::KEY_DOWN);
     press(&mut app, consts::KEY_DOWN);
-    shot(&mut step, &shots, &app, "dashboard-stop-selected", &[consts::ACTION_STOP]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "dashboard-stop-selected",
+        &[consts::ACTION_STOP],
+    );
 
     press(&mut app, consts::KEY_START);
     app.dashboard_index = 0;
     press(&mut app, consts::KEY_ENTER);
-    let start_ok = app.message == consts::MSG_PLAY_ALREADY_RUNNING
-        || app.message == consts::MSG_STARTED_PLAY;
+    let start_ok =
+        app.message == consts::MSG_PLAY_ALREADY_RUNNING || app.message == consts::MSG_STARTED_PLAY;
     assert!(start_ok, "start play message: {}", app.message);
     shot(&mut step, &shots, &app, "dashboard-start", &[]);
 
@@ -73,28 +86,43 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_ENTER);
     app.tick();
     press(&mut app, consts::KEY_START);
-    shot(&mut step, &shots, &app, "dashboard-during-test", &[
-        consts::TAB_TITLES[consts::TAB_DASHBOARD],
-        consts::DIAGRAM_TITLE_PIPELINE,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "dashboard-during-test",
+        &[
+            consts::TAB_TITLES[consts::TAB_DASHBOARD],
+            consts::DIAGRAM_TITLE_PIPELINE,
+        ],
+    );
     let during_test = render_text(&app, SHOT_WIDTH, SHOT_HEIGHT);
     assert!(
         app.telemetry_live || dump_has_march(&during_test),
         "test session should march the signal path\n{during_test}"
     );
     press(&mut app, consts::KEY_TAB4);
-    shot(&mut step, &shots, &app, "telemetry", &[
-        consts::TITLE_TELEMETRY_SESSION,
-        consts::TITLE_TELEMETRY_CONTROLS,
-        consts::LABEL_RPM,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "telemetry",
+        &[
+            consts::TITLE_TELEMETRY_SESSION,
+            consts::TITLE_TELEMETRY_CONTROLS,
+            consts::LABEL_RPM,
+        ],
+    );
     assert!(matches!(app.screen, Screen::Telemetry));
     press(&mut app, consts::KEY_TAB5);
     wait_for_log(&mut app, STUB_TEST_LINE);
-    shot(&mut step, &shots, &app, "logs-after-test", &[
-        consts::TITLE_LOGS,
-        STUB_TEST_LINE,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "logs-after-test",
+        &[consts::TITLE_LOGS, STUB_TEST_LINE],
+    );
     assert!(
         app.message == consts::MSG_STARTED_TEST
             || app.message == consts::MSG_TEST_FINISHED
@@ -104,12 +132,18 @@ fn walks_all_tui_features() {
     );
 
     press(&mut app, consts::KEY_TAB2);
-    shot(&mut step, &shots, &app, "devices", &[
-        consts::TITLE_PROFILE,
-        consts::CLASS_USB,
-        consts::CLASS_SOUND,
-        consts::CLASS_SERIAL,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "devices",
+        &[
+            consts::TITLE_PROFILE,
+            consts::CLASS_USB,
+            consts::CLASS_SOUND,
+            consts::CLASS_SERIAL,
+        ],
+    );
     assert!(matches!(app.screen, Screen::Devices));
 
     press(&mut app, consts::KEY_SPACE);
@@ -117,27 +151,42 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_SPACE);
 
     press(&mut app, consts::KEY_EDIT);
-    shot(&mut step, &shots, &app, "device-editor", &[
-        consts::TITLE_DEVICE_EDITOR,
-        consts::TITLE_DEVICE_TEST,
-        consts::DIAGRAM_TITLE_PREVIEW,
-        FieldId::Class.label(),
-        "Transport:",
-        consts::TYPE_TACHOMETER,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "device-editor",
+        &[
+            consts::TITLE_DEVICE_EDITOR,
+            consts::TITLE_DEVICE_TEST,
+            consts::DIAGRAM_TITLE_PREVIEW,
+            FieldId::Class.label(),
+            "Transport:",
+            consts::TYPE_TACHOMETER,
+        ],
+    );
     assert!(matches!(app.screen, Screen::DeviceForm));
 
     press(&mut app, consts::KEY_TEST);
     app.tick();
-    shot(&mut step, &shots, &app, "device-editor-test", &[
-        consts::TITLE_DEVICE_EDITOR,
-        consts::TITLE_DEVICE_TEST,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "device-editor-test",
+        &[consts::TITLE_DEVICE_EDITOR, consts::TITLE_DEVICE_TEST],
+    );
     assert!(matches!(app.screen, Screen::DeviceForm));
     wait_for_log(&mut app, STUB_TEST_LINE);
 
     press(&mut app, consts::KEY_RIGHT);
-    shot(&mut step, &shots, &app, "device-editor-class-cycled", &[consts::CLASS_SOUND]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "device-editor-class-cycled",
+        &[consts::CLASS_SOUND],
+    );
     press(&mut app, consts::KEY_LEFT);
     let devid_index = app
         .form
@@ -160,108 +209,228 @@ fn walks_all_tui_features() {
 
     press(&mut app, consts::KEY_DOWN);
     press(&mut app, consts::KEY_G_UPPER);
-    shot(&mut step, &shots, &app, "devices-reordered", &[consts::EFFECT_ENGINE]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "devices-reordered",
+        &[consts::EFFECT_ENGINE],
+    );
 
     press(&mut app, consts::KEY_ENTER);
-    shot(&mut step, &shots, &app, "device-tune", &[
-        consts::TITLE_TUNE,
-        consts::TITLE_DEVICE_TEST,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "device-tune",
+        &[consts::TITLE_TUNE, consts::TITLE_DEVICE_TEST],
+    );
     press(&mut app, consts::KEY_RIGHT);
     press(&mut app, consts::KEY_ESC);
     leave_editor(&mut app);
 
     press(&mut app, consts::KEY_ADD);
-    shot(&mut step, &shots, &app, "device-add-blank", &[consts::TITLE_DEVICE_EDITOR]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "device-add-blank",
+        &[consts::TITLE_DEVICE_EDITOR],
+    );
     press(&mut app, consts::KEY_SAVE);
     shot(&mut step, &shots, &app, "device-add-validation", &[]);
     assert!(app.form.error.is_some() || !app.message.is_empty());
     leave_editor(&mut app);
 
     press(&mut app, consts::KEY_TEMPLATE);
-    shot(&mut step, &shots, &app, "templates", &[consts::TITLE_TEMPLATES]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "templates",
+        &[consts::TITLE_TEMPLATES],
+    );
     press(&mut app, consts::KEY_ENTER);
-    shot(&mut step, &shots, &app, "confirm-template", &[consts::CONFIRM_TEMPLATE]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "confirm-template",
+        &[consts::CONFIRM_TEMPLATE],
+    );
     press(&mut app, consts::KEY_CONFIRM_YES);
-    shot(&mut step, &shots, &app, "devices-after-template", &[consts::EFFECT_GEAR]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "devices-after-template",
+        &[consts::EFFECT_GEAR],
+    );
 
     press(&mut app, consts::KEY_DUPLICATE);
     shot(&mut step, &shots, &app, "devices-duplicated", &[]);
     press(&mut app, consts::KEY_DELETE);
-    shot(&mut step, &shots, &app, "confirm-delete-device", &[consts::CONFIRM_DELETE_DEVICE]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "confirm-delete-device",
+        &[consts::CONFIRM_DELETE_DEVICE],
+    );
     press(&mut app, consts::KEY_CONFIRM_YES);
 
     press(&mut app, consts::KEY_SAVE);
-    shot(&mut step, &shots, &app, "profile-edit", &[consts::TITLE_PROFILE, consts::KEY_SIM]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "profile-edit",
+        &[consts::TITLE_PROFILE, consts::KEY_PROFILE_NAME],
+    );
     press(&mut app, consts::KEY_RIGHT);
     press(&mut app, consts::KEY_DOWN);
     press_char(&mut app, 'z');
     press(&mut app, consts::KEY_ADD);
-    shot(&mut step, &shots, &app, "devices-new-profile", &[consts::TITLE_PROFILE]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "devices-new-profile",
+        &[consts::TITLE_PROFILE],
+    );
     press(&mut app, consts::KEY_PREV_PROFILE);
     shot(&mut step, &shots, &app, "devices-profile-switched", &[]);
 
     press(&mut app, consts::KEY_DELETE_UPPER);
-    shot(&mut step, &shots, &app, "confirm-delete-profile", &[consts::CONFIRM_DELETE_PROFILE]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "confirm-delete-profile",
+        &[consts::CONFIRM_DELETE_PROFILE],
+    );
     press(&mut app, consts::KEY_CONFIRM_NO);
 
     press(&mut app, consts::KEY_TAB3);
-    shot(&mut step, &shots, &app, "settings", &[
-        consts::TITLE_SETTINGS,
-        consts::SETTINGS_ITEMS[0],
-        "Flags passed when starting",
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings",
+        &[
+            consts::TITLE_SETTINGS,
+            consts::SETTINGS_ITEMS[0],
+            "Play/test flags for the sim",
+        ],
+    );
 
     press(&mut app, consts::KEY_ENTER);
     press(&mut app, consts::KEY_RIGHT);
-    shot(&mut step, &shots, &app, "settings-flags", &[
-        consts::TITLE_FLAGS,
-        consts::FLAG_LABEL_VERBOSITY,
-        "Play/test log verbosity",
-        consts::FIELD_UNSET,
-    ]);
-    assert!(matches!(app.screen, Screen::SettingsSub(SettingsSub::Flags)));
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings-flags",
+        &[
+            consts::TITLE_FLAGS,
+            consts::FLAG_LABEL_VERBOSITY,
+            "Play/test log verbosity",
+            consts::FIELD_UNSET,
+        ],
+    );
+    assert!(matches!(
+        app.screen,
+        Screen::SettingsSub(SettingsSub::Flags)
+    ));
     press(&mut app, consts::KEY_ESC);
-    shot(&mut step, &shots, &app, "confirm-discard-flags", &[consts::CONFIRM_DISCARD_UNSAVED]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "confirm-discard-flags",
+        &[consts::CONFIRM_DISCARD_UNSAVED],
+    );
     press(&mut app, consts::KEY_CONFIRM_NO);
     press(&mut app, consts::KEY_SAVE);
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 1);
-    shot(&mut step, &shots, &app, "settings-simd", &[
-        consts::TITLE_SIMD,
-        "Assetto Corsa",
-        consts::SIMD_FIELD_GAMEID,
-    ]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings-simd",
+        &[
+            consts::TITLE_SIMD,
+            "Assetto Corsa",
+            consts::SIMD_FIELD_GAMEID,
+        ],
+    );
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 2);
-    shot(&mut step, &shots, &app, "settings-lua", &[consts::TITLE_LUA]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings-lua",
+        &[consts::TITLE_LUA],
+    );
     press(&mut app, consts::KEY_ENTER);
     shot(&mut step, &shots, &app, "settings-lua-copied", &[]);
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 3);
     press(&mut app, consts::KEY_RIGHT);
-    shot(&mut step, &shots, &app, "settings-tach", &[consts::TITLE_TACH, consts::DIAGRAM_TITLE_LEDS]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings-tach",
+        &[consts::TITLE_TACH, consts::DIAGRAM_TITLE_LEDS],
+    );
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 4);
     press(&mut app, consts::KEY_ADD);
-    shot(&mut step, &shots, &app, "settings-tyres", &[consts::TITLE_TYRES, consts::DIAGRAM_TITLE_CHASSIS]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings-tyres",
+        &[consts::TITLE_TYRES, consts::DIAGRAM_TITLE_CHASSIS],
+    );
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 5);
-    shot(&mut step, &shots, &app, "settings-diagnostics", &[consts::TITLE_DIAGNOSTICS, consts::LABEL_GROUPS]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings-diagnostics",
+        &[consts::TITLE_DIAGNOSTICS, consts::LABEL_GROUPS],
+    );
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 6);
-    shot(&mut step, &shots, &app, "settings-raw", &[consts::TITLE_RAW]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "settings-raw",
+        &[consts::TITLE_RAW],
+    );
     press(&mut app, consts::KEY_ESC);
 
     press(&mut app, consts::KEY_TAB5);
     press(&mut app, consts::KEY_SPACE);
-    shot(&mut step, &shots, &app, "logs-filtered", &[consts::TITLE_LOGS, consts::LOG_FILTER_PREFIX]);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "logs-filtered",
+        &[consts::TITLE_LOGS, consts::LOG_FILTER_PREFIX],
+    );
 
     press(&mut app, consts::KEY_START);
     assert!(matches!(app.screen, Screen::Dashboard));
@@ -344,9 +513,8 @@ fn write_stub_bin(root: &Path) -> PathBuf {
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
     let path = bin.join(consts::BINARY_CARGOPIT);
-    let script = format!(
-        "#!/bin/sh\necho '{STUB_PLAY_LINE} '\"$*\"\necho '{STUB_TEST_LINE}'\nexit 0\n"
-    );
+    let script =
+        format!("#!/bin/sh\necho '{STUB_PLAY_LINE} '\"$*\"\necho '{STUB_TEST_LINE}'\nexit 0\n");
     fs::write(&path, script).unwrap();
     #[cfg(unix)]
     {
@@ -469,14 +637,15 @@ fn seed_simd() -> String {
   {{
     {name} = "Assetto Corsa";
     {gameid} = "244210";
-    {useudp} = false;
+    {telemetry} = "{auto}";
   }}
 );
 "#,
         sims = consts::KEY_SIMS,
         name = consts::SIMD_FIELD_NAME,
         gameid = consts::SIMD_FIELD_GAMEID,
-        useudp = consts::SIMD_FIELD_USEUDP,
+        telemetry = consts::SIMD_FIELD_TELEMETRY,
+        auto = consts::SIMD_TELEMETRY_AUTO,
     )
 }
 

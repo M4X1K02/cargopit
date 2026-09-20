@@ -1,7 +1,9 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Cell, Clear, Gauge, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{
+    Cell, Clear, Gauge, List, ListItem, ListState, Paragraph, Row, Table, TableState, Wrap,
+};
 use ratatui::Frame;
 
 use crate::app::{tune_fields, App, ConfirmKind, Screen, SettingsSub};
@@ -12,8 +14,8 @@ use crate::diagrams;
 use crate::logs;
 use crate::process::SessionKind;
 use crate::schema::{self, DeviceClass, FieldId};
-use crate::simd_config;
 use crate::simapi_shm;
+use crate::simd_config;
 use crate::templates;
 use crate::theme;
 
@@ -104,6 +106,15 @@ fn tab_spans(index: usize, title: &str, active: bool) -> Vec<Span<'static>> {
     ]
 }
 
+fn bound_panel_title(base: &str, app: &App) -> String {
+    format!(
+        "{}{}{}",
+        base,
+        consts::SETTINGS_BOUND_SEP,
+        app.settings_game_label()
+    )
+}
+
 fn draw_status(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
     let configured = app.current_profile().map(|p| p.devices.len()).unwrap_or(0);
     let ratio = if configured == 0 {
@@ -122,6 +133,7 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
         diagrams::led_span_compact(consts::BINARY_SIMD, app.status.simd_running),
         diagrams::led_span_compact(consts::BINARY_CARGOPIT, app.pipeline_pit()),
         diagrams::simapi_span_compact(diag.simapi_exists, diag.simapi_live),
+        profile_pin_span(app),
         Span::styled(
             format!(
                 " {} {}/{} {} ",
@@ -181,9 +193,19 @@ fn render_selectable_list(
     items: Vec<ListItem>,
     selected: usize,
 ) {
+    render_selectable_list_block(frame, area, theme::panel(title), items, selected);
+}
+
+fn render_selectable_list_block(
+    frame: &mut Frame,
+    area: Rect,
+    block: ratatui::widgets::Block<'static>,
+    items: Vec<ListItem>,
+    selected: usize,
+) {
     let count = items.len();
     let list = List::new(items)
-        .block(theme::panel(title))
+        .block(block)
         .highlight_style(theme::style_selected())
         .highlight_symbol(consts::LIST_HIGHLIGHT_SYMBOL);
     let mut state = ListState::default();
@@ -271,7 +293,10 @@ fn draw_telemetry(frame: &mut Frame, area: Rect, app: &App) {
 fn telemetry_session_lines(app: &App) -> Vec<Line<'static>> {
     let view = &app.telemetry;
     if view.valid == 0 {
-        return vec![kv_line(consts::LABEL_SIMAPI, consts::SIMAPI_MISSING.to_string())];
+        return vec![kv_line(
+            consts::LABEL_SIMAPI,
+            consts::SIMAPI_MISSING.to_string(),
+        )];
     }
     let game = app
         .running_games
@@ -293,7 +318,10 @@ fn telemetry_session_lines(app: &App) -> Vec<Line<'static>> {
         kv_line(consts::BINARY_SIMD, game),
         kv_line(consts::LABEL_CAR, car),
         kv_line(consts::LABEL_TRACK, track),
-        kv_line(consts::LABEL_LAP, format!("{} / {}", view.lap, view.numlaps)),
+        kv_line(
+            consts::LABEL_LAP,
+            format!("{} / {}", view.lap, view.numlaps),
+        ),
         kv_line(consts::LABEL_POSITION, view.position.to_string()),
         kv_line(consts::LABEL_MTICK, view.mtick.to_string()),
     ]
@@ -302,7 +330,10 @@ fn telemetry_session_lines(app: &App) -> Vec<Line<'static>> {
 fn telemetry_control_lines(app: &App) -> Vec<Line<'static>> {
     let view = &app.telemetry;
     if view.valid == 0 {
-        return vec![kv_line(consts::LABEL_RPM, consts::TELEMETRY_DASH_VALUE.to_string())];
+        return vec![kv_line(
+            consts::LABEL_RPM,
+            consts::TELEMETRY_DASH_VALUE.to_string(),
+        )];
     }
     let gear = telemetry_gear_label(view);
     let fuel = if view.fuelcapacity > 0.0 {
@@ -318,9 +349,21 @@ fn telemetry_control_lines(app: &App) -> Vec<Line<'static>> {
         ),
         kv_line(consts::LABEL_GEAR, gear),
         kv_line(consts::LABEL_VELOCITY, view.velocity.to_string()),
-        gauge_line(consts::LABEL_THROTTLE, clamp_unit(view.gas), format!("{:.2}", view.gas)),
-        gauge_line(consts::LABEL_BRAKE, clamp_unit(view.brake), format!("{:.2}", view.brake)),
-        gauge_line(consts::LABEL_CLUTCH, clamp_unit(view.clutch), format!("{:.2}", view.clutch)),
+        gauge_line(
+            consts::LABEL_THROTTLE,
+            clamp_unit(view.gas),
+            format!("{:.2}", view.gas),
+        ),
+        gauge_line(
+            consts::LABEL_BRAKE,
+            clamp_unit(view.brake),
+            format!("{:.2}", view.brake),
+        ),
+        gauge_line(
+            consts::LABEL_CLUTCH,
+            clamp_unit(view.clutch),
+            format!("{:.2}", view.clutch),
+        ),
         kv_line(consts::LABEL_STEER, format!("{:.2}", view.steer)),
         kv_line(consts::LABEL_FUEL, fuel),
         kv_line(consts::LABEL_ABS, format!("{:.2}", view.abs)),
@@ -406,7 +449,11 @@ fn draw_dashboard_health(frame: &mut Frame, area: Rect, app: &App, diag: &Diagno
     let mut lines = Vec::new();
     if let Some(profile) = app.current_profile() {
         for class in DeviceClass::all() {
-            lines.push(diagrams::class_presence_line(profile, class, &app.discovery));
+            lines.push(diagrams::class_presence_line(
+                profile,
+                class,
+                &app.discovery,
+            ));
         }
     } else {
         lines.push(Line::from(consts::DIAGRAM_NO_PROFILE));
@@ -450,19 +497,28 @@ fn action_style(action: &str) -> Style {
     }
 }
 
+fn profile_pin_span(app: &App) -> Span<'static> {
+    Span::styled(
+        format!(
+            "{}{}{}",
+            consts::PROFILE_PIN_PAD,
+            app.profile_pin_label(),
+            consts::PROFILE_PIN_PAD
+        ),
+        theme::style_profile_pin(),
+    )
+}
+
+fn profile_scoped_title(base: &str, app: &App) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(base.to_string(), theme::style_title()),
+        Span::raw(consts::SETTINGS_BOUND_SEP),
+        profile_pin_span(app),
+    ])
+}
+
 fn draw_devices(frame: &mut Frame, area: Rect, app: &App) {
     let profile = app.current_profile();
-    let title = match profile {
-        Some(p) => format!(
-            "{} {}/{}  {} / {}",
-            consts::TITLE_PROFILE,
-            app.profile_index + 1,
-            app.config.profiles.len(),
-            p.sim,
-            p.car
-        ),
-        None => consts::TITLE_NO_PROFILES.into(),
-    };
     let mut items = Vec::new();
     if let Some(profile) = profile {
         if profile.devices.is_empty() {
@@ -471,8 +527,18 @@ fn draw_devices(frame: &mut Frame, area: Rect, app: &App) {
         for device in profile.devices.iter() {
             items.push(device_row(app, device));
         }
+    } else {
+        items.push(ListItem::new(consts::TITLE_NO_PROFILES));
     }
-    render_selectable_list(frame, area, title, items, app.device_index);
+    draw_list_with_help(
+        frame,
+        area,
+        consts::TITLE_DEVICES,
+        items,
+        app.device_index,
+        consts::TITLE_PROFILE_SHARED,
+        consts::NOTE_PROFILES_CROSS_GAME,
+    );
 }
 
 fn device_row(app: &App, device: &DeviceEntry) -> ListItem<'static> {
@@ -506,10 +572,16 @@ fn device_row(app: &App, device: &DeviceEntry) -> ListItem<'static> {
     let mut line = Line::from(vec![
         Span::raw(format!("{enabled} ")),
         Span::styled(format!("{glyph} "), diagrams::presence_style(presence)),
-        Span::styled(device.class().as_str().to_string(), diagrams::class_style(device.class())),
+        Span::styled(
+            device.class().as_str().to_string(),
+            diagrams::class_style(device.class()),
+        ),
         Span::raw(format!("  {detail}  ")),
         Span::styled(device.identity(), theme::style_muted()),
-        Span::styled(format!("  [{presence}]"), diagrams::presence_style(presence)),
+        Span::styled(
+            format!("  [{presence}]"),
+            diagrams::presence_style(presence),
+        ),
     ]);
     if !device.enabled() {
         line = line.style(theme::style_dim());
@@ -601,7 +673,9 @@ fn draw_form_side(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
 fn draw_device_test_panel(frame: &mut Frame, area: Rect, app: &App) {
     let height = area.height.saturating_sub(consts::LAYOUT_BORDER_LINES) as usize;
     frame.render_widget(
-        Paragraph::new(device_test_lines(app, height)).block(theme::panel(consts::TITLE_DEVICE_TEST)),
+        Paragraph::new(device_test_lines(app, height)).block(theme::panel_line(
+            profile_scoped_title(consts::TITLE_DEVICE_TEST, app),
+        )),
         area,
     );
 }
@@ -696,12 +770,15 @@ fn draw_form_list(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
     for (index, field) in fields.iter().enumerate() {
         let mut value = schema::display_value(&app.form.device, *field);
         if !tune && app.form.edit_buffer.is_some() && index == app.form.field_index {
-            value = format!("{}{}", app.form.edit_buffer.as_deref().unwrap_or(""), consts::EDIT_CURSOR);
-        } else if schema::is_identity(*field) {
-            let choices = app.discovery.choices_for(
-                app.form.device.class(),
-                *field == FieldId::Devpath,
+            value = format!(
+                "{}{}",
+                app.form.edit_buffer.as_deref().unwrap_or(""),
+                consts::EDIT_CURSOR
             );
+        } else if schema::is_identity(*field) {
+            let choices = app
+                .discovery
+                .choices_for(app.form.device.class(), *field == FieldId::Devpath);
             if let Some(choice) = choices.iter().find(|c| c.value == value) {
                 value = choice.label.clone();
             }
@@ -722,7 +799,13 @@ fn draw_form_list(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
     } else {
         consts::TITLE_DEVICE_EDITOR
     };
-    render_selectable_list(frame, area, title, items, selected);
+    render_selectable_list_block(
+        frame,
+        area,
+        theme::panel_line(profile_scoped_title(title, app)),
+        items,
+        selected,
+    );
 }
 
 fn field_row(field: FieldId, value: &str, device: &DeviceEntry) -> ListItem<'static> {
@@ -736,7 +819,9 @@ fn field_row(field: FieldId, value: &str, device: &DeviceEntry) -> ListItem<'sta
             let channels = device
                 .get_i64(consts::KEY_CHANNELS)
                 .unwrap_or(consts::DEFAULT_CHANNELS);
-            let pan = device.get_i64(consts::KEY_PAN).unwrap_or(consts::DEFAULT_PAN);
+            let pan = device
+                .get_i64(consts::KEY_PAN)
+                .unwrap_or(consts::DEFAULT_PAN);
             spans.push(Span::raw("  "));
             spans.extend(diagrams::pan_line(pan, channels).spans);
         }
@@ -759,16 +844,22 @@ fn draw_form_diagram(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_profile_edit(frame: &mut Frame, area: Rect, app: &App) {
+    let name = if app.profile_edit.name.is_empty() {
+        consts::FIELD_UNSET.to_string()
+    } else {
+        app.profile_edit.name.clone()
+    };
     let items = vec![
-        ListItem::new(format!(
-            "{}:  {}  (h/l cycle)",
-            consts::KEY_SIM,
-            app.profile_edit.sim
-        )),
-        ListItem::new(format!("{}:  {}", consts::KEY_CAR, app.profile_edit.car)),
+        ListItem::new(format!("{}:  {name}", consts::KEY_PROFILE_NAME)),
         ListItem::new(Line::from(theme::help_spans(consts::PROFILE_HELP))),
     ];
-    render_selectable_list(frame, area, consts::TITLE_PROFILE, items, app.profile_field);
+    render_selectable_list(
+        frame,
+        area,
+        consts::TITLE_PROFILE_SHARED,
+        items,
+        app.profile_field,
+    );
 }
 
 fn draw_templates(frame: &mut Frame, area: Rect, app: &App) {
@@ -839,7 +930,7 @@ fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
     draw_list_with_help(
         frame,
         area,
-        consts::TITLE_SETTINGS,
+        bound_panel_title(consts::TITLE_SETTINGS, app),
         items,
         app.settings_index,
         title,
@@ -892,7 +983,10 @@ fn draw_flags(frame: &mut Frame, area: Rect, app: &App) {
         format!(
             "{:<width$} {}",
             consts::FLAG_LABEL_LOG,
-            flags.log_file.as_deref().unwrap_or(consts::FLAG_LOG_DEFAULT),
+            flags
+                .log_file
+                .as_deref()
+                .unwrap_or(consts::FLAG_LOG_DEFAULT),
             width = consts::FIELD_LABEL_WIDTH
         ),
     ];
@@ -904,7 +998,7 @@ fn draw_flags(frame: &mut Frame, area: Rect, app: &App) {
     draw_list_with_help(
         frame,
         area,
-        consts::TITLE_FLAGS,
+        bound_panel_title(consts::TITLE_FLAGS, app),
         items,
         app.flags_field,
         consts::TITLE_ABOUT,
@@ -946,9 +1040,12 @@ fn render_simd_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
     let widths = simd_config::column_widths(&app.simd, columns);
     let (col_start, col_end) = simd_config::column_window(&widths, app.simd_field, budget);
     let visible = columns.get(col_start..col_end).unwrap_or(&[]);
-    let header = Row::new(visible.iter().enumerate().map(|(offset, key)| {
-        simd_header_cell(key, col_start + offset == app.simd_field)
-    }));
+    let header = Row::new(
+        visible
+            .iter()
+            .enumerate()
+            .map(|(offset, key)| simd_header_cell(key, col_start + offset == app.simd_field)),
+    );
     let mut rows = Vec::new();
     if app.simd.sims.is_empty() {
         rows.push(Row::new([Cell::from(consts::SIMD_EMPTY)]));
@@ -963,7 +1060,7 @@ fn render_simd_table(frame: &mut Frame, area: Rect, app: &App, columns: &[String
     let table = Table::new(rows, constraints)
         .header(header)
         .column_spacing(consts::SIMD_COL_SPACING)
-        .block(theme::panel(consts::TITLE_SIMD))
+        .block(theme::panel(bound_panel_title(consts::TITLE_SIMD, app)))
         .row_highlight_style(theme::style_selected())
         .cell_highlight_style(theme::style_selected())
         .highlight_symbol(consts::LIST_HIGHLIGHT_SYMBOL);
@@ -1034,7 +1131,10 @@ fn lua_item_help(index: usize) -> String {
 fn draw_tach(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(consts::LAYOUT_BORDER_LINES + 2)])
+        .constraints([
+            Constraint::Min(1),
+            Constraint::Length(consts::LAYOUT_BORDER_LINES + 2),
+        ])
         .split(area);
     let rows = [
         format!(
@@ -1153,7 +1253,11 @@ fn draw_diagnostics(frame: &mut Frame, area: Rect, app: &App) {
             consts::LABEL_MISSING,
             d.missing
         )),
-        Line::from(format!("{} {}", consts::CONFIG_FILE_NAME, app.config_path.display())),
+        Line::from(format!(
+            "{} {}",
+            consts::CONFIG_FILE_NAME,
+            app.config_path.display()
+        )),
     ];
     frame.render_widget(
         Paragraph::new(lines)
@@ -1184,9 +1288,9 @@ fn draw_raw(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_logs(frame: &mut Frame, area: Rect, app: &App) {
     let visible = app.logs.visible();
-    let start = visible
-        .len()
-        .saturating_sub(area.height.saturating_sub(consts::LAYOUT_BORDER_LINES) as usize + app.logs.scroll);
+    let start = visible.len().saturating_sub(
+        area.height.saturating_sub(consts::LAYOUT_BORDER_LINES) as usize + app.logs.scroll,
+    );
     let lines: Vec<Line> = visible
         .iter()
         .skip(start)
@@ -1271,11 +1375,21 @@ mod tests {
     const SIMD_SCROLL_TAIL: &str = "ZzzScrollTail";
 
     fn simd_named(name: &str) -> simd_config::SimdSim {
+        simd_with_game(name, 0)
+    }
+
+    fn simd_with_game(name: &str, game_id: i64) -> simd_config::SimdSim {
         simd_config::SimdSim {
-            settings: vec![(
-                consts::SIMD_FIELD_NAME.to_string(),
-                crate::libconfig::Value::String(name.to_string()),
-            )],
+            settings: vec![
+                (
+                    consts::SIMD_FIELD_NAME.to_string(),
+                    crate::libconfig::Value::String(name.to_string()),
+                ),
+                (
+                    consts::SIMD_FIELD_GAMEID.to_string(),
+                    crate::libconfig::Value::Int(game_id),
+                ),
+            ],
         }
     }
 
@@ -1327,6 +1441,7 @@ mod tests {
             assert!(dump.contains(consts::BINARY_SIMD));
             assert!(dump.contains(consts::DIAGRAM_TITLE_PIPELINE));
             assert!(dump.contains(consts::TAB_ACTIVE_LEFT));
+            assert!(dump.contains(consts::LABEL_PROFILE), "{dump}");
         });
     }
 
@@ -1336,12 +1451,15 @@ mod tests {
             app.tab = consts::TAB_DEVICES;
             app.screen = Screen::Devices;
             let dump = render_dump(app);
-            assert!(dump.contains(consts::TITLE_PROFILE) || dump.contains(consts::TITLE_NO_PROFILES));
+            assert!(
+                dump.contains(consts::TITLE_PROFILE) || dump.contains(consts::TITLE_NO_PROFILES)
+            );
+            assert!(dump.contains(consts::TITLE_DEVICES), "{dump}");
             app.tab = consts::TAB_SETTINGS;
             app.screen = Screen::Settings;
             let dump = render_dump(app);
             assert!(dump.contains(consts::TITLE_SETTINGS));
-            assert!(dump.contains("Flags passed when starting"));
+            assert!(dump.contains("Play/test flags for the sim"));
             app.tab = consts::TAB_TELEMETRY;
             app.screen = Screen::Telemetry;
             let dump = render_dump(app);
@@ -1386,10 +1504,19 @@ mod tests {
 
     #[test]
     fn settings_help_matches_items() {
-        assert_eq!(consts::SETTINGS_ITEMS.len(), consts::SETTINGS_ITEM_HELP.len());
+        assert_eq!(
+            consts::SETTINGS_ITEMS.len(),
+            consts::SETTINGS_ITEM_HELP.len()
+        );
         assert_eq!(consts::FLAG_HELP.len(), consts::FLAG_FIELD_COUNT);
-        assert_eq!(consts::FPS_FLAG_CHOICES.len(), consts::FPS_FLAG_CHOICE_COUNT);
-        assert_eq!(consts::SIMD_TABLE_COLUMNS.len(), consts::SIMD_FIELD_HELP.len());
+        assert_eq!(
+            consts::FPS_FLAG_CHOICES.len(),
+            consts::FPS_FLAG_CHOICE_COUNT
+        );
+        assert_eq!(
+            consts::SIMD_TABLE_COLUMNS.len(),
+            consts::SIMD_FIELD_HELP.len()
+        );
         assert_eq!(consts::SIMD_TABLE_COLUMNS.len(), consts::SIMD_FIELD_COUNT);
     }
 
@@ -1398,7 +1525,8 @@ mod tests {
         with_app(|app| {
             app.screen = Screen::SettingsSub(SettingsSub::Flags);
             app.flags_field = consts::FLAG_FIELD_FPS;
-            let key = |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            let key =
+                |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
             app.handle_key(key(consts::KEY_RIGHT)).unwrap();
             assert_eq!(app.tui_state.play_flags.fps, Some(consts::FPS_FLAG_30));
             app.handle_key(key(consts::KEY_LEFT)).unwrap();
@@ -1431,7 +1559,8 @@ mod tests {
                     "inline field help mixed into list:\n{dump}"
                 );
             }
-            let key = |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            let key =
+                |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
             app.handle_key(key(consts::KEY_RIGHT)).unwrap();
             assert_eq!(app.simd_field, 1);
             let dump = render_dump(app);
@@ -1445,13 +1574,14 @@ mod tests {
             app.tab = consts::TAB_SETTINGS;
             app.screen = Screen::SettingsSub(SettingsSub::Simd);
             app.simd = simd_config::stub_from_bundled();
-            let key = |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
-            for _ in 0..consts::SIMD_FIELD_COUNT {
-                app.handle_key(key(consts::KEY_RIGHT)).unwrap();
-            }
-            assert_eq!(app.simd_field, consts::SIMD_FIELD_COUNT - 1);
-            let dump = render_dump_size(app, consts::MIN_TERMINAL_WIDTH, consts::MIN_TERMINAL_HEIGHT);
-            assert!(dump.contains(consts::SIMD_FIELD_USEUDP), "{dump}");
+            let columns = simd_config::table_columns(&app.simd);
+            app.simd_field = columns
+                .iter()
+                .position(|column| column == consts::SIMD_FIELD_TELEMETRY)
+                .expect("telemetry column");
+            let dump =
+                render_dump_size(app, consts::MIN_TERMINAL_WIDTH, consts::MIN_TERMINAL_HEIGHT);
+            assert!(dump.contains(consts::SIMD_FIELD_TELEMETRY), "{dump}");
             assert!(
                 !header_contains(&dump, consts::SIMD_FIELD_NAME),
                 "name column should scroll off on a narrow terminal:\n{dump}"
@@ -1465,13 +1595,11 @@ mod tests {
             app.tab = consts::TAB_SETTINGS;
             app.screen = Screen::SettingsSub(SettingsSub::Simd);
             app.simd = simd_config::stub_from_bundled();
-            pad_simd_until(
-                app,
-                consts::SIMD_PAGE_ROWS.saturating_mul(3),
-            );
+            pad_simd_until(app, consts::SIMD_PAGE_ROWS.saturating_mul(3));
             app.simd.sims.push(simd_named(SIMD_SCROLL_TAIL));
             let last = app.simd.sims.len() - 1;
-            let key = |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            let key =
+                |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
             app.handle_key(key(consts::KEY_END)).unwrap();
             assert_eq!(app.simd_index, last);
             app.handle_key(key(consts::KEY_DOWN)).unwrap();
@@ -1481,7 +1609,8 @@ mod tests {
             app.handle_key(key(consts::KEY_UP)).unwrap();
             assert_eq!(app.simd_index, 0);
             app.handle_key(key(consts::KEY_END)).unwrap();
-            let dump = render_dump_size(app, consts::MIN_TERMINAL_WIDTH, consts::MIN_TERMINAL_HEIGHT);
+            let dump =
+                render_dump_size(app, consts::MIN_TERMINAL_WIDTH, consts::MIN_TERMINAL_HEIGHT);
             assert!(dump.contains(SIMD_SCROLL_TAIL), "{dump}");
         });
     }
@@ -1556,7 +1685,8 @@ mod tests {
             "expected ~/.config/simd/simd.config to parse"
         );
 
-        let key = |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+        let key =
+            |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
         app.handle_key(key(consts::KEY_ENTER)).unwrap();
         assert_eq!(app.message, consts::MSG_PLAY_ALREADY_RUNNING);
 
@@ -1613,5 +1743,118 @@ mod tests {
         for (name, dump) in &dumps {
             eprintln!("===== live {name} =====\n{dump}");
         }
+    }
+
+    #[test]
+    fn devices_notice_that_profiles_are_shared() {
+        with_app(|app| {
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::Devices;
+            let dump = render_dump(app);
+            assert!(dump.contains(consts::TITLE_PROFILE_SHARED), "{dump}");
+            assert!(dump.contains("Profiles are shared"), "{dump}");
+        });
+    }
+
+    #[test]
+    fn settings_title_names_the_bound_game() {
+        with_app(|app| {
+            app.tab = consts::TAB_SETTINGS;
+            app.screen = Screen::Settings;
+            app.running_games.clear();
+            app.tui_state.settings_game_id = consts::SETTINGS_GAME_IDLE;
+            let idle = render_dump(app);
+            assert!(idle.contains(consts::TITLE_SETTINGS), "{idle}");
+            assert!(idle.contains(consts::SETTINGS_BOUND_IDLE), "{idle}");
+            app.simd.sims = vec![simd_with_game("BoundSim", 42)];
+            app.tui_state.settings_game_id = 42;
+            let live = render_dump(app);
+            assert!(live.contains("BoundSim"), "{live}");
+        });
+    }
+
+    #[test]
+    fn comma_and_period_cycle_profiles() {
+        with_app(|app| {
+            app.config
+                .profiles
+                .push(crate::config::SimProfile::default());
+            app.profile_index = 0;
+            app.tab = consts::TAB_DASHBOARD;
+            app.screen = Screen::Dashboard;
+            let key =
+                |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            app.handle_key(key(consts::KEY_NEXT_PROFILE)).unwrap();
+            assert_eq!(app.profile_index, 1);
+            app.handle_key(key(consts::KEY_PREV_PROFILE)).unwrap();
+            assert_eq!(app.profile_index, 0);
+        });
+    }
+
+    #[test]
+    fn profile_keys_do_not_cycle_inside_device_editor() {
+        with_app(|app| {
+            app.config
+                .profiles
+                .push(crate::config::SimProfile::default());
+            app.profile_index = 0;
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::DeviceForm;
+            let key =
+                |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            app.handle_key(key(consts::KEY_NEXT_PROFILE)).unwrap();
+            assert_eq!(app.profile_index, 0);
+            assert!(matches!(app.screen, Screen::DeviceForm));
+        });
+    }
+
+    #[test]
+    fn device_editor_title_names_the_profile() {
+        with_app(|app| {
+            if let Some(profile) = app.current_profile_mut() {
+                profile.name = "Garage".into();
+            }
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::DeviceForm;
+            let dump = render_dump(app);
+            assert!(dump.contains(consts::TITLE_DEVICE_EDITOR), "{dump}");
+            assert!(dump.contains("Garage"), "{dump}");
+        });
+    }
+
+    #[test]
+    fn settings_follow_live_game_without_switching_profile() {
+        with_app(|app| {
+            app.config
+                .profiles
+                .push(crate::config::SimProfile::default());
+            app.profile_index = 1;
+            app.simd.sims = vec![simd_with_game("One", 11), simd_with_game("Two", 22)];
+            app.simd_index = 0;
+            app.tui_state.play_flags.verbosity = 2;
+            app.tui_state.store_flags_for(consts::SETTINGS_GAME_IDLE);
+            app.running_games = vec![simapi_shm::RunningGame {
+                name: "Two".into(),
+                game_id: 22,
+                sending: true,
+                status_label: consts::LABEL_TELEMETRY_LIVE,
+            }];
+            app.bind_settings_to_live_game();
+            assert_eq!(app.profile_index, 1);
+            assert_eq!(app.simd_index, 1);
+            assert_eq!(app.tui_state.settings_game_id, 22);
+            app.tui_state.play_flags.verbosity = 1;
+            app.running_games[0].name = "One".into();
+            app.running_games[0].game_id = 11;
+            app.bind_settings_to_live_game();
+            assert_eq!(app.profile_index, 1);
+            assert_eq!(app.simd_index, 0);
+            assert_eq!(app.tui_state.play_flags.verbosity, 2);
+            app.running_games[0].name = "Two".into();
+            app.running_games[0].game_id = 22;
+            app.bind_settings_to_live_game();
+            assert_eq!(app.tui_state.play_flags.verbosity, 1);
+            assert_eq!(app.simd_index, 1);
+        });
     }
 }

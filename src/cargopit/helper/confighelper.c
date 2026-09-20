@@ -1119,16 +1119,21 @@ int getsingledevice(const char* config_file_str, int confignum, int devicenum, C
 int resolve_config_index(const char* config_file_str, int requested_index)
 {
     int configs = getNumberOfConfigs(config_file_str);
-    if (requested_index >= 0)
+    if (configs <= 0)
     {
-        if (requested_index >= configs)
-        {
-            sloge("config-index %i is out of range (%i configs)", requested_index, configs);
-            return TEST_CONFIG_INDEX_DEFAULT;
-        }
-        return requested_index;
+        sloge("no device profiles in %s", config_file_str);
+        return CONFIG_INDEX_UNSET;
     }
-    return getconfigtouse(config_file_str, "default", configs - 1);
+    if (requested_index < 0)
+    {
+        return CONFIG_INDEX_FIRST;
+    }
+    if (requested_index >= configs)
+    {
+        sloge("config-index %i is out of range (%i configs)", requested_index, configs);
+        return CONFIG_INDEX_UNSET;
+    }
+    return requested_index;
 }
 
 static int load_single_test_device(

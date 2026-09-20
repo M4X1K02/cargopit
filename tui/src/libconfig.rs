@@ -525,7 +525,10 @@ mod tests {
         let sim = configs[0].lookup("sim").unwrap().as_str().unwrap();
         assert_eq!(sim, "default");
         let devices = configs[0].lookup("devices").unwrap().as_list().unwrap();
-        assert_eq!(devices[0].lookup("effect").unwrap().as_str().unwrap(), "Gear");
+        assert_eq!(
+            devices[0].lookup("effect").unwrap().as_str().unwrap(),
+            "Gear"
+        );
     }
 
     #[test]

@@ -138,8 +138,8 @@ pub const KEY_APPLY: KeyCode = KeyCode::Char('A');
 pub const KEY_PLUS: KeyCode = KeyCode::Char('+');
 pub const KEY_MINUS: KeyCode = KeyCode::Char('-');
 pub const KEY_EQUALS: KeyCode = KeyCode::Char('=');
-pub const KEY_PREV_PROFILE: KeyCode = KeyCode::Char('[');
-pub const KEY_NEXT_PROFILE: KeyCode = KeyCode::Char(']');
+pub const KEY_PREV_PROFILE: KeyCode = KeyCode::Char(',');
+pub const KEY_NEXT_PROFILE: KeyCode = KeyCode::Char('.');
 pub const KEY_START: KeyCode = KeyCode::Char('1');
 pub const KEY_TAB2: KeyCode = KeyCode::Char('2');
 pub const KEY_TAB3: KeyCode = KeyCode::Char('3');
@@ -203,6 +203,7 @@ pub const KEY_NOISE: &str = "noise";
 pub const KEY_SIM: &str = "sim";
 pub const KEY_CAR: &str = "car";
 pub const KEY_API: &str = "api";
+pub const KEY_PROFILE_NAME: &str = "name";
 pub const KEY_DEVICES: &str = "devices";
 pub const KEY_CONFIGS: &str = "configs";
 pub const KEY_CARS: &str = "cars";
@@ -392,9 +393,8 @@ pub const MSG_TEST_FAILED: &str = "Hardware test failed";
 pub const MSG_PLAY_FAILED: &str = "cargopit play failed";
 pub const MSG_NO_SERVICES: &str = "No running services found to stop";
 
-pub const PROFILE_FIELD_SIM: usize = 0;
-pub const PROFILE_FIELD_CAR: usize = 1;
-pub const PROFILE_FIELD_COUNT: usize = 2;
+pub const PROFILE_FIELD_NAME: usize = 0;
+pub const PROFILE_FIELD_COUNT: usize = 1;
 
 pub const TOO_SMALL_TITLE: &str = "Terminal too small";
 pub const TEST_PANEL_IDLE: &str = "Idle - press t to test";
@@ -432,9 +432,20 @@ pub const TITLE_DEVICE_EDITOR: &str = "Device editor";
 pub const TITLE_DEVICE_TEST: &str = "Device test";
 pub const TITLE_TUNE: &str = "Tune (offline)";
 pub const TITLE_PROFILE: &str = "Profile";
+pub const TITLE_DEVICES: &str = "Devices";
+pub const TITLE_PROFILE_SHARED: &str = "Profile (shared across games)";
+pub const TITLE_PROFILE_SHARED_SUFFIX: &str = "  (shared)";
+pub const LABEL_PROFILE: &str = "profile";
+pub const PROFILE_PIN_PAD: &str = " ";
+pub const PROFILE_PIN_NAME_MAX: usize = 16;
 pub const TITLE_TEMPLATES: &str = "Templates (insert)";
 pub const TITLE_CONFIRM: &str = "Confirm";
 pub const TITLE_SETTINGS: &str = "Settings";
+pub const SETTINGS_BOUND_SEP: &str = " — ";
+pub const SETTINGS_BOUND_IDLE: &str = "idle";
+pub const SETTINGS_GAME_IDLE: u64 = 0;
+pub const NOTE_PROFILES_CROSS_GAME: &str =
+    "Profiles are shared across games. Settings follow the title that is currently playing.";
 pub const TITLE_ABOUT: &str = "About";
 pub const TITLE_FLAGS: &str = "Play / test flags";
 pub const TITLE_SIMD: &str = "simd.config";
@@ -562,7 +573,7 @@ pub const HOTKEY_DELETE: &str = "d";
 pub const HOTKEY_SPACE: &str = "space";
 pub const HOTKEY_REORDER: &str = "J/K";
 pub const HOTKEY_TEMPLATE: &str = "T";
-pub const HOTKEY_PROFILE: &str = "[ ]";
+pub const HOTKEY_PROFILE: &str = ", .";
 pub const HOTKEY_CYCLE: &str = "h/l";
 pub const HOTKEY_UNSET: &str = "Bksp";
 pub const HOTKEY_SAVE: &str = "s";
@@ -609,6 +620,7 @@ pub const HELP_DESC_LUA_COPY: &str = "copy into ~/.config/cargopit";
 pub const HELP_DESC_TACH_XML: &str = "generate XML";
 pub const HELP_DESC_CAR: &str = "car";
 pub const HELP_DESC_TELEMETRY: &str = "live SIMAPI sample";
+pub const HELP_DESC_TELEMETRY_SOURCE: &str = "telemetry source";
 pub const HELP_DESC_RAW: &str = "Read-only view of the last on-disk file.";
 pub const HELP_DESC_ADD_PROFILE: &str = "add empty profile";
 pub const HELP_DESC_DUP_PROFILE: &str = "duplicate current";
@@ -617,11 +629,13 @@ pub const HELP_DASHBOARD: &[HelpBinding] = &[
     help_key(HOTKEY_TAB_PAGES, HELP_DESC_PAGES),
     help_key(HOTKEY_MOVE, HELP_DESC_SELECT),
     help_key(HOTKEY_ENTER, HELP_DESC_RUN),
+    help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
 pub const HELP_TELEMETRY: &[HelpBinding] = &[
     help_key(HOTKEY_TAB_PAGES, HELP_DESC_PAGES),
     help_note(HELP_DESC_TELEMETRY),
+    help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
 pub const HELP_DEVICES: &[HelpBinding] = &[
@@ -639,12 +653,14 @@ pub const HELP_DEVICES: &[HelpBinding] = &[
 pub const HELP_SETTINGS: &[HelpBinding] = &[
     help_keys(HOTKEY_MOVE),
     help_key(HOTKEY_ENTER, HELP_DESC_OPEN),
+    help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_ESC, HELP_DESC_BACK),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
 pub const HELP_LOGS: &[HelpBinding] = &[
     help_key(HOTKEY_MOVE, HELP_DESC_SCROLL),
     help_key(HOTKEY_SPACE, HELP_DESC_FILTER),
+    help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
 pub const HELP_FORM: &[HelpBinding] = &[
@@ -682,6 +698,7 @@ pub const HELP_FLAGS: &[HelpBinding] = &[
 pub const HELP_SIMD: &[HelpBinding] = &[
     help_key(HOTKEY_COLUMNS, HELP_DESC_COLUMNS),
     help_key(HOTKEY_MOVE, HELP_DESC_ROWS),
+    help_key(HOTKEY_ENTER, HELP_DESC_TELEMETRY_SOURCE),
     help_key(HOTKEY_ADD, HELP_DESC_ADD),
     help_key(HOTKEY_DELETE, HELP_DESC_DELETE),
     help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
@@ -761,7 +778,7 @@ pub const FLAG_FIELD_FPS: usize = 3;
 pub const FLAG_FIELD_LOG: usize = 4;
 pub const FLAG_FIELD_COUNT: usize = 5;
 pub const FLAG_HELP: [&str; FLAG_FIELD_COUNT] = [
-    "Play/test log verbosity. 0 is quiet, 1 is -v, 2 is -vv.",
+    "Play/test log verbosity for this sim. 0 is quiet, 1 is -v, 2 is -vv.",
     "Pass --disable_audio so play/test skip PulseAudio output.",
     "Pass --udp to force UDP telemetry when the sim supports it.",
     "Pass --fps to override the refresh rate. Unset keeps the 60 fps CLI default.",
@@ -794,7 +811,14 @@ pub const SIMD_FIELD_LAUNCHEXE: &str = "launchexe";
 pub const SIMD_FIELD_LIVEEXE: &str = "liveexe";
 pub const SIMD_FIELD_BRIDGEDELAY: &str = "bridgedelay";
 pub const SIMD_FIELD_SIMAPI: &str = "simapi";
+pub const SIMD_FIELD_TELEMETRY: &str = "telemetry";
 pub const SIMD_FIELD_USEUDP: &str = "useudp";
+pub const SIMD_TELEMETRY_AUTO: &str = "auto";
+pub const SIMD_TELEMETRY_SHM: &str = "shm";
+pub const SIMD_TELEMETRY_UDP: &str = "udp";
+pub const SIMD_TELEMETRY_SOURCE_COUNT: usize = 3;
+pub const SIMD_TELEMETRY_SOURCES: [&str; SIMD_TELEMETRY_SOURCE_COUNT] =
+    [SIMD_TELEMETRY_AUTO, SIMD_TELEMETRY_SHM, SIMD_TELEMETRY_UDP];
 pub const SIMD_FIELD_COUNT: usize = 7;
 pub const SIMD_TABLE_COLUMNS: [&str; SIMD_FIELD_COUNT] = [
     SIMD_FIELD_NAME,
@@ -803,7 +827,7 @@ pub const SIMD_TABLE_COLUMNS: [&str; SIMD_FIELD_COUNT] = [
     SIMD_FIELD_LIVEEXE,
     SIMD_FIELD_BRIDGEDELAY,
     SIMD_FIELD_SIMAPI,
-    SIMD_FIELD_USEUDP,
+    SIMD_FIELD_TELEMETRY,
 ];
 pub const SIMD_VALUE_COMPLEX: &str = "?";
 pub const SIMD_COL_NAME_MIN: u16 = 16;
@@ -811,7 +835,7 @@ pub const SIMD_COL_GAMEID: u16 = 7;
 pub const SIMD_COL_EXE_MIN: u16 = 10;
 pub const SIMD_COL_BRIDGE: u16 = 11;
 pub const SIMD_COL_SIMAPI: u16 = 6;
-pub const SIMD_COL_USEUDP: u16 = 6;
+pub const SIMD_COL_TELEMETRY: u16 = 9;
 pub const SIMD_COL_EXTRA_MIN: u16 = 8;
 pub const SIMD_COL_SPACING: u16 = 1;
 pub const LAYOUT_SIMD_TABLE_MIN: u16 = 6;
@@ -838,8 +862,8 @@ pub const SIMD_FIELD_HELP: &[(&str, &str)] = &[
     ),
     (SIMD_FIELD_SIMAPI, "SimulatorAPI enum value from simapi.h"),
     (
-        SIMD_FIELD_USEUDP,
-        "Force UDP telemetry for this title when supported",
+        SIMD_FIELD_TELEMETRY,
+        "How play reads this title: auto, shm (POSIX /dev/shm), or udp. ACR shm needs the Proton helper to mirror Local\\acpmf_physics.",
     ),
 ];
 
@@ -891,8 +915,8 @@ pub const SETTINGS_ITEMS: [&str; SETTINGS_ITEM_COUNT] = [
     "Raw cargopit.config (read-only)",
 ];
 pub const SETTINGS_ITEM_HELP: [&str; SETTINGS_ITEM_COUNT] = [
-    "Flags passed when starting play or test from the dashboard.",
-    "Edit simd.config so simd can find and map each simulator.",
+    "Play/test flags for the sim that is currently playing. Device profiles stay shared across games.",
+    "Edit simd.config so simd can find and map each simulator. The live title is selected automatically.",
     "Copy bundled Lua templates into ~/.config/cargopit for custom serial devices.",
     "Generate a Revburner tachometer XML profile with max revs and granularity.",
     "Per-car tyre diameters used by slip, lock, and suspension effects.",

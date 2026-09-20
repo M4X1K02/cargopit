@@ -37,11 +37,15 @@ pub fn collect(discovery: &Discovery, devices: &[(DeviceClass, String, String)])
         })
         .count();
     Diagnostics {
-        in_input: groups.split_whitespace().any(|g| g == consts::UDEV_GROUP_INPUT),
+        in_input: groups
+            .split_whitespace()
+            .any(|g| g == consts::UDEV_GROUP_INPUT),
         in_dialout: groups
             .split_whitespace()
             .any(|g| g == consts::UDEV_GROUP_DIALOUT),
-        in_uucp: groups.split_whitespace().any(|g| g == consts::UDEV_GROUP_UUCP),
+        in_uucp: groups
+            .split_whitespace()
+            .any(|g| g == consts::UDEV_GROUP_UUCP),
         groups,
         udev_present: Path::new(consts::UDEV_RULES_PATH).exists(),
         cargopit_bin: process::find_binary(consts::BINARY_CARGOPIT)

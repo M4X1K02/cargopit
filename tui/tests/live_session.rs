@@ -42,7 +42,9 @@ fn live_session_shows_dr2_on_signal_path() {
 
     let names: Vec<_> = app.running_games.iter().map(|g| g.name.clone()).collect();
     assert!(
-        names.iter().any(|name| name == DR2_CONFIG_NAME || name.contains("DiRT")),
+        names
+            .iter()
+            .any(|name| name == DR2_CONFIG_NAME || name.contains("DiRT")),
         "running games missing DR2: {names:?} telemetry={second:?}"
     );
 
@@ -58,7 +60,10 @@ fn live_session_shows_dr2_on_signal_path() {
         let marching = consts::TELEMETRY_FLOW_FRAMES
             .iter()
             .any(|frame| dump.contains(frame.trim()));
-        assert!(marching, "live telemetry should march the signal path\n{dump}");
+        assert!(
+            marching,
+            "live telemetry should march the signal path\n{dump}"
+        );
     } else {
         assert!(
             dump.contains(consts::LABEL_TELEMETRY_RUNNING)

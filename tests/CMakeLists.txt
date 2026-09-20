@@ -14,6 +14,10 @@ add_executable(ensure_simd_test ensure_simd_test.c)
 target_link_libraries(ensure_simd_test helper config slog xml2 simulatorapi m ${PROC_LIBS})
 add_test(NAME ensure_simd_test COMMAND ensure_simd_test)
 
+add_executable(simd_telemetry_test simd_telemetry_test.c)
+target_link_libraries(simd_telemetry_test helper config slog xml2 simulatorapi m ${PROC_LIBS})
+add_test(NAME simd_telemetry_test COMMAND simd_telemetry_test)
+
 add_executable(tester_simdata_test tester_simdata_test.c)
 target_link_libraries(tester_simdata_test
     gameloop helper devices slog simulatorapi
@@ -26,6 +30,19 @@ target_include_directories(tester_simdata_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src/cargopit/devices
     ${LUA_INCLUDE_DIR})
 add_test(NAME tester_simdata_test COMMAND tester_simdata_test)
+
+add_executable(acr_udp_test acr_udp_test.c)
+target_link_libraries(acr_udp_test
+    gameloop helper devices slog simulatorapi
+    m hidapi-hidraw pulse serialport xml2 config uv xdg-basedir
+    Lua::Lua ${PROC_LIBS})
+target_include_directories(acr_udp_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/cargopit
+    ${CMAKE_SOURCE_DIR}/src/cargopit/gameloop
+    ${CMAKE_SOURCE_DIR}/src/cargopit/helper
+    ${CMAKE_SOURCE_DIR}/src/cargopit/devices
+    ${LUA_INCLUDE_DIR})
+add_test(NAME acr_udp_test COMMAND acr_udp_test)
 
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)

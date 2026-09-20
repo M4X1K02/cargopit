@@ -119,7 +119,9 @@ impl FieldId {
             FieldId::Baud => "Serial baud rate. Unset uses 9600.",
             FieldId::Ampfactor => "Scales serial haptic output. Unset uses 1.0.",
             FieldId::Fanpower => "SimWind fan power from 0 to 1. Unset uses 0.6.",
-            FieldId::Motors => "Which shaker motors receive this effect. Unset leaves the engine default.",
+            FieldId::Motors => {
+                "Which shaker motors receive this effect. Unset leaves the engine default."
+            }
             FieldId::NumLights => "Shift-light LED count. Unset uses 6.",
             FieldId::NumLeds => "Simleds strip length. Unset uses 6.",
             FieldId::StartLed => "First LED in the strip that this effect owns (1-based).",
@@ -178,7 +180,12 @@ impl FieldId {
     }
 }
 
-const COMMON: &[FieldId] = &[FieldId::Class, FieldId::Type, FieldId::Enabled, FieldId::Fps];
+const COMMON: &[FieldId] = &[
+    FieldId::Class,
+    FieldId::Type,
+    FieldId::Enabled,
+    FieldId::Fps,
+];
 const HAPTIC_BLOCK: &[FieldId] = &[
     FieldId::Effect,
     FieldId::Modulation,
@@ -200,9 +207,10 @@ fn type_fields(class: DeviceClass, type_name: &str) -> &'static [FieldId] {
                 FieldId::Granularity,
                 FieldId::ConfigPath,
             ],
-            consts::TYPE_HAPTIC | consts::TYPE_WHEEL | consts::TYPE_USB_HAPTIC | consts::TYPE_USB_WHEEL => {
-                &[FieldId::Subtype, FieldId::Devid, FieldId::Devpath]
-            }
+            consts::TYPE_HAPTIC
+            | consts::TYPE_WHEEL
+            | consts::TYPE_USB_HAPTIC
+            | consts::TYPE_USB_WHEEL => &[FieldId::Subtype, FieldId::Devid, FieldId::Devpath],
             _ => &[FieldId::Subtype, FieldId::Devid],
         },
         DeviceClass::Sound => &[
@@ -219,9 +227,12 @@ fn type_fields(class: DeviceClass, type_name: &str) -> &'static [FieldId] {
                 FieldId::Ampfactor,
                 FieldId::Fanpower,
             ],
-            consts::TYPE_HAPTIC | consts::TYPE_SERIAL_HAPTIC => {
-                &[FieldId::Devpath, FieldId::Baud, FieldId::Ampfactor, FieldId::Motors]
-            }
+            consts::TYPE_HAPTIC | consts::TYPE_SERIAL_HAPTIC => &[
+                FieldId::Devpath,
+                FieldId::Baud,
+                FieldId::Ampfactor,
+                FieldId::Motors,
+            ],
             consts::TYPE_SHIFT_LIGHTS => &[
                 FieldId::Devpath,
                 FieldId::Baud,
@@ -237,9 +248,12 @@ fn type_fields(class: DeviceClass, type_name: &str) -> &'static [FieldId] {
                 FieldId::EndLed,
                 FieldId::ConfigPath,
             ],
-            consts::TYPE_CUSTOM | consts::TYPE_ARDUINO_CUSTOM => {
-                &[FieldId::Devpath, FieldId::Baud, FieldId::Ampfactor, FieldId::ConfigPath]
-            }
+            consts::TYPE_CUSTOM | consts::TYPE_ARDUINO_CUSTOM => &[
+                FieldId::Devpath,
+                FieldId::Baud,
+                FieldId::Ampfactor,
+                FieldId::ConfigPath,
+            ],
             consts::TYPE_WHEEL => &[
                 FieldId::Subtype,
                 FieldId::Devpath,
@@ -256,9 +270,14 @@ fn has_haptic(class: DeviceClass, type_name: &str) -> bool {
         DeviceClass::Sound => true,
         DeviceClass::Usb => matches!(
             type_name,
-            consts::TYPE_HAPTIC | consts::TYPE_WHEEL | consts::TYPE_USB_HAPTIC | consts::TYPE_USB_WHEEL
+            consts::TYPE_HAPTIC
+                | consts::TYPE_WHEEL
+                | consts::TYPE_USB_HAPTIC
+                | consts::TYPE_USB_WHEEL
         ),
-        DeviceClass::Serial => matches!(type_name, consts::TYPE_HAPTIC | consts::TYPE_SERIAL_HAPTIC),
+        DeviceClass::Serial => {
+            matches!(type_name, consts::TYPE_HAPTIC | consts::TYPE_SERIAL_HAPTIC)
+        }
     }
 }
 
@@ -288,7 +307,11 @@ pub fn subtypes_for(class: DeviceClass, type_name: &str) -> &'static [&'static s
     }
 }
 
-pub fn combo_choices(field: FieldId, class: DeviceClass, type_name: &str) -> &'static [&'static str] {
+pub fn combo_choices(
+    field: FieldId,
+    class: DeviceClass,
+    type_name: &str,
+) -> &'static [&'static str] {
     match field {
         FieldId::Class => &[consts::CLASS_USB, consts::CLASS_SOUND, consts::CLASS_SERIAL],
         FieldId::Type => types_for_class(class),
@@ -390,7 +413,8 @@ pub fn apply_defaults(device: &mut DeviceEntry, class: DeviceClass, type_name: &
             }
         }
         DeviceClass::Sound => {
-            if device.get(consts::KEY_STREAM_VOLUME).is_none() && device.get(consts::KEY_VOLUME).is_none()
+            if device.get(consts::KEY_STREAM_VOLUME).is_none()
+                && device.get(consts::KEY_VOLUME).is_none()
             {
                 device.set_int(consts::KEY_STREAM_VOLUME, consts::DEFAULT_VOLUME);
                 device.set_int(consts::KEY_VOLUME, consts::DEFAULT_VOLUME);
@@ -418,7 +442,8 @@ pub fn apply_defaults(device: &mut DeviceEntry, class: DeviceClass, type_name: &
             if type_name == consts::TYPE_SIM_WIND && device.get(consts::KEY_FANPOWER).is_none() {
                 device.set_float(consts::KEY_FANPOWER, consts::DEFAULT_FANPOWER);
             }
-            if type_name == consts::TYPE_SHIFT_LIGHTS && device.get(consts::KEY_NUMLIGHTS).is_none() {
+            if type_name == consts::TYPE_SHIFT_LIGHTS && device.get(consts::KEY_NUMLIGHTS).is_none()
+            {
                 device.set_int(consts::KEY_NUMLIGHTS, consts::DEFAULT_NUMLIGHTS);
             }
             if type_name == consts::TYPE_SIMLEDS {
@@ -461,7 +486,10 @@ pub fn display_value(device: &DeviceEntry, field: FieldId) -> String {
         FieldId::Volume => volume_display(device),
         FieldId::Motors => motors_display(device),
         FieldId::Devid => device.get_str(consts::KEY_DEVID).unwrap_or("").to_string(),
-        FieldId::Devpath => device.get_str(consts::KEY_DEVPATH).unwrap_or("").to_string(),
+        FieldId::Devpath => device
+            .get_str(consts::KEY_DEVPATH)
+            .unwrap_or("")
+            .to_string(),
         other => stored_display(device, other),
     }
 }
@@ -504,7 +532,8 @@ pub fn field_is_set(device: &DeviceEntry, field: FieldId) -> bool {
     match field {
         FieldId::Class | FieldId::Type | FieldId::Enabled => true,
         FieldId::Volume => {
-            device.get(consts::KEY_STREAM_VOLUME).is_some() || device.get(consts::KEY_VOLUME).is_some()
+            device.get(consts::KEY_STREAM_VOLUME).is_some()
+                || device.get(consts::KEY_VOLUME).is_some()
         }
         other => other
             .config_key()
@@ -596,7 +625,10 @@ pub fn validate(device: &DeviceEntry) -> Result<(), String> {
     let class = device.class();
     let type_name = normalize_type_name(class, device.type_name());
     if class != DeviceClass::Sound && !type_legal_for_class(class, type_name) {
-        return Err(format!("type {type_name} is not legal for {}", class.as_str()));
+        return Err(format!(
+            "type {type_name} is not legal for {}",
+            class.as_str()
+        ));
     }
     let identity_empty = match class {
         DeviceClass::Serial => device.get_str(consts::KEY_DEVPATH).unwrap_or("").is_empty(),
@@ -625,8 +657,10 @@ pub fn validate(device: &DeviceEntry) -> Result<(), String> {
             return Err(format!("tachometer XML not found: {path}"));
         }
     }
-    if matches!(type_name, consts::TYPE_SIMLEDS | consts::TYPE_CUSTOM | consts::TYPE_ARDUINO_CUSTOM)
-    {
+    if matches!(
+        type_name,
+        consts::TYPE_SIMLEDS | consts::TYPE_CUSTOM | consts::TYPE_ARDUINO_CUSTOM
+    ) {
         let path = device.get_str(consts::KEY_CONFIG).unwrap_or("");
         if path.is_empty() {
             return Err("Lua config path is required".into());
@@ -740,7 +774,9 @@ mod tests {
             subtypes_for(DeviceClass::Serial, consts::TYPE_WHEEL),
             consts::SERIAL_WHEEL_SUBTYPES
         );
-        assert!(allowed_keys(DeviceClass::Serial, consts::TYPE_WHEEL).contains(&consts::KEY_SUBTYPE));
+        assert!(
+            allowed_keys(DeviceClass::Serial, consts::TYPE_WHEEL).contains(&consts::KEY_SUBTYPE)
+        );
 
         let mut wheel = DeviceEntry::new();
         apply_defaults(&mut wheel, DeviceClass::Serial, consts::TYPE_WHEEL);
@@ -752,8 +788,14 @@ mod tests {
 
     #[test]
     fn usb_types_do_not_accept_serial_shift_lights() {
-        assert!(!type_legal_for_class(DeviceClass::Usb, consts::TYPE_SHIFT_LIGHTS));
-        assert!(type_legal_for_class(DeviceClass::Serial, consts::TYPE_SHIFT_LIGHTS));
+        assert!(!type_legal_for_class(
+            DeviceClass::Usb,
+            consts::TYPE_SHIFT_LIGHTS
+        ));
+        assert!(type_legal_for_class(
+            DeviceClass::Serial,
+            consts::TYPE_SHIFT_LIGHTS
+        ));
     }
 
     #[test]

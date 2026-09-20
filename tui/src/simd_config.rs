@@ -49,6 +49,9 @@ impl SimdSim {
     }
 
     pub fn field_display(&self, key: &str) -> String {
+        if key == consts::SIMD_FIELD_TELEMETRY {
+            return self.telemetry_source().to_string();
+        }
         let Some(value) = libconfig::group_get(&self.settings, key) else {
             return String::new();
         };
@@ -59,6 +62,36 @@ impl SimdSim {
             Value::Bool(b) => b.to_string(),
             _ => consts::SIMD_VALUE_COMPLEX.to_string(),
         }
+    }
+
+    pub fn telemetry_source(&self) -> &'static str {
+        if let Some(canonical) =
+            canonical_telemetry_source(self.get_str(consts::SIMD_FIELD_TELEMETRY))
+        {
+            return canonical;
+        }
+        match libconfig::group_get(&self.settings, consts::SIMD_FIELD_USEUDP)
+            .and_then(Value::as_bool)
+        {
+            Some(true) => consts::SIMD_TELEMETRY_UDP,
+            Some(false) => consts::SIMD_TELEMETRY_SHM,
+            None => consts::SIMD_TELEMETRY_AUTO,
+        }
+    }
+
+    pub fn set_telemetry_source(&mut self, source: &'static str) {
+        libconfig::group_set(
+            &mut self.settings,
+            consts::SIMD_FIELD_TELEMETRY,
+            Value::String(source.to_string()),
+        );
+        libconfig::group_remove(&mut self.settings, consts::SIMD_FIELD_USEUDP);
+    }
+
+    pub fn cycle_telemetry_source(&mut self, delta: i32) -> &'static str {
+        let next = cycle_telemetry_source(self.telemetry_source(), delta);
+        self.set_telemetry_source(next);
+        next
     }
 
     pub fn game_id(&self) -> Option<u64> {
@@ -74,17 +107,23 @@ impl SimdSim {
 }
 
 impl SimdConfig {
-    pub fn name_for_game_id(&self, game_id: u64) -> Option<&str> {
-        if game_id == 0 {
+    pub fn index_for_game_id(&self, game_id: u64) -> Option<usize> {
+        if game_id == consts::SETTINGS_GAME_IDLE {
             return None;
         }
-        self.sims.iter().find_map(|sim| {
-            if sim.game_id() == Some(game_id) {
-                Some(sim.name())
-            } else {
-                None
-            }
-        })
+        self.sims
+            .iter()
+            .position(|sim| sim.game_id() == Some(game_id))
+    }
+
+    pub fn name_for_game_id(&self, game_id: u64) -> Option<&str> {
+        let index = self.index_for_game_id(game_id)?;
+        let name = self.sims.get(index)?.name();
+        if name.is_empty() {
+            None
+        } else {
+            Some(name)
+        }
     }
 }
 
@@ -105,7 +144,9 @@ pub fn parse(src: &str) -> Result<SimdConfig> {
     let mut sims = Vec::new();
     for (key, value) in group {
         if key == consts::KEY_SIMS {
-            let list = value.as_list().ok_or_else(|| anyhow!("sims must be a list"))?;
+            let list = value
+                .as_list()
+                .ok_or_else(|| anyhow!("sims must be a list"))?;
             for item in list {
                 let settings = item
                     .as_group()
@@ -187,7 +228,7 @@ pub fn column_min_width(key: &str) -> u16 {
         consts::SIMD_FIELD_LAUNCHEXE | consts::SIMD_FIELD_LIVEEXE => consts::SIMD_COL_EXE_MIN,
         consts::SIMD_FIELD_BRIDGEDELAY => consts::SIMD_COL_BRIDGE,
         consts::SIMD_FIELD_SIMAPI => consts::SIMD_COL_SIMAPI,
-        consts::SIMD_FIELD_USEUDP => consts::SIMD_COL_USEUDP,
+        consts::SIMD_FIELD_TELEMETRY => consts::SIMD_COL_TELEMETRY,
         _ => consts::SIMD_COL_EXTRA_MIN,
     }
 }
@@ -238,6 +279,23 @@ fn text_cols(text: &str) -> u16 {
     u16::try_from(text.chars().count()).unwrap_or(u16::MAX)
 }
 
+fn canonical_telemetry_source(name: &str) -> Option<&'static str> {
+    consts::SIMD_TELEMETRY_SOURCES
+        .iter()
+        .copied()
+        .find(|source| *source == name)
+}
+
+fn cycle_telemetry_source(current: &str, delta: i32) -> &'static str {
+    let index = consts::SIMD_TELEMETRY_SOURCES
+        .iter()
+        .position(|source| *source == current)
+        .unwrap_or(0);
+    let len = consts::SIMD_TELEMETRY_SOURCE_COUNT as i32;
+    let next = (index as i32 + delta).rem_euclid(len) as usize;
+    consts::SIMD_TELEMETRY_SOURCES[next]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,9 +311,15 @@ sims = (
         )
         .unwrap();
         let columns = table_columns(&config);
-        assert_eq!(&columns[..consts::SIMD_FIELD_COUNT], &consts::SIMD_TABLE_COLUMNS);
+        assert_eq!(
+            &columns[..consts::SIMD_FIELD_COUNT],
+            &consts::SIMD_TABLE_COLUMNS
+        );
         assert!(columns.iter().any(|column| column == "custom"));
-        assert_eq!(config.sims[0].field_display(consts::SIMD_FIELD_NAME), "Demo");
+        assert_eq!(
+            config.sims[0].field_display(consts::SIMD_FIELD_NAME),
+            "Demo"
+        );
         assert_eq!(config.sims[0].field_display("custom"), "kept");
     }
 
@@ -291,5 +355,59 @@ sims = (
         assert!(name_width >= text_cols("AssettoCorsaCompetizione"));
         let (start, end) = column_window(&widths, 0, name_width);
         assert_eq!((start, end), (0, 1));
+    }
+
+    #[test]
+    fn telemetry_defaults_to_auto_and_migrates_useudp() {
+        let auto = parse(r#"sims = ( { name = "A"; gameid = 1; } );"#).unwrap();
+        assert_eq!(auto.sims[0].telemetry_source(), consts::SIMD_TELEMETRY_AUTO);
+        assert_eq!(
+            auto.sims[0].field_display(consts::SIMD_FIELD_TELEMETRY),
+            consts::SIMD_TELEMETRY_AUTO
+        );
+        let shm = parse(r#"sims = ( { name = "A"; gameid = 1; useudp = false; } );"#).unwrap();
+        assert_eq!(shm.sims[0].telemetry_source(), consts::SIMD_TELEMETRY_SHM);
+        let udp = parse(r#"sims = ( { name = "A"; gameid = 1; useudp = true; } );"#).unwrap();
+        assert_eq!(udp.sims[0].telemetry_source(), consts::SIMD_TELEMETRY_UDP);
+        let named = parse(r#"sims = ( { name = "A"; gameid = 1; telemetry = "udp"; } );"#).unwrap();
+        assert_eq!(named.sims[0].telemetry_source(), consts::SIMD_TELEMETRY_UDP);
+    }
+
+    #[test]
+    fn telemetry_cycle_writes_source_and_drops_useudp() {
+        let mut config =
+            parse(r#"sims = ( { name = "A"; gameid = 1; useudp = false; } );"#).unwrap();
+        assert_eq!(
+            config.sims[0].cycle_telemetry_source(1),
+            consts::SIMD_TELEMETRY_UDP
+        );
+        assert_eq!(
+            config.sims[0].get_str(consts::SIMD_FIELD_TELEMETRY),
+            consts::SIMD_TELEMETRY_UDP
+        );
+        assert!(
+            libconfig::group_get(&config.sims[0].settings, consts::SIMD_FIELD_USEUDP).is_none()
+        );
+        assert_eq!(
+            config.sims[0].cycle_telemetry_source(1),
+            consts::SIMD_TELEMETRY_AUTO
+        );
+    }
+
+    #[test]
+    fn index_for_game_id_skips_idle_and_empty() {
+        let config = parse(
+            r#"
+sims = (
+  { name = "One"; gameid = 11; },
+  { name = "Two"; gameid = 22; }
+);
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.index_for_game_id(consts::SETTINGS_GAME_IDLE), None);
+        assert_eq!(config.index_for_game_id(22), Some(1));
+        assert_eq!(config.name_for_game_id(11), Some("One"));
+        assert_eq!(config.name_for_game_id(99), None);
     }
 }

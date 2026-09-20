@@ -280,16 +280,17 @@ pub fn spawn_args_with_scope(
     }
     args.push(consts::CLI_FLAG_CONFIG_FILE.to_string());
     args.push(config_path.to_string_lossy().into_owned());
-    if kind == SessionKind::Test {
-        push_test_scope(&mut args, scope);
-    }
+    push_session_scope(&mut args, kind, scope);
     args
 }
 
-fn push_test_scope(args: &mut Vec<String>, scope: TestScope) {
+fn push_session_scope(args: &mut Vec<String>, kind: SessionKind, scope: TestScope) {
     if let Some(index) = scope.config_index {
         args.push(consts::CLI_FLAG_CONFIG_INDEX.to_string());
         args.push(index.to_string());
+    }
+    if kind != SessionKind::Test {
+        return;
     }
     if let Some(index) = scope.device_index {
         args.push(consts::CLI_FLAG_DEVICE_INDEX.to_string());
@@ -476,6 +477,23 @@ mod tests {
         assert!(args.contains(&consts::CLI_FLAG_FPS.to_string()));
         assert!(args.contains(&"30".to_string()));
         assert!(args.contains(&consts::CLI_FLAG_CONFIG_FILE.to_string()));
+    }
+
+    #[test]
+    fn spawn_play_includes_config_index() {
+        let scope = TestScope {
+            config_index: Some(2),
+            device_index: Some(9),
+        };
+        let args = spawn_args_with_scope(
+            SessionKind::Play,
+            &PlayFlags::default(),
+            Path::new("/tmp/c.config"),
+            scope,
+        );
+        assert!(args.contains(&consts::CLI_FLAG_CONFIG_INDEX.to_string()));
+        assert!(args.contains(&"2".to_string()));
+        assert!(!args.contains(&consts::CLI_FLAG_DEVICE_INDEX.to_string()));
     }
 
     #[test]
