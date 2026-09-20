@@ -38,6 +38,41 @@ impl SimdSim {
     pub fn name(&self) -> &str {
         self.get_str(consts::SIMD_FIELD_NAME)
     }
+
+    pub fn display_name(&self) -> String {
+        let name = self.name();
+        if name.is_empty() {
+            consts::SIMD_UNNAMED.to_string()
+        } else {
+            name.to_string()
+        }
+    }
+
+    pub fn game_id(&self) -> Option<u64> {
+        let value = libconfig::group_get(&self.settings, consts::SIMD_FIELD_GAMEID)?;
+        if let Some(n) = value.as_i64() {
+            if n < 0 {
+                return None;
+            }
+            return Some(n as u64);
+        }
+        value.as_str()?.parse().ok()
+    }
+}
+
+impl SimdConfig {
+    pub fn name_for_game_id(&self, game_id: u64) -> Option<&str> {
+        if game_id == 0 {
+            return None;
+        }
+        self.sims.iter().find_map(|sim| {
+            if sim.game_id() == Some(game_id) {
+                Some(sim.name())
+            } else {
+                None
+            }
+        })
+    }
 }
 
 pub fn load(path: &Path) -> Result<SimdConfig> {

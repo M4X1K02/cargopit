@@ -98,13 +98,10 @@ fn pgrep_exact(name: &str) -> bool {
 }
 
 fn scan_ps(name: &str, self_pid: u32) -> bool {
-    let output = Command::new(consts::PS_BIN)
-        .args(consts::PS_LIST_ARGS)
-        .output();
-    let Ok(output) = output else {
+    let text = process_listing();
+    if text.is_empty() {
         return false;
-    };
-    let text = String::from_utf8_lossy(&output.stdout);
+    }
     for line in text.lines().skip(1) {
         let mut parts = line.split_whitespace();
         let Some(pid) = parts.next() else {
@@ -122,6 +119,16 @@ fn scan_ps(name: &str, self_pid: u32) -> bool {
         }
     }
     false
+}
+
+pub fn process_listing() -> String {
+    let output = Command::new(consts::PS_BIN)
+        .args(consts::PS_LIST_ARGS)
+        .output();
+    let Ok(output) = output else {
+        return String::new();
+    };
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 fn is_service_process(name: &str, comm: &str, args: &str) -> bool {
@@ -353,13 +360,6 @@ pub fn spawn_tachometer(max_revs: i64, granularity: i64, save_file: &str) -> Res
 
 pub fn simapi_present() -> bool {
     Path::new(consts::SIMAPI_DAT_PATH).exists()
-}
-
-pub fn simapi_nonzero() -> bool {
-    let Ok(bytes) = fs::read(consts::SIMAPI_DAT_PATH) else {
-        return false;
-    };
-    bytes.iter().any(|b| *b != 0)
 }
 
 #[cfg(test)]

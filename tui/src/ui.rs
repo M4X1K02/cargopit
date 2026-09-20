@@ -7,7 +7,7 @@ use ratatui::Frame;
 use crate::app::{simd_field_pairs, tune_fields, App, ConfirmKind, Screen, SettingsSub};
 use crate::config::DeviceEntry;
 use crate::consts;
-use crate::diagnostics::{self, Diagnostics};
+use crate::diagnostics::Diagnostics;
 use crate::diagrams;
 use crate::process::SessionKind;
 use crate::schema::{self, DeviceClass, FieldId};
@@ -42,7 +42,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::ProfileEdit => draw_profile_edit(frame, chunks[1], app),
         Screen::TemplatePicker => draw_templates(frame, chunks[1], app),
         Screen::Confirm(kind) => {
-            draw_devices(frame, chunks[1], app);
+            draw_confirm_background(frame, chunks[1], app, &diag);
             draw_confirm(frame, size, kind);
         }
         Screen::SettingsSub(sub) => draw_settings_sub(frame, chunks[1], app, *sub),
@@ -122,7 +122,7 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
     let mut spans = vec![
         diagrams::led_span_compact(consts::BINARY_SIMD, app.status.simd_running),
         diagrams::led_span_compact(consts::BINARY_CARGOPIT, app.status.cargopit_running),
-        diagrams::simapi_span_compact(diag.simapi_exists, diag.simapi_nonzero),
+        diagrams::simapi_span_compact(diag.simapi_exists, diag.simapi_live),
         Span::styled(
             format!(
                 " {} {}/{} {} ",
@@ -153,12 +153,25 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
         Screen::DeviceForm => consts::HELP_FORM,
         Screen::DeviceTune => consts::HELP_TUNE,
         Screen::Confirm(_) => consts::HELP_CONFIRM,
+        Screen::SettingsSub(sub) => settings_sub_help(sub),
         _ => consts::HELP_BACK,
     };
     frame.render_widget(
         Paragraph::new(text).style(theme::style_help_bar()),
         area,
     );
+}
+
+fn settings_sub_help(sub: SettingsSub) -> &'static str {
+    match sub {
+        SettingsSub::Flags => consts::HELP_FLAGS,
+        SettingsSub::Simd => consts::HELP_SIMD,
+        SettingsSub::Lua => consts::HELP_LUA,
+        SettingsSub::Tach => consts::HELP_TACH,
+        SettingsSub::Tyres => consts::HELP_TYRES,
+        SettingsSub::Raw => consts::HELP_RAW,
+        SettingsSub::Diagnostics => consts::HELP_BACK,
+    }
 }
 
 fn render_selectable_list(
@@ -188,25 +201,28 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) 
             Constraint::Min(1),
         ])
         .split(area);
-    let pipeline = vec![
-        diagrams::pipeline_line(
-            app.status.simd_running,
-            diag.simapi_exists,
-            diag.simapi_nonzero,
-            app.status.cargopit_running,
+    let mut pipeline = diagrams::pipeline_lines(
+        app.status.simd_running,
+        &app.running_games,
+        diag.simapi_exists,
+        diag.simapi_live,
+        app.status.cargopit_running,
+        app.telemetry.mtick,
+    );
+    pipeline.push(Line::from(""));
+    pipeline.push(Line::from(Span::styled(
+        format!(
+            "{} {}  {} {}",
+            consts::LABEL_CONNECTED,
+            diag.connected,
+            consts::LABEL_MISSING,
+            diag.missing
         ),
-        Line::from(""),
-        Line::from(Span::styled(
-            format!(
-                "{} {}  {} {}",
-                consts::LABEL_CONNECTED,
-                diag.connected,
-                consts::LABEL_MISSING,
-                diag.missing
-            ),
-            theme::style_muted(),
-        )),
-    ];
+        theme::style_muted(),
+    )));
+    if let Some(rpm) = telemetry_rpm_line(app) {
+        pipeline.push(rpm);
+    }
     frame.render_widget(
         Paragraph::new(pipeline).block(theme::panel(consts::DIAGRAM_TITLE_PIPELINE)),
         rows[0],
@@ -220,6 +236,16 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) 
         .split(rows[1]);
     draw_dashboard_health(frame, cols[0], app, diag);
     draw_dashboard_actions(frame, cols[1], app);
+}
+
+fn telemetry_rpm_line(app: &App) -> Option<Line<'static>> {
+    if !app.telemetry_live || app.telemetry.rpms == 0 {
+        return None;
+    }
+    Some(Line::from(Span::styled(
+        format!("{} {}", consts::LABEL_RPM, app.telemetry.rpms),
+        theme::style_muted(),
+    )))
 }
 
 fn draw_dashboard_health(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
@@ -356,12 +382,9 @@ fn device_row(app: &App, device: &DeviceEntry) -> ListItem<'static> {
     ListItem::new(line)
 }
 
-fn draw_form(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
-    let show_diagram = area.width
-        >= consts::LAYOUT_FORM_LIST_MIN + consts::LAYOUT_FORM_DIAGRAM_WIDTH;
-    if !show_diagram {
-        draw_form_list(frame, area, app, tune);
-        return;
+fn split_list_help(area: Rect) -> Option<(Rect, Rect)> {
+    if area.width < consts::LAYOUT_FORM_LIST_MIN + consts::LAYOUT_FORM_DIAGRAM_WIDTH {
+        return None;
     }
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -370,8 +393,68 @@ fn draw_form(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
             Constraint::Length(consts::LAYOUT_FORM_DIAGRAM_WIDTH),
         ])
         .split(area);
-    draw_form_list(frame, chunks[0], app, tune);
-    draw_form_diagram(frame, chunks[1], app);
+    Some((chunks[0], chunks[1]))
+}
+
+fn draw_about_panel(frame: &mut Frame, area: Rect, title: impl Into<String>, text: &str) {
+    frame.render_widget(
+        Paragraph::new(text.to_string())
+            .wrap(Wrap { trim: true })
+            .style(theme::style_muted())
+            .block(theme::panel(title)),
+        area,
+    );
+}
+
+fn draw_list_with_help(
+    frame: &mut Frame,
+    area: Rect,
+    title: impl Into<String>,
+    items: Vec<ListItem>,
+    selected: usize,
+    help_title: impl Into<String>,
+    help: &str,
+) {
+    let title = title.into();
+    let Some((list, side)) = split_list_help(area) else {
+        render_selectable_list(frame, area, title, items, selected);
+        return;
+    };
+    render_selectable_list(frame, list, title, items, selected);
+    draw_about_panel(frame, side, help_title, help);
+}
+
+fn draw_form(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
+    let Some((list, side)) = split_list_help(area) else {
+        draw_form_list(frame, area, app, tune);
+        return;
+    };
+    let side_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(consts::LAYOUT_FORM_HELP_HEIGHT),
+            Constraint::Min(1),
+        ])
+        .split(side);
+    draw_form_list(frame, list, app, tune);
+    draw_field_help(frame, side_chunks[0], app, tune);
+    draw_form_diagram(frame, side_chunks[1], app);
+}
+
+fn selected_form_field(app: &App, tune: bool) -> Option<FieldId> {
+    if tune {
+        tune_fields(&app.form).get(app.tune_index).copied()
+    } else {
+        app.form.current_field()
+    }
+}
+
+fn draw_field_help(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
+    let (title, text) = match selected_form_field(app, tune) {
+        Some(field) => (field.label(), field.help()),
+        None => (consts::TITLE_ABOUT, consts::DIAGRAM_NO_DEVICE),
+    };
+    draw_about_panel(frame, area, title, text);
 }
 
 fn draw_form_list(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
@@ -390,8 +473,7 @@ fn draw_form_list(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
         let mut value = schema::display_value(&app.form.device, *field);
         if !tune && app.form.edit_buffer.is_some() && index == app.form.field_index {
             value = format!("{}{}", app.form.edit_buffer.as_deref().unwrap_or(""), consts::EDIT_CURSOR);
-        }
-        if schema::is_identity(*field) {
+        } else if schema::is_identity(*field) {
             let choices = app.discovery.choices_for(
                 app.form.device.class(),
                 *field == FieldId::Devpath,
@@ -399,6 +481,9 @@ fn draw_form_list(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
             if let Some(choice) = choices.iter().find(|c| c.value == value) {
                 value = choice.label.clone();
             }
+        }
+        if value.is_empty() {
+            value = consts::FIELD_UNSET.to_string();
         }
         items.push(field_row(*field, &value, &app.form.device));
     }
@@ -423,12 +508,14 @@ fn field_row(field: FieldId, value: &str, device: &DeviceEntry) -> ListItem<'sta
         width = consts::FIELD_LABEL_WIDTH
     ))];
     if field == FieldId::Pan {
-        let channels = device
-            .get_i64(consts::KEY_CHANNELS)
-            .unwrap_or(consts::DEFAULT_CHANNELS);
-        let pan = device.get_i64(consts::KEY_PAN).unwrap_or(consts::DEFAULT_PAN);
-        spans.push(Span::raw("  "));
-        spans.extend(diagrams::pan_line(pan, channels).spans);
+        if schema::field_is_set(device, FieldId::Pan) {
+            let channels = device
+                .get_i64(consts::KEY_CHANNELS)
+                .unwrap_or(consts::DEFAULT_CHANNELS);
+            let pan = device.get_i64(consts::KEY_PAN).unwrap_or(consts::DEFAULT_PAN);
+            spans.push(Span::raw("  "));
+            spans.extend(diagrams::pan_line(pan, channels).spans);
+        }
     } else if let Some(ratio) = diagrams::field_ratio(device, field) {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
@@ -480,6 +567,7 @@ fn draw_confirm(frame: &mut Frame, area: Rect, kind: &ConfirmKind) {
         ConfirmKind::DeleteProfile => consts::CONFIRM_DELETE_PROFILE,
         ConfirmKind::RestartAfterSave => consts::CONFIRM_RESTART,
         ConfirmKind::ApplyTemplate(_) => consts::CONFIRM_TEMPLATE,
+        ConfirmKind::DiscardUnsaved => consts::CONFIRM_DISCARD_UNSAVED,
     };
     let popup = centered(
         area,
@@ -495,17 +583,42 @@ fn draw_confirm(frame: &mut Frame, area: Rect, kind: &ConfirmKind) {
     );
 }
 
+fn draw_confirm_background(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
+    match &app.previous {
+        Screen::Dashboard => draw_dashboard(frame, area, app, diag),
+        Screen::Devices => draw_devices(frame, area, app),
+        Screen::Settings => draw_settings(frame, area, app),
+        Screen::Logs => draw_logs(frame, area, app),
+        Screen::DeviceForm => draw_form(frame, area, app, false),
+        Screen::DeviceTune => draw_form(frame, area, app, true),
+        Screen::ProfileEdit => draw_profile_edit(frame, area, app),
+        Screen::TemplatePicker => draw_templates(frame, area, app),
+        Screen::SettingsSub(sub) => draw_settings_sub(frame, area, app, *sub),
+        Screen::Confirm(_) => draw_devices(frame, area, app),
+    }
+}
+
 fn draw_settings(frame: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = consts::SETTINGS_ITEMS
         .iter()
         .map(|label| ListItem::new(*label))
         .collect();
-    render_selectable_list(
+    let help = consts::SETTINGS_ITEM_HELP
+        .get(app.settings_index)
+        .copied()
+        .unwrap_or("");
+    let title = consts::SETTINGS_ITEMS
+        .get(app.settings_index)
+        .copied()
+        .unwrap_or(consts::TITLE_ABOUT);
+    draw_list_with_help(
         frame,
         area,
         consts::TITLE_SETTINGS,
         items,
         app.settings_index,
+        title,
+        help,
     );
 }
 
@@ -523,6 +636,10 @@ fn draw_settings_sub(frame: &mut Frame, area: Rect, app: &App, sub: SettingsSub)
 
 fn draw_flags(frame: &mut Frame, area: Rect, app: &App) {
     let flags = &app.tui_state.play_flags;
+    let fps = match flags.fps {
+        Some(value) => value.to_string(),
+        None => consts::FIELD_UNSET.to_string(),
+    };
     let rows = [
         format!(
             "{:<width$} {}",
@@ -543,9 +660,8 @@ fn draw_flags(frame: &mut Frame, area: Rect, app: &App) {
             width = consts::FIELD_LABEL_WIDTH
         ),
         format!(
-            "{:<width$} {}",
+            "{:<width$} {fps}",
             consts::FLAG_LABEL_FPS,
-            flags.fps.unwrap_or(consts::DEFAULT_FPS),
             width = consts::FIELD_LABEL_WIDTH
         ),
         format!(
@@ -556,49 +672,114 @@ fn draw_flags(frame: &mut Frame, area: Rect, app: &App) {
         ),
     ];
     let items: Vec<ListItem> = rows.iter().map(|row| ListItem::new(row.clone())).collect();
-    render_selectable_list(frame, area, consts::TITLE_FLAGS, items, app.flags_field);
+    let help = consts::FLAG_HELP
+        .get(app.flags_field)
+        .copied()
+        .unwrap_or("");
+    draw_list_with_help(
+        frame,
+        area,
+        consts::TITLE_FLAGS,
+        items,
+        app.flags_field,
+        consts::TITLE_ABOUT,
+        help,
+    );
 }
 
 fn draw_simd(frame: &mut Frame, area: Rect, app: &App) {
-    let mut lines = vec![Line::from(Span::styled(consts::SIMD_HINT, theme::style_muted()))];
+    let mut items = Vec::new();
     if app.simd.sims.is_empty() {
-        lines.push(Line::from(consts::SIMD_EMPTY));
+        items.push(ListItem::new(consts::SIMD_EMPTY));
     }
-    for (index, sim) in app.simd.sims.iter().enumerate() {
-        let marker = if index == app.simd_index {
-            consts::LIST_HIGHLIGHT_SYMBOL
-        } else {
-            consts::TAB_PAD
-        };
-        let style = if index == app.simd_index {
-            theme::style_selected()
-        } else {
-            Style::default()
-        };
-        lines.push(Line::from(Span::styled(format!("{marker}{}", sim.name()), style)));
-        if index != app.simd_index {
-            continue;
-        }
-        for (key, value) in simd_field_pairs(sim) {
-            lines.push(Line::from(Span::styled(
-                format!("{}{key} = {value}  ({})", consts::SIMD_FIELD_INDENT, simd_config::field_help(&key)),
-                theme::style_muted(),
-            )));
-        }
+    for sim in app.simd.sims.iter() {
+        items.push(ListItem::new(sim.display_name()));
+    }
+    let (list, detail) = match split_list_help(area) {
+        Some(parts) => parts,
+        None => split_stacked(area),
+    };
+    render_selectable_list(
+        frame,
+        list,
+        consts::TITLE_SIMD,
+        items,
+        app.simd_index,
+    );
+    draw_simd_detail(frame, detail, app);
+}
+
+fn split_stacked(area: Rect) -> (Rect, Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Min(1)])
+        .split(area);
+    (chunks[0], chunks[1])
+}
+
+fn draw_simd_detail(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(sim) = app.simd.sims.get(app.simd_index) else {
+        draw_about_panel(frame, area, consts::TITLE_ABOUT, consts::SIMD_EMPTY);
+        return;
+    };
+    let pairs = simd_field_pairs(sim);
+    if pairs.is_empty() {
+        draw_about_panel(frame, area, sim.display_name(), consts::SIMD_NO_FIELDS);
+        return;
+    }
+    let mut lines = Vec::new();
+    for (key, value) in pairs {
+        lines.push(Line::from(format!(
+            "{:<width$} {value}",
+            key,
+            width = consts::FIELD_LABEL_WIDTH
+        )));
+        lines.push(Line::from(Span::styled(
+            simd_config::field_help(&key),
+            theme::style_muted(),
+        )));
     }
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
-            .block(theme::panel(consts::TITLE_SIMD)),
+            .block(theme::panel(sim.display_name())),
         area,
     );
 }
 
 fn draw_lua(frame: &mut Frame, area: Rect, app: &App) {
-    let mut names: Vec<String> = consts::BUNDLED_LUA.iter().map(|s| (*s).to_string()).collect();
-    names.extend(diagnostics::lua_scripts());
-    let items: Vec<ListItem> = names.iter().map(|name| ListItem::new(name.clone())).collect();
-    render_selectable_list(frame, area, consts::TITLE_LUA, items, app.lua_index);
+    let items: Vec<ListItem> = consts::BUNDLED_LUA
+        .iter()
+        .map(|name| ListItem::new(*name))
+        .collect();
+    let name = consts::BUNDLED_LUA
+        .get(app.lua_index)
+        .copied()
+        .unwrap_or(consts::TITLE_ABOUT);
+    let help = lua_item_help(app.lua_index);
+    draw_list_with_help(
+        frame,
+        area,
+        consts::TITLE_LUA,
+        items,
+        app.lua_index,
+        name,
+        &help,
+    );
+}
+
+fn lua_item_help(index: usize) -> String {
+    let intro = consts::SETTINGS_ITEM_HELP[consts::SETTINGS_INDEX_LUA];
+    let Some(name) = consts::BUNDLED_LUA.get(index) else {
+        return intro.to_string();
+    };
+    let dest = crate::paths::config_home()
+        .join(consts::CONFIG_DIR_NAME)
+        .join(name);
+    if dest.is_file() {
+        return format!("{intro} Copied to {}.", dest.display());
+    }
+    intro.to_string()
 }
 
 fn draw_tach(frame: &mut Frame, area: Rect, app: &App) {
@@ -608,16 +789,23 @@ fn draw_tach(frame: &mut Frame, area: Rect, app: &App) {
         .split(area);
     let rows = [
         format!(
-            "{}     {}",
+            "{:<width$} {}",
             consts::TACH_LABEL_MAX_REVS,
-            app.tach_max_revs
+            app.tach_max_revs,
+            width = consts::FIELD_LABEL_WIDTH
         ),
         format!(
-            "{}  {}",
+            "{:<width$} {}",
             FieldId::Granularity.label(),
-            app.tach_granularity
+            app.tach_granularity,
+            width = consts::FIELD_LABEL_WIDTH
         ),
-        format!("{}   {}", consts::TACH_LABEL_OUTPUT, app.tach_path),
+        format!(
+            "{:<width$} {}",
+            consts::TACH_LABEL_OUTPUT,
+            app.tach_path,
+            width = consts::FIELD_LABEL_WIDTH
+        ),
     ];
     let items: Vec<ListItem> = rows.iter().map(|row| ListItem::new(row.clone())).collect();
     render_selectable_list(frame, chunks[0], consts::TITLE_TACH, items, app.tach_field);
@@ -708,7 +896,7 @@ fn draw_diagnostics(frame: &mut Frame, area: Rect, app: &App) {
             consts::BINARY_SIMD,
             d.simd_bin.as_deref().unwrap_or(consts::SIMAPI_MISSING)
         )),
-        Line::from(diagrams::simapi_span(d.simapi_exists, d.simapi_nonzero)),
+        Line::from(diagrams::simapi_span(d.simapi_exists, d.simapi_live)),
         Line::from(format!(
             "{} {}  {} {}",
             consts::LABEL_CONNECTED,
@@ -717,17 +905,28 @@ fn draw_diagnostics(frame: &mut Frame, area: Rect, app: &App) {
             d.missing
         )),
         Line::from(format!("{} {}", consts::CONFIG_FILE_NAME, app.config_path.display())),
-        Line::from(Span::styled(consts::RAW_VIEW_HINT, theme::style_muted())),
     ];
     frame.render_widget(
-        Paragraph::new(lines).block(theme::panel(consts::TITLE_DIAGNOSTICS)),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .block(theme::panel(consts::TITLE_DIAGNOSTICS)),
         area,
     );
 }
 
 fn draw_raw(frame: &mut Frame, area: Rect, app: &App) {
+    let mut lines = vec![Line::from(Span::styled(
+        consts::RAW_VIEW_HINT,
+        theme::style_muted(),
+    ))];
+    if !app.raw_on_disk.is_empty() {
+        lines.push(Line::from(""));
+        for line in app.raw_on_disk.lines() {
+            lines.push(Line::from(line.to_string()));
+        }
+    }
     frame.render_widget(
-        Paragraph::new(app.raw_on_disk.clone())
+        Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .block(theme::panel(consts::TITLE_RAW)),
         area,
@@ -791,7 +990,15 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn render_dump(app: &App) -> String {
-        let backend = TestBackend::new(consts::MIN_TERMINAL_WIDTH + 20, consts::MIN_TERMINAL_HEIGHT + 6);
+        render_dump_size(
+            app,
+            consts::MIN_TERMINAL_WIDTH + 20,
+            consts::MIN_TERMINAL_HEIGHT + 6,
+        )
+    }
+
+    fn render_dump_size(app: &App, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| draw(frame, app)).unwrap();
         terminal.backend().to_string()
@@ -829,11 +1036,170 @@ mod tests {
             app.screen = Screen::Settings;
             let dump = render_dump(app);
             assert!(dump.contains(consts::TITLE_SETTINGS));
+            assert!(dump.contains("Flags passed when starting"));
+            app.screen = Screen::DeviceForm;
+            let dump = render_dump(app);
+            assert!(dump.contains("Transport:"));
         });
     }
 
     #[test]
     fn action_hints_match_actions() {
         assert_eq!(consts::ACTION_HINTS.len(), consts::DASHBOARD_ACTIONS.len());
+    }
+
+    #[test]
+    fn settings_help_matches_items() {
+        assert_eq!(consts::SETTINGS_ITEMS.len(), consts::SETTINGS_ITEM_HELP.len());
+        assert_eq!(consts::FLAG_HELP.len(), consts::FLAG_FIELD_COUNT);
+        assert_eq!(consts::FPS_FLAG_CHOICES.len(), consts::FPS_FLAG_CHOICE_COUNT);
+    }
+
+    #[test]
+    fn flags_fps_can_return_to_unset() {
+        with_app(|app| {
+            app.screen = Screen::SettingsSub(SettingsSub::Flags);
+            app.flags_field = consts::FLAG_FIELD_FPS;
+            let key = |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            app.handle_key(key(consts::KEY_RIGHT)).unwrap();
+            assert_eq!(app.tui_state.play_flags.fps, Some(consts::FPS_FLAG_30));
+            app.handle_key(key(consts::KEY_LEFT)).unwrap();
+            assert_eq!(app.tui_state.play_flags.fps, None);
+            app.handle_key(key(consts::KEY_RIGHT)).unwrap();
+            app.handle_key(key(consts::KEY_BACKSPACE)).unwrap();
+            assert_eq!(app.tui_state.play_flags.fps, None);
+        });
+    }
+
+    #[test]
+    fn simd_keeps_fields_out_of_sim_list() {
+        with_app(|app| {
+            app.tab = consts::TAB_SETTINGS;
+            app.screen = Screen::SettingsSub(SettingsSub::Simd);
+            app.simd = simd_config::stub_from_bundled();
+            assert!(!app.simd.sims.is_empty());
+            for (width, height) in [
+                (100u16, 28u16),
+                (consts::MIN_TERMINAL_WIDTH, consts::MIN_TERMINAL_HEIGHT),
+            ] {
+                let dump = render_dump_size(app, width, height);
+                assert!(dump.contains(consts::TITLE_SIMD), "{dump}");
+                assert!(dump.contains("AssettoCorsa"), "{dump}");
+                assert!(dump.contains(consts::SIMD_FIELD_GAMEID), "{dump}");
+                assert!(
+                    !dump.contains("name = AssettoCorsa  ("),
+                    "inline field help mixed into list:\n{dump}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn lua_lists_bundled_names_not_source_paths() {
+        with_app(|app| {
+            app.tab = consts::TAB_SETTINGS;
+            app.screen = Screen::SettingsSub(SettingsSub::Lua);
+            let dump = render_dump(app);
+            assert!(dump.contains(consts::TITLE_LUA), "{dump}");
+            assert!(dump.contains(consts::BUNDLED_LUA[0]), "{dump}");
+            assert!(
+                !dump.contains("/conf/"),
+                "lua list should not dump bundled file paths:\n{dump}"
+            );
+        });
+    }
+
+    #[test]
+    fn diagnostics_does_not_reuse_raw_hint() {
+        with_app(|app| {
+            app.tab = consts::TAB_SETTINGS;
+            app.screen = Screen::SettingsSub(SettingsSub::Diagnostics);
+            let dump = render_dump(app);
+            assert!(dump.contains(consts::TITLE_DIAGNOSTICS), "{dump}");
+            assert!(!dump.contains(consts::RAW_VIEW_HINT), "{dump}");
+            app.screen = Screen::SettingsSub(SettingsSub::Raw);
+            let dump = render_dump(app);
+            assert!(dump.contains(consts::RAW_VIEW_HINT), "{dump}");
+        });
+    }
+
+    #[test]
+    #[ignore = "requires a live simd/cargopit play session"]
+    fn live_session_dumps_settings_subs() {
+        let out = std::env::temp_dir().join("cargopit-tui-live");
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        let mut app = App::new().unwrap();
+        app.tick();
+        assert!(
+            app.status.simd_running,
+            "expected live simd; start simd before this test"
+        );
+        assert!(
+            app.status.cargopit_running,
+            "expected live cargopit play; this test must not start or stop it"
+        );
+        assert!(
+            !app.simd.sims.is_empty(),
+            "expected ~/.config/simd/simd.config to parse"
+        );
+
+        let key = |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+        app.handle_key(key(consts::KEY_ENTER)).unwrap();
+        assert_eq!(app.message, consts::MSG_PLAY_ALREADY_RUNNING);
+
+        let mut dumps = Vec::new();
+        let save = |name: &str, app: &App, dumps: &mut Vec<(String, String)>| {
+            let dump = render_dump_size(app, 100, 28);
+            std::fs::write(out.join(format!("{name}.txt")), &dump).unwrap();
+            dumps.push((name.to_string(), dump));
+        };
+
+        save("dashboard", &app, &mut dumps);
+        app.handle_key(key(consts::KEY_TAB3)).unwrap();
+        save("settings", &app, &mut dumps);
+
+        let subs = [
+            ("flags", "Play / test flags"),
+            ("simd", consts::TITLE_SIMD),
+            ("lua", consts::TITLE_LUA),
+            ("tach", consts::TITLE_TACH),
+            ("tyres", consts::TITLE_TYRES),
+            ("diagnostics", consts::TITLE_DIAGNOSTICS),
+            ("raw", consts::TITLE_RAW),
+        ];
+        for (index, (name, title)) in subs.iter().enumerate() {
+            app.settings_index = index;
+            app.handle_key(key(consts::KEY_ENTER)).unwrap();
+            save(name, &app, &mut dumps);
+            let dump = &dumps.last().unwrap().1;
+            assert!(dump.contains(title), "{name} missing {title}:\n{dump}");
+            app.handle_key(key(consts::KEY_ESC)).unwrap();
+            assert!(matches!(app.screen, Screen::Settings));
+        }
+
+        let simd = dumps
+            .iter()
+            .find(|(name, _)| name == "simd")
+            .map(|(_, dump)| dump.as_str())
+            .unwrap();
+        assert!(simd.contains(&app.simd.sims[0].display_name()), "{simd}");
+        assert!(simd.contains(consts::SIMD_FIELD_GAMEID), "{simd}");
+        assert!(
+            !simd.contains("name = "),
+            "simd still dumps inline field rows:\n{simd}"
+        );
+
+        let lua = dumps
+            .iter()
+            .find(|(name, _)| name == "lua")
+            .map(|(_, dump)| dump.as_str())
+            .unwrap();
+        assert!(lua.contains(consts::BUNDLED_LUA[0]), "{lua}");
+        assert!(!lua.contains("/conf/"), "lua listed source paths:\n{lua}");
+
+        for (name, dump) in &dumps {
+            eprintln!("===== live {name} =====\n{dump}");
+        }
     }
 }

@@ -7,6 +7,7 @@ use crate::config::{DeviceEntry, SimProfile};
 use crate::consts;
 use crate::hardware::Discovery;
 use crate::schema::{self, DeviceClass, FieldId};
+use crate::simapi_shm::RunningGame;
 use crate::theme;
 use crate::tyres::TyreCar;
 
@@ -79,10 +80,50 @@ pub fn class_style(class: DeviceClass) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
-pub fn pipeline_line(simd: bool, simapi_exists: bool, simapi_live: bool, pit: bool) -> Line<'static> {
+pub fn pipeline_lines(
+    simd: bool,
+    games: &[RunningGame],
+    simapi_exists: bool,
+    simapi_live: bool,
+    pit: bool,
+    mtick: u64,
+) -> Vec<Line<'static>> {
+    let (primary, extras) = split_games(games);
+    let mut lines = vec![pipeline_line(
+        simd,
+        primary,
+        simapi_exists,
+        simapi_live,
+        pit,
+        mtick,
+    )];
+    for game in extras {
+        lines.push(game_overflow_line(game, mtick));
+    }
+    lines
+}
+
+fn split_games(games: &[RunningGame]) -> (Option<&RunningGame>, &[RunningGame]) {
+    if games.is_empty() {
+        return (None, games);
+    }
+    (games.first(), &games[1..])
+}
+
+pub fn pipeline_line(
+    simd: bool,
+    game: Option<&RunningGame>,
+    simapi_exists: bool,
+    simapi_live: bool,
+    pit: bool,
+    mtick: u64,
+) -> Line<'static> {
+    let sending = game.map(|item| item.sending).unwrap_or(false);
     Line::from(vec![
         led_span(consts::BINARY_SIMD, simd, consts::STATUS_RUNNING, consts::STATUS_STOPPED),
-        Span::styled(consts::PIPELINE_ARROW, theme::style_muted()),
+        flow_arrow(sending, mtick),
+        game_span(game, mtick),
+        flow_arrow(sending, mtick),
         simapi_span(simapi_exists, simapi_live),
         Span::styled(consts::PIPELINE_ARROW, theme::style_muted()),
         led_span(
@@ -92,6 +133,63 @@ pub fn pipeline_line(simd: bool, simapi_exists: bool, simapi_live: bool, pit: bo
             consts::STATUS_STOPPED,
         ),
     ])
+}
+
+fn game_overflow_line(game: &RunningGame, mtick: u64) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(consts::MOTOR_ROW_INDENT),
+        game_span(Some(game), mtick),
+        flow_arrow(game.sending, mtick),
+        Span::styled(game.status_label, overflow_style(game.sending)),
+    ])
+}
+
+fn overflow_style(sending: bool) -> ratatui::style::Style {
+    if sending {
+        theme::style_ok()
+    } else {
+        theme::style_muted()
+    }
+}
+
+fn game_span(game: Option<&RunningGame>, mtick: u64) -> Span<'static> {
+    let Some(game) = game else {
+        return Span::styled(
+            format!(" {} {} ", consts::LED_OFF, consts::LABEL_NO_SIM),
+            theme::style_muted(),
+        );
+    };
+    let glyph = if game.sending {
+        pulse_glyph(mtick)
+    } else {
+        consts::LED_OFF
+    };
+    let style = if game.sending {
+        theme::style_ok()
+    } else {
+        theme::style_warn()
+    };
+    Span::styled(
+        format!(" {glyph} {} {} ", game.name, game.status_label),
+        style.add_modifier(Modifier::BOLD),
+    )
+}
+
+fn flow_arrow(sending: bool, mtick: u64) -> Span<'static> {
+    if !sending {
+        return Span::styled(consts::PIPELINE_ARROW, theme::style_muted());
+    }
+    let frames = consts::TELEMETRY_FLOW_FRAMES;
+    let index = (mtick as usize) % frames.len();
+    Span::styled(frames[index], theme::style_ok())
+}
+
+fn pulse_glyph(mtick: u64) -> &'static str {
+    if mtick % 2 == 0 {
+        consts::TELEMETRY_PULSE_ON
+    } else {
+        consts::TELEMETRY_PULSE_OFF
+    }
 }
 
 pub fn class_presence_line(profile: &SimProfile, class: DeviceClass, discovery: &Discovery) -> Line<'static> {
@@ -251,13 +349,10 @@ pub fn tyre_lines(car: &TyreCar) -> Vec<Line<'static>> {
 
 pub fn field_ratio(device: &DeviceEntry, field: FieldId) -> Option<f64> {
     match field {
-        FieldId::Volume => Some(int_ratio(
-            device
-                .get_i64(consts::KEY_STREAM_VOLUME)
-                .or_else(|| device.get_i64(consts::KEY_VOLUME))
-                .unwrap_or(consts::DEFAULT_VOLUME),
-            consts::VOLUME_MAX,
-        )),
+        FieldId::Volume => device
+            .get_i64(consts::KEY_STREAM_VOLUME)
+            .or_else(|| device.get_i64(consts::KEY_VOLUME))
+            .map(|v| int_ratio(v, consts::VOLUME_MAX)),
         FieldId::Amplitude => device
             .get_i64(consts::KEY_AMPLITUDE)
             .map(|v| int_ratio(v, consts::DEFAULT_AMPLITUDE_MAX)),
@@ -291,11 +386,11 @@ pub fn field_ratio(device: &DeviceEntry, field: FieldId) -> Option<f64> {
             .get_f64(consts::KEY_AMPFACTOR)
             .map(|v| v / consts::GAUGE_AMPFACTOR_MAX),
         FieldId::Pan => {
+            let pan = device.get_i64(consts::KEY_PAN)?;
             let channels = device
                 .get_i64(consts::KEY_CHANNELS)
                 .unwrap_or(consts::DEFAULT_CHANNELS)
                 .max(1);
-            let pan = device.get_i64(consts::KEY_PAN).unwrap_or(consts::DEFAULT_PAN);
             Some(int_ratio(pan, channels.saturating_sub(1).max(1)))
         }
         _ => None,
@@ -393,5 +488,52 @@ mod tests {
             motor_active(index) == [true, true, true, true]
         });
         assert!(all.is_some());
+    }
+
+    #[test]
+    fn live_pipeline_animates_and_idle_stays_still() {
+        let live = RunningGame {
+            name: "Assetto Corsa".into(),
+            game_id: 244210,
+            sending: true,
+            status_label: consts::LABEL_TELEMETRY_LIVE,
+        };
+        let idle = RunningGame {
+            name: "Assetto Corsa".into(),
+            game_id: 244210,
+            sending: false,
+            status_label: consts::LABEL_TELEMETRY_IDLE,
+        };
+        let live0 = pipeline_lines(true, &[live.clone()], true, true, true, 0);
+        let live1 = pipeline_lines(true, &[live], true, true, true, 1);
+        assert_ne!(format!("{:?}", live0), format!("{:?}", live1));
+        let idle0 = pipeline_lines(true, &[idle.clone()], true, false, true, 0);
+        let idle1 = pipeline_lines(true, &[idle], true, false, true, 1);
+        assert_eq!(format!("{:?}", idle0), format!("{:?}", idle1));
+        let empty = pipeline_lines(false, &[], false, false, false, 0);
+        let dump = format!("{:?}", empty);
+        assert!(dump.contains(consts::LABEL_NO_SIM));
+    }
+
+    #[test]
+    fn extra_games_wrap_to_overflow_line() {
+        let games = vec![
+            RunningGame {
+                name: "Assetto Corsa".into(),
+                game_id: 1,
+                sending: true,
+                status_label: consts::LABEL_TELEMETRY_LIVE,
+            },
+            RunningGame {
+                name: "rFactor 2".into(),
+                game_id: 2,
+                sending: false,
+                status_label: consts::LABEL_TELEMETRY_IDLE,
+            },
+        ];
+        let lines = pipeline_lines(true, &games, true, true, true, 0);
+        assert!(lines.len() >= 2);
+        let dump = format!("{:?}", lines);
+        assert!(dump.contains("rFactor 2"));
     }
 }

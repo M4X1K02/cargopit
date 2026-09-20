@@ -105,6 +105,43 @@ impl FieldId {
         }
     }
 
+    pub fn help(self) -> &'static str {
+        match self {
+            FieldId::Class => "Transport: USB HID, PulseAudio sound, or serial/Arduino.",
+            FieldId::Type => "Device role: haptic, wheel, tachometer, lights, wind, or custom Lua.",
+            FieldId::Subtype => "Hardware model used to pick the USB or serial protocol.",
+            FieldId::Enabled => "When false, the device stays in the profile but is not started.",
+            FieldId::Fps => "Device update rate. Unset uses cargopit's 60 fps default.",
+            FieldId::Devid => "USB vendor:product id or PulseAudio sink name.",
+            FieldId::Devpath => "Serial port (/dev/ttyACM*) or sysfs rumble path.",
+            FieldId::ConfigPath => "Tachometer XML or Lua script path for this device.",
+            FieldId::Granularity => "Tachometer LED grouping (1, 2, or 4). Unset uses 1.",
+            FieldId::Baud => "Serial baud rate. Unset uses 9600.",
+            FieldId::Ampfactor => "Scales serial haptic output. Unset uses 1.0.",
+            FieldId::Fanpower => "SimWind fan power from 0 to 1. Unset uses 0.6.",
+            FieldId::Motors => "Which shaker motors receive this effect. Unset leaves the engine default.",
+            FieldId::NumLights => "Shift-light LED count. Unset uses 6.",
+            FieldId::NumLeds => "Simleds strip length. Unset uses 6.",
+            FieldId::StartLed => "First LED in the strip that this effect owns (1-based).",
+            FieldId::EndLed => "Last LED in the strip that this effect owns (1-based).",
+            FieldId::Volume => "PulseAudio volume 0-100. Unset uses the engine unity default.",
+            FieldId::Pan => "Channel index to play on. Unset uses 0 (first channel).",
+            FieldId::Channels => "Mix width used to interpret pan. Unset uses 2.",
+            FieldId::Noise => "Extra hertz added to the tone. Unset uses 0.",
+            FieldId::Effect => "Telemetry source that drives this haptic or sound device.",
+            FieldId::Modulation => "Frequency or amplitude modulation, or none. Unset is none.",
+            FieldId::Tyre => "Which tyre(s) feed slip, lock, ABS, or suspension effects.",
+            FieldId::Frequency => "Base tone or motor frequency. Unset uses 0 (engine default).",
+            FieldId::FrequencyMax => {
+                "Upper frequency when modulation is Frequency. Must be greater than Frequency."
+            }
+            FieldId::Amplitude => "Base effect strength. Unset uses the engine unity default.",
+            FieldId::AmplitudeMax => "Upper strength when modulation is Amplitude.",
+            FieldId::Threshold => "Minimum telemetry value before the effect plays. Unset uses 0.",
+            FieldId::Duration => "Gear-shift pulse length in seconds. Unset uses 0.125 for Gear.",
+        }
+    }
+
     pub fn config_key(self) -> Option<&'static str> {
         match self {
             FieldId::Class => Some(consts::KEY_DEVICE),
@@ -421,29 +458,72 @@ pub fn display_value(device: &DeviceEntry, field: FieldId) -> String {
                 "false".into()
             }
         }
-        FieldId::Volume => device
-            .get_i64(consts::KEY_STREAM_VOLUME)
-            .or_else(|| device.get_i64(consts::KEY_VOLUME))
-            .unwrap_or(consts::DEFAULT_VOLUME)
-            .to_string(),
-        FieldId::Motors => {
-            let index = device.get_i64(consts::KEY_MOTORS).unwrap_or(0);
-            motor_label(index).to_string()
-        }
+        FieldId::Volume => volume_display(device),
+        FieldId::Motors => motors_display(device),
         FieldId::Devid => device.get_str(consts::KEY_DEVID).unwrap_or("").to_string(),
         FieldId::Devpath => device.get_str(consts::KEY_DEVPATH).unwrap_or("").to_string(),
-        other => {
-            let Some(key) = other.config_key() else {
-                return String::new();
-            };
-            match device.get(key) {
-                Some(Value::String(s)) => s.clone(),
-                Some(Value::Int(v)) => v.to_string(),
-                Some(Value::Float(v)) => v.to_string(),
-                Some(Value::Bool(v)) => v.to_string(),
-                _ => String::new(),
-            }
+        other => stored_display(device, other),
+    }
+}
+
+fn volume_display(device: &DeviceEntry) -> String {
+    let value = device
+        .get_i64(consts::KEY_STREAM_VOLUME)
+        .or_else(|| device.get_i64(consts::KEY_VOLUME));
+    match value {
+        Some(volume) => volume.to_string(),
+        None => String::new(),
+    }
+}
+
+fn motors_display(device: &DeviceEntry) -> String {
+    match device.get_i64(consts::KEY_MOTORS) {
+        Some(index) => motor_label(index).to_string(),
+        None => String::new(),
+    }
+}
+
+fn stored_display(device: &DeviceEntry, field: FieldId) -> String {
+    let Some(key) = field.config_key() else {
+        return String::new();
+    };
+    match device.get(key) {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Int(v)) => v.to_string(),
+        Some(Value::Float(v)) => v.to_string(),
+        Some(Value::Bool(v)) => v.to_string(),
+        _ => String::new(),
+    }
+}
+
+pub fn is_optional(field: FieldId) -> bool {
+    !matches!(field, FieldId::Class | FieldId::Type | FieldId::Enabled)
+}
+
+pub fn field_is_set(device: &DeviceEntry, field: FieldId) -> bool {
+    match field {
+        FieldId::Class | FieldId::Type | FieldId::Enabled => true,
+        FieldId::Volume => {
+            device.get(consts::KEY_STREAM_VOLUME).is_some() || device.get(consts::KEY_VOLUME).is_some()
         }
+        other => other
+            .config_key()
+            .map(|key| device.get(key).is_some())
+            .unwrap_or(false),
+    }
+}
+
+pub fn clear_field(device: &mut DeviceEntry, field: FieldId) {
+    if !is_optional(field) {
+        return;
+    }
+    if field == FieldId::Volume {
+        device.remove(consts::KEY_STREAM_VOLUME);
+        device.remove(consts::KEY_VOLUME);
+        return;
+    }
+    if let Some(key) = field.config_key() {
+        device.remove(key);
     }
 }
 
@@ -674,5 +754,24 @@ mod tests {
     fn usb_types_do_not_accept_serial_shift_lights() {
         assert!(!type_legal_for_class(DeviceClass::Usb, consts::TYPE_SHIFT_LIGHTS));
         assert!(type_legal_for_class(DeviceClass::Serial, consts::TYPE_SHIFT_LIGHTS));
+    }
+
+    #[test]
+    fn optional_fields_can_return_to_unset() {
+        let mut sound = DeviceEntry::new();
+        apply_defaults(&mut sound, DeviceClass::Sound, consts::TYPE_HAPTIC);
+        assert!(field_is_set(&sound, FieldId::Frequency));
+        clear_field(&mut sound, FieldId::Frequency);
+        assert!(!field_is_set(&sound, FieldId::Frequency));
+        assert!(display_value(&sound, FieldId::Frequency).is_empty());
+        clear_field(&mut sound, FieldId::Class);
+        assert_eq!(sound.class(), DeviceClass::Sound);
+    }
+
+    #[test]
+    fn every_catalog_field_has_help() {
+        for field in catalog_field_ids() {
+            assert!(!field.help().is_empty(), "missing help for {:?}", field);
+        }
     }
 }
