@@ -75,37 +75,33 @@ fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw(consts::TAB_PAD),
     ];
     for (index, title) in consts::TAB_TITLES.iter().enumerate() {
-        let style = if index == app.tab {
-            theme::style_tab_active()
-        } else {
-            theme::style_tab_inactive()
-        };
-        let label = if index == app.tab {
-            format!(
-                "{}{}{} {}{}{}",
-                consts::TAB_PAD,
-                consts::TAB_ACTIVE_LEFT,
-                consts::TAB_KEYS[index],
-                title,
-                consts::TAB_ACTIVE_RIGHT,
-                consts::TAB_PAD
-            )
-        } else {
-            format!(
-                "{}{} {}{}",
-                consts::TAB_PAD,
-                consts::TAB_KEYS[index],
-                title,
-                consts::TAB_PAD
-            )
-        };
-        spans.push(Span::styled(label, style));
+        spans.extend(tab_spans(index, title, index == app.tab));
         spans.push(Span::raw(consts::TAB_PAD));
     }
     frame.render_widget(
         Paragraph::new(Line::from(spans)).block(theme::tab_bar()),
         area,
     );
+}
+
+fn tab_spans(index: usize, title: &str, active: bool) -> Vec<Span<'static>> {
+    let key = consts::TAB_KEYS[index];
+    if active {
+        return vec![
+            Span::styled(consts::TAB_PAD, theme::style_tab_active()),
+            Span::styled(consts::TAB_ACTIVE_LEFT, theme::style_tab_active()),
+            Span::styled(key, theme::style_tab_active()),
+            Span::styled(format!(" {title}"), theme::style_tab_active()),
+            Span::styled(consts::TAB_ACTIVE_RIGHT, theme::style_tab_active()),
+            Span::styled(consts::TAB_PAD, theme::style_tab_active()),
+        ];
+    }
+    vec![
+        Span::styled(consts::TAB_PAD, theme::style_tab_inactive()),
+        Span::styled(key, theme::style_hotkey()),
+        Span::styled(format!(" {title}"), theme::style_tab_inactive()),
+        Span::styled(consts::TAB_PAD, theme::style_tab_inactive()),
+    ]
 }
 
 fn draw_status(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
@@ -148,7 +144,7 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
 }
 
 fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
-    let text = match app.screen {
+    let items = match app.screen {
         Screen::Dashboard => consts::HELP_DASHBOARD,
         Screen::Devices => consts::HELP_DEVICES,
         Screen::Settings => consts::HELP_SETTINGS,
@@ -161,12 +157,12 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
         _ => consts::HELP_BACK,
     };
     frame.render_widget(
-        Paragraph::new(text).style(theme::style_help_bar()),
+        Paragraph::new(Line::from(theme::help_spans(items))).style(theme::style_help_bar()),
         area,
     );
 }
 
-fn settings_sub_help(sub: SettingsSub) -> &'static str {
+fn settings_sub_help(sub: SettingsSub) -> &'static [consts::HelpBinding] {
     match sub {
         SettingsSub::Flags => consts::HELP_FLAGS,
         SettingsSub::Simd => consts::HELP_SIMD,
@@ -770,7 +766,7 @@ fn draw_profile_edit(frame: &mut Frame, area: Rect, app: &App) {
             app.profile_edit.sim
         )),
         ListItem::new(format!("{}:  {}", consts::KEY_CAR, app.profile_edit.car)),
-        ListItem::new(consts::PROFILE_HINT),
+        ListItem::new(Line::from(theme::help_spans(consts::PROFILE_HELP))),
     ];
     render_selectable_list(frame, area, consts::TITLE_PROFILE, items, app.profile_field);
 }
