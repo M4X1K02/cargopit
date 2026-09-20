@@ -6,17 +6,19 @@ Goal: **every setting a user currently has to edit outside the TUI becomes edita
 
 ## Current TUI
 
-`cargopit-manager` is the curses TUI. The NAppGUI app is gone from this tree. A richer device-management TUI (`cargopit-tui`) is the planned replacement. Three tabs in that plan:
+`cargopit-tui` is the Ratatui 0.29 app in `tui/`. The NAppGUI app and the Python curses `cargopit-manager` are gone. Four tabs plus overlay screens:
 
-| Tab | What it does today |
+| Screen | What it does |
 | --- | --- |
-| Dashboard | simd / cargopit / `SIMAPI.DAT` status; Start / Test / Restart / Stop |
-| Devices | Switch `configs[]` entries with `[` / `]`; list devices; add / edit / delete; Enter opens a **stub** tuning page |
-| Logs | Tail `~/.cache/cargopit/*.log` plus child stdout/stderr |
+| Dashboard | simd / cargopit / `SIMAPI.DAT` / configured-vs-present; Start / Test / Restart / Stop |
+| Devices | Switch / add / duplicate / delete `configs[]`; list devices; add / edit / delete / enable / reorder; templates; Enter opens offline tune |
+| Settings | Play flags, simd.config, Lua templates, tach XML, tyre diameters, diagnostics, raw config view |
+| Logs | Tail `~/.cache/cargopit/*.log` plus child stdout/stderr, filter play/test/file |
+| Device editor / tune | Schema-driven field list (`tui/src/form.rs`); save rewrites `cargopit.config` through the Rust libconfig subset |
 
-The device editor (`tui/src/form.rs`) is a single vertical field list. Visible fields depend on class (`USB` / `Sound` / `Serial`) and type. Save rewrites `~/.config/cargopit/cargopit.config` through the Rust libconfig subset (`tui/src/libconfig.rs`).
+Almost every screen is a `List` + `ListState` rebuilt each frame. That is enough to ship, but it is the main place official Ratatui examples still have something to teach (see [Ratatui examples](#ratatui-examples)).
 
-That is **not** full configuration. Users still leave the TUI for simd, Lua, tach XML, tyre diameters, CLI flags, and several device keys the C loader already understands.
+The remaining product gaps are schema completeness, live discovery refresh, live tune IPC, and widget fit — not “open `$EDITOR` for simd / Lua / flags”.
 
 ## Configuration universe
 
@@ -100,9 +102,51 @@ Optional: user unit `~/.config/systemd/user/simd.service` (enable / disable / st
 6. **No magic strings.** Extend `tui/src/consts.rs` (and C enums) rather than scattering `"Simleds"` / `115200`.
 7. **Do not nest UI handlers more than three levels.** Split screens into modules (`dashboard`, `devices`, `settings`, `tune`) instead of growing `app.rs`.
 
+## Ratatui examples
+
+Catalog: [ratatui.rs/examples/apps](https://ratatui.rs/examples/apps/) (Ratatui `0.30.2` sources). This crate pins `ratatui = "0.29"` (`tui/Cargo.toml`). Steal **layout, state, and widget choice**; do not paste 0.30 APIs (`ratatui::run`, `area.layout(&…)`) without a version bump.
+
+`cargopit-tui` already matches the skeleton of **Demo2** + **Hello World** + **Todo List**: header, `Tabs`, body, footer hints, `List` selection, `Clear` confirm popup, poll timeout. The useful leftovers are **Table**, **Scrollbar**, **User Input**, **Panic**, **Async GitHub**, and a **Gauge** on the tune page.
+
+### App examples → our screens
+
+| Example | What it demonstrates | Apply to cargopit |
+| --- | --- | --- |
+| [Demo2](https://ratatui.rs/examples/apps/demo2/) | `Tab` enum, one module per tab, `Widget for &App`, title bar + tabs + footer key chips, `Clear` overlay | **Already the IA.** Next: split `tui/src/ui.rs` / `app.rs` per screen (`dashboard`, `devices`, `settings`, `logs`, `form`) so handlers stay ≤3 nest levels. Do **not** copy RGB swatch, traceroute map, or destroy animation. |
+| [Demo](https://ratatui.rs/examples/apps/demo/) | Kitchen-sink widgets on one screen; backend feature flags | Keep **crossterm only**. Do not put charts, gauges, and lists on Dashboard. |
+| [Table](https://ratatui.rs/examples/apps/table/) | `Table` + `TableState` + column constraints + `Scrollbar` + footer | **Devices** rows: enabled, `class / type / subtype`, identity, presence. **Tyres** rows: sim, car, four diameters. Store `TableState` on `App`, do not rebuild selection only as an index into a `List`. |
+| [Todo List](https://ratatui.rs/examples/apps/todo-list/) | Master–detail: list + selected-item pane; Enter toggles status; `☐`/`✓` | **Devices**: list (or table) on top, detail pane with summary + actions. Space already toggles `enabled` — keep that as the todo-status analogue. **Settings → Lua / templates**: name list + description pane. |
+| [User Input](https://ratatui.rs/examples/apps/user_input/) | `InputMode::{Normal, Editing}`, cursor, backspace; docs point at `tui-input` / `ratatui-textarea` | **Device editor** today appends `█` onto `edit_buffer`. Use Normal/Editing (vim-style: Enter to type, Esc to leave) and `tui-input` so unicode paths (`/dev/simdev*`, Pulse names) do not break. Multi-line Lua stays a **copy-from-template** action, not a full editor; if we grow one, `ratatui-textarea`. |
+| [Async GitHub](https://ratatui.rs/examples/apps/async-github/) | `tokio` draw/event `select!`, `Arc<RwLock<State>>`, `LoadingState::{Idle,Loading,Loaded,Error}` | **Hardware discovery** (`pactl`, hidraw, serial) and **process poll** must not stall the 200 ms UI tick. A background task + `LoadingState` on the Devices presence column is the pattern. Do not take a tokio dependency just for GitHub; `std::thread` + the existing child `mpsc` is enough. |
+| [Gauge](https://ratatui.rs/examples/apps/gauge/) | `Gauge` / `LineGauge` with percent vs ratio labels | **Tune** (offline): `streamVolume` 0..100, `fanpower`, amplitude as gauges while h/l nudges. **Dashboard** stays binary RUNNING/STOPPED, not a fake progress bar. |
+| [Chart](https://ratatui.rs/examples/apps/chart/) | Animated line / bar / scatter | **Skip for v1.** Matches the non-goal “live haptic graphs or audio meters”. Revisit only after live-tune IPC exists. |
+| [Inline](https://ratatui.rs/examples/apps/inline/) | `Viewport::Inline`, worker threads, `LineGauge`, `insert_before` finished lines | Keep the **full-screen** manager. Steal the **event enum** (`Input` / `Tick` / `ChildUpdate` / `DiscoveryDone`) instead of mixing child stdout into `tick()`. Do not drop into an inline viewport to spawn `cargopit test`. |
+| [Tracing](https://ratatui.rs/examples/apps/tracing/) | `tracing` to a file; mentions `tui-logger` | TUI debug (`handle_key`, save, spawn) → `~/.cache/cargopit/tui.log`. The Logs **tab** stays a file tail of play/test, not an in-app tracer. `tui-logger` is optional later, not a replacement for `LogState`. |
+| [Panic](https://ratatui.rs/examples/apps/panic/) | `ratatui::init` panic hook + `color_eyre` so raw mode cannot stick | **`tui/src/main.rs` today** only `restore()` on a normal `Result`. A panic leaves the terminal raw. Install a hook (or bump to `ratatui::run`) and `color_eyre` before adding more screens. |
+| [Advanced Widget](https://ratatui.rs/examples/apps/advanced-widget-impl/) | `Widget` on value vs `&T` vs `&mut T`; `WidgetRef` for boxed children | Schema fields as small widgets (`Combo`, `Numeric`, `Identity`, `Toggle`) driven by `DeviceSchema`, not more `if class && type` in `draw_form`. |
+| [Hyperlink](https://ratatui.rs/examples/apps/hyperlink/) | OSC 8 clickable URLs | Diagnostics / footer: simapi docs (`simd_usage`, serial Lua, third-party devices). Best-effort; terminals without OSC 8 still show the URL text. |
+| [Calendar Explorer](https://ratatui.rs/examples/apps/calendar-explorer/) | `Monthly` calendar | **Skip.** No date-based config. |
+| [Hello World](https://ratatui.rs/examples/apps/hello_world/) / [Minimal](https://ratatui.rs/examples/apps/minimal/) | `init`/`restore`, poll timeout | Already the event loop. Prefer their panic-safe teardown over more custom `setup()`. |
+
+Widget-level pages that match the same gaps: [Tabs](https://ratatui.rs/examples/widgets/tabs/), [List](https://ratatui.rs/examples/widgets/list/), [Table](https://ratatui.rs/examples/widgets/table/), [Scrollbar](https://ratatui.rs/examples/widgets/scrollbar/), [Gauge](https://ratatui.rs/examples/widgets/gauge/).
+
+### Third-party crates (only if a screen needs them)
+
+From [awesome-ratatui](https://github.com/ratatui/awesome-ratatui): `tui-input` for one-line identity/path fields; `ratatui-textarea` only if we edit Lua in-place; `ratatui-explorer` if the tach XML / Lua picker outgrows cycling `Discovery` choices. Do not pull `rat-widget` as a second UI framework.
+
+### What to do next (UI only)
+
+Order that leaves the TUI usable after each step:
+
+1. Panic hook + `color_eyre` in `main.rs` (Panic / Hello World).
+2. Devices (and tyres) as `Table` + `Scrollbar`; keep `device_index` as the selected row (Table Demo + Todo List detail pane).
+3. Form `InputMode` + `tui-input` for free-text fields (User Input).
+4. Background discovery with `LoadingState` on the presence column (Async GitHub, without tokio unless we already want it).
+5. Offline tune gauges for volume / amplitude / fanpower (Gauge). Charts stay out.
+
 ## Target information architecture
 
-Add two tabs and turn Devices into a real manager:
+These four tabs are implemented. Remaining work is widget fit ([Ratatui examples](#ratatui-examples)) and the schema/discovery gaps above, not a new information architecture.
 
 ```
 [ Dashboard ] [ Devices ] [ Settings ] [ Logs ]
