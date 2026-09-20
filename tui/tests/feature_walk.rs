@@ -2,13 +2,14 @@
 //!
 //! Stop/Restart are not entered: those call `pkill -x cargopit` and would hit a
 //! live session. Start is entered only to exercise the "already running" path.
+//! Test stops play first so the hardware pass can open devices.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-use cargopit_tui::app::{App, Screen, SettingsSub};
+use cargopit_tui::app::{App, ConfirmKind, Screen, SettingsSub};
 use cargopit_tui::consts;
 use cargopit_tui::schema::FieldId;
 use cargopit_tui::ui;
@@ -46,6 +47,13 @@ fn walks_all_tui_features() {
         consts::DIAGRAM_TITLE_PIPELINE,
         consts::ACTION_START,
     ]);
+    let dash = render_text(&app, SHOT_WIDTH, SHOT_HEIGHT);
+    let game_visible = dash.contains(consts::LABEL_NO_SIM)
+        || dash.contains(consts::LABEL_TELEMETRY_LIVE)
+        || dash.contains(consts::LABEL_TELEMETRY_RUNNING)
+        || dash.contains(consts::LABEL_TELEMETRY_IDLE)
+        || dash.contains(consts::LABEL_TELEMETRY_MENU);
+    assert!(game_visible, "dashboard missing game node\n{dash}");
 
     press(&mut app, consts::KEY_DOWN);
     press(&mut app, consts::KEY_DOWN);
@@ -63,13 +71,34 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_START);
     app.dashboard_index = 1;
     press(&mut app, consts::KEY_ENTER);
+    app.tick();
+    press(&mut app, consts::KEY_START);
+    shot(&mut step, &shots, &app, "dashboard-during-test", &[
+        consts::TAB_TITLES[consts::TAB_DASHBOARD],
+        consts::DIAGRAM_TITLE_PIPELINE,
+    ]);
+    let during_test = render_text(&app, SHOT_WIDTH, SHOT_HEIGHT);
+    assert!(
+        app.telemetry_live || dump_has_march(&during_test),
+        "test session should march the signal path\n{during_test}"
+    );
+    press(&mut app, consts::KEY_TAB4);
+    shot(&mut step, &shots, &app, "telemetry", &[
+        consts::TITLE_TELEMETRY_SESSION,
+        consts::TITLE_TELEMETRY_CONTROLS,
+        consts::LABEL_RPM,
+    ]);
+    assert!(matches!(app.screen, Screen::Telemetry));
+    press(&mut app, consts::KEY_TAB5);
     wait_for_log(&mut app, STUB_TEST_LINE);
     shot(&mut step, &shots, &app, "logs-after-test", &[
         consts::TITLE_LOGS,
         STUB_TEST_LINE,
     ]);
     assert!(
-        app.message == consts::MSG_STARTED_TEST || app.message.contains("exited"),
+        app.message == consts::MSG_STARTED_TEST
+            || app.message == consts::MSG_TEST_FINISHED
+            || app.message.contains("exited"),
         "unexpected test message: {}",
         app.message
     );
@@ -90,11 +119,22 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_EDIT);
     shot(&mut step, &shots, &app, "device-editor", &[
         consts::TITLE_DEVICE_EDITOR,
+        consts::TITLE_DEVICE_TEST,
         consts::DIAGRAM_TITLE_PREVIEW,
         FieldId::Class.label(),
+        "Transport:",
         consts::TYPE_TACHOMETER,
     ]);
     assert!(matches!(app.screen, Screen::DeviceForm));
+
+    press(&mut app, consts::KEY_TEST);
+    app.tick();
+    shot(&mut step, &shots, &app, "device-editor-test", &[
+        consts::TITLE_DEVICE_EDITOR,
+        consts::TITLE_DEVICE_TEST,
+    ]);
+    assert!(matches!(app.screen, Screen::DeviceForm));
+    wait_for_log(&mut app, STUB_TEST_LINE);
 
     press(&mut app, consts::KEY_RIGHT);
     shot(&mut step, &shots, &app, "device-editor-class-cycled", &[consts::CLASS_SOUND]);
@@ -115,7 +155,7 @@ fn walks_all_tui_features() {
         "expected typed x in edit buffer, got {buffer:?}"
     );
     press(&mut app, consts::KEY_ESC);
-    press(&mut app, consts::KEY_ESC);
+    leave_editor(&mut app);
     assert!(matches!(app.screen, Screen::Devices));
 
     press(&mut app, consts::KEY_DOWN);
@@ -123,16 +163,20 @@ fn walks_all_tui_features() {
     shot(&mut step, &shots, &app, "devices-reordered", &[consts::EFFECT_ENGINE]);
 
     press(&mut app, consts::KEY_ENTER);
-    shot(&mut step, &shots, &app, "device-tune", &[consts::TITLE_TUNE]);
+    shot(&mut step, &shots, &app, "device-tune", &[
+        consts::TITLE_TUNE,
+        consts::TITLE_DEVICE_TEST,
+    ]);
     press(&mut app, consts::KEY_RIGHT);
     press(&mut app, consts::KEY_ESC);
+    leave_editor(&mut app);
 
     press(&mut app, consts::KEY_ADD);
     shot(&mut step, &shots, &app, "device-add-blank", &[consts::TITLE_DEVICE_EDITOR]);
     press(&mut app, consts::KEY_SAVE);
     shot(&mut step, &shots, &app, "device-add-validation", &[]);
     assert!(app.form.error.is_some() || !app.message.is_empty());
-    press(&mut app, consts::KEY_ESC);
+    leave_editor(&mut app);
 
     press(&mut app, consts::KEY_TEMPLATE);
     shot(&mut step, &shots, &app, "templates", &[consts::TITLE_TEMPLATES]);
@@ -162,17 +206,33 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_CONFIRM_NO);
 
     press(&mut app, consts::KEY_TAB3);
-    shot(&mut step, &shots, &app, "settings", &[consts::TITLE_SETTINGS, consts::SETTINGS_ITEMS[0]]);
+    shot(&mut step, &shots, &app, "settings", &[
+        consts::TITLE_SETTINGS,
+        consts::SETTINGS_ITEMS[0],
+        "Flags passed when starting",
+    ]);
 
     press(&mut app, consts::KEY_ENTER);
     press(&mut app, consts::KEY_RIGHT);
-    shot(&mut step, &shots, &app, "settings-flags", &[consts::TITLE_FLAGS, consts::FLAG_LABEL_VERBOSITY]);
+    shot(&mut step, &shots, &app, "settings-flags", &[
+        consts::TITLE_FLAGS,
+        consts::FLAG_LABEL_VERBOSITY,
+        "Play/test log verbosity",
+        consts::FIELD_UNSET,
+    ]);
     assert!(matches!(app.screen, Screen::SettingsSub(SettingsSub::Flags)));
+    press(&mut app, consts::KEY_ESC);
+    shot(&mut step, &shots, &app, "confirm-discard-flags", &[consts::CONFIRM_DISCARD_UNSAVED]);
+    press(&mut app, consts::KEY_CONFIRM_NO);
     press(&mut app, consts::KEY_SAVE);
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 1);
-    shot(&mut step, &shots, &app, "settings-simd", &[consts::TITLE_SIMD]);
+    shot(&mut step, &shots, &app, "settings-simd", &[
+        consts::TITLE_SIMD,
+        "Assetto Corsa",
+        consts::SIMD_FIELD_GAMEID,
+    ]);
     press(&mut app, consts::KEY_ESC);
 
     open_settings_item(&mut app, 2);
@@ -199,7 +259,7 @@ fn walks_all_tui_features() {
     shot(&mut step, &shots, &app, "settings-raw", &[consts::TITLE_RAW]);
     press(&mut app, consts::KEY_ESC);
 
-    press(&mut app, consts::KEY_TAB4);
+    press(&mut app, consts::KEY_TAB5);
     press(&mut app, consts::KEY_SPACE);
     shot(&mut step, &shots, &app, "logs-filtered", &[consts::TITLE_LOGS, consts::LOG_FILTER_PREFIX]);
 
@@ -222,6 +282,23 @@ fn wait_for_log(app: &mut App, needle: &str) {
             return;
         }
         thread::sleep(Duration::from_millis(LOG_WAIT_MS));
+    }
+}
+
+fn dump_has_march(dump: &str) -> bool {
+    consts::TELEMETRY_FLOW_FRAMES
+        .iter()
+        .any(|frame| dump.contains(frame.trim()))
+}
+
+fn leave_editor(app: &mut App) {
+    if matches!(app.screen, Screen::Confirm(ConfirmKind::DiscardUnsaved)) {
+        press(app, consts::KEY_CONFIRM_YES);
+        return;
+    }
+    press(app, consts::KEY_ESC);
+    if matches!(app.screen, Screen::Confirm(ConfirmKind::DiscardUnsaved)) {
+        press(app, consts::KEY_CONFIRM_YES);
     }
 }
 

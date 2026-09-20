@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{self, Event};
+use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::ExecutableCommand;
 use ratatui::backend::CrosstermBackend;
@@ -39,12 +39,14 @@ fn stdout_is_tty() -> bool {
 fn setup() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
+    stdout().execute(EnableMouseCapture)?;
     stdout().execute(Hide)?;
     let backend = CrosstermBackend::new(stdout());
     Ok(Terminal::new(backend)?)
 }
 
 fn restore() -> Result<()> {
+    stdout().execute(DisableMouseCapture)?;
     stdout().execute(Show)?;
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
@@ -53,13 +55,11 @@ fn restore() -> Result<()> {
 
 fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
+        app.tick();
         terminal.draw(|frame| ui::draw(frame, app))?;
         if event::poll(Duration::from_millis(consts::EVENT_POLL_MS))? {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key)?;
-            }
+            app.handle_event(event::read()?)?;
         }
-        app.tick();
         if app.should_quit {
             break;
         }

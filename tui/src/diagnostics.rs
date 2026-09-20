@@ -17,7 +17,7 @@ pub struct Diagnostics {
     pub cargopit_bin: Option<String>,
     pub simd_bin: Option<String>,
     pub simapi_exists: bool,
-    pub simapi_nonzero: bool,
+    pub simapi_live: bool,
     pub connected: usize,
     pub missing: usize,
 }
@@ -47,8 +47,8 @@ pub fn collect(discovery: &Discovery, devices: &[(DeviceClass, String, String)])
         cargopit_bin: process::find_binary(consts::BINARY_CARGOPIT)
             .map(|p| p.display().to_string()),
         simd_bin: process::find_binary(consts::BINARY_SIMD).map(|p| p.display().to_string()),
-        simapi_exists: process::simapi_present(),
-        simapi_nonzero: process::simapi_nonzero(),
+        simapi_exists: false,
+        simapi_live: false,
         connected,
         missing,
     }

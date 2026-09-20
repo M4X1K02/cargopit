@@ -10,6 +10,7 @@ pub mod logs;
 pub mod paths;
 pub mod process;
 pub mod schema;
+pub mod simapi_shm;
 pub mod simd_config;
 pub mod templates;
 pub mod theme;

@@ -1,12 +1,13 @@
 use crate::config::DeviceEntry;
 use crate::consts;
-use crate::hardware::{Discovery, HardwareChoice};
+use crate::hardware::Discovery;
 use crate::libconfig::Value;
 use crate::schema::{self, DeviceClass, FieldId};
 
 #[derive(Debug, Clone)]
 pub struct DeviceForm {
     pub device: DeviceEntry,
+    pub original: DeviceEntry,
     pub field_index: usize,
     pub is_new: bool,
     pub edit_buffer: Option<String>,
@@ -16,12 +17,23 @@ pub struct DeviceForm {
 impl DeviceForm {
     pub fn new(device: DeviceEntry, is_new: bool) -> Self {
         Self {
+            original: device.clone(),
             device,
             field_index: 0,
             is_new,
             edit_buffer: None,
             error: None,
         }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.device != self.original || self.edit_buffer.is_some()
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.original = self.device.clone();
+        self.is_new = false;
+        self.error = None;
     }
 
     pub fn blank() -> Self {
@@ -87,19 +99,34 @@ impl DeviceForm {
             return;
         }
         let current = schema::display_value(&self.device, field);
-        let next = cycle_slice(choices, &current, delta);
-        self.apply_combo(field, next);
+        let next = next_combo_value(choices, &current, delta, schema::is_optional(field));
+        if next.is_empty() {
+            schema::clear_field(&mut self.device, field);
+            return;
+        }
+        self.apply_combo(field, &next);
+    }
+
+    pub fn clear_current(&mut self) {
+        let Some(field) = self.current_field() else {
+            return;
+        };
+        schema::clear_field(&mut self.device, field);
+        self.edit_buffer = None;
     }
 
     fn cycle_granularity(&mut self, delta: i32) {
-        let current = self
-            .device
-            .get_i64(consts::KEY_GRANULARITY)
-            .unwrap_or(consts::DEFAULT_GRANULARITY);
+        let current = match self.device.get_i64(consts::KEY_GRANULARITY) {
+            Some(value) => value.to_string(),
+            None => String::new(),
+        };
         let labels: Vec<String> = consts::GRANULARITY_ALLOWED.iter().map(|v| v.to_string()).collect();
-        let current_s = current.to_string();
         let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let next = cycle_slice(&refs, &current_s, delta);
+        let next = next_combo_value(&refs, &current, delta, true);
+        if next.is_empty() {
+            schema::clear_field(&mut self.device, FieldId::Granularity);
+            return;
+        }
         if let Ok(value) = next.parse::<i64>() {
             self.device.set_int(consts::KEY_GRANULARITY, value);
         }
@@ -109,11 +136,14 @@ impl DeviceForm {
         let class = self.device.class();
         let want_path = field == FieldId::Devpath;
         let choices = discovery.choices_for(class, want_path);
-        if choices.is_empty() {
+        let current = schema::display_value(&self.device, field);
+        let mut values: Vec<&str> = vec![""];
+        values.extend(choices.iter().map(|choice| choice.value.as_str()));
+        let next = cycle_slice(&values, &current, delta);
+        if next.is_empty() {
+            schema::clear_field(&mut self.device, field);
             return;
         }
-        let current = schema::display_value(&self.device, field);
-        let next = cycle_choices(choices, &current, delta);
         self.device.set_str(field.config_key().unwrap_or(""), next);
     }
 
@@ -222,6 +252,10 @@ impl DeviceForm {
         let Some(field) = self.current_field() else {
             return;
         };
+        if buffer.trim().is_empty() {
+            schema::clear_field(&mut self.device, field);
+            return;
+        }
         apply_typed(&mut self.device, field, &buffer);
     }
 
@@ -289,12 +323,69 @@ fn cycle_slice<'a>(items: &'a [&'a str], current: &str, delta: i32) -> &'a str {
     items[next]
 }
 
-fn cycle_choices<'a>(items: &'a [HardwareChoice], current: &str, delta: i32) -> &'a str {
-    let index = items
-        .iter()
-        .position(|item| item.value == current)
-        .unwrap_or(0);
-    let len = items.len() as i32;
-    let next = (index as i32 + delta).rem_euclid(len) as usize;
-    &items[next].value
+fn next_combo_value(choices: &[&str], current: &str, delta: i32, include_blank: bool) -> String {
+    if !include_blank {
+        return cycle_slice(choices, current, delta).to_string();
+    }
+    let mut items = Vec::with_capacity(choices.len() + 1);
+    items.push("");
+    items.extend_from_slice(choices);
+    cycle_slice(&items, current, delta).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_combo_can_return_to_blank() {
+        let mut form = DeviceForm::blank();
+        form.device.remove(consts::KEY_EFFECT);
+        let effect_index = form
+            .fields()
+            .iter()
+            .position(|field| *field == FieldId::Effect)
+            .expect("effect field");
+        form.field_index = effect_index;
+        let discovery = Discovery::default();
+        form.cycle_current(&discovery, 1);
+        assert!(schema::field_is_set(&form.device, FieldId::Effect));
+        form.cycle_current(&discovery, -1);
+        assert!(!schema::field_is_set(&form.device, FieldId::Effect));
+        assert!(schema::display_value(&form.device, FieldId::Effect).is_empty());
+    }
+
+    #[test]
+    fn clear_current_restores_unset_numeric() {
+        let mut form = DeviceForm::blank();
+        form.device.remove(consts::KEY_FREQUENCY);
+        let original = form.device.clone();
+        form.original = original;
+        let freq_index = form
+            .fields()
+            .iter()
+            .position(|field| *field == FieldId::Frequency)
+            .expect("frequency field");
+        form.field_index = freq_index;
+        form.nudge(FieldId::Frequency, 1, false);
+        assert!(schema::field_is_set(&form.device, FieldId::Frequency));
+        assert!(form.is_dirty());
+        form.clear_current();
+        assert!(!schema::field_is_set(&form.device, FieldId::Frequency));
+        assert!(!form.is_dirty());
+    }
+
+    #[test]
+    fn empty_edit_unsets_optional_field() {
+        let mut form = DeviceForm::blank();
+        let freq_index = form
+            .fields()
+            .iter()
+            .position(|field| *field == FieldId::Frequency)
+            .expect("frequency field");
+        form.field_index = freq_index;
+        form.edit_buffer = Some(String::new());
+        form.commit_edit();
+        assert!(!schema::field_is_set(&form.device, FieldId::Frequency));
+    }
 }

@@ -108,6 +108,7 @@ impl LogState {
     }
 
     pub fn push(&mut self, source: String, text: String) {
+        let text = strip_ansi(&text);
         self.lines.push(LogLine { source, text });
         if self.lines.len() > consts::LOG_TAIL_MAX_LINES {
             let extra = self.lines.len() - consts::LOG_TAIL_MAX_LINES;
@@ -119,6 +120,16 @@ impl LogState {
         for line in text.lines() {
             self.push(kind.as_str().to_string(), line.to_string());
         }
+    }
+
+    pub fn recent_from(&self, source: &str, limit: usize) -> Vec<&LogLine> {
+        let matching: Vec<&LogLine> = self
+            .lines
+            .iter()
+            .filter(|line| line.source == source)
+            .collect();
+        let start = matching.len().saturating_sub(limit);
+        matching[start..].to_vec()
     }
 
     pub fn visible(&self) -> Vec<&LogLine> {
@@ -138,5 +149,64 @@ impl LogState {
 impl Default for LogState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub fn strip_ansi(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != consts::ANSI_ESC {
+            out.push(ch);
+            continue;
+        }
+        skip_ansi_sequence(&mut chars);
+    }
+    out
+}
+
+fn skip_ansi_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    if chars.peek() != Some(&consts::ANSI_CSI) {
+        return;
+    }
+    chars.next();
+    for next in chars.by_ref() {
+        if next.is_ascii_alphabetic() {
+            break;
+        }
+    }
+}
+
+pub fn is_error_line(text: &str) -> bool {
+    text.contains(consts::SLOG_TAG_ERROR) || text.contains(consts::SLOG_TAG_FATAL)
+}
+
+pub fn is_warn_line(text: &str) -> bool {
+    text.contains(consts::SLOG_TAG_WARN)
+}
+
+pub fn is_info_line(text: &str) -> bool {
+    text.contains(consts::SLOG_TAG_INFO)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_ansi_keeps_slog_tags() {
+        let raw = "\u{1b}[31m<error>\u{1b}[0m Error opening serial port";
+        assert_eq!(strip_ansi(raw), "<error> Error opening serial port");
+    }
+
+    #[test]
+    fn push_strips_ansi() {
+        let mut logs = LogState::new();
+        logs.push("file".into(), "\u{1b}[33m<warn>\u{1b}[0m skip".into());
+        assert_eq!(logs.lines[0].text, "<warn> skip");
+        assert!(is_warn_line(&logs.lines[0].text));
+        assert!(!is_error_line(&logs.lines[0].text));
+        logs.push("test".into(), "phase lock".into());
+        assert_eq!(logs.recent_from("test", 1)[0].text, "phase lock");
     }
 }

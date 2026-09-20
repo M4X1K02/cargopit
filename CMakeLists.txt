@@ -199,6 +199,10 @@ if(BUILD_TUI)
             ${TUI_RUST_SOURCES}
             "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
             "${CMAKE_SOURCE_DIR}/tui/Cargo.lock"
+            "${CMAKE_SOURCE_DIR}/tui/build.rs"
+            "${CMAKE_SOURCE_DIR}/tui/native/simapi_view.c"
+            "${CMAKE_SOURCE_DIR}/tui/native/simapi_view.h"
+            "${CMAKE_SOURCE_DIR}/tui/native/simapi_view_stub.c"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tui"
         COMMENT "Building cargopit-tui with cargo"
         VERBATIM)
