@@ -657,8 +657,13 @@ fn device_test_telemetry_lines(app: &App) -> Vec<Line<'static>> {
 }
 
 fn device_test_log_lines(app: &App, limit: usize) -> Vec<Line<'static>> {
-    app.logs
-        .recent_from(SessionKind::Test.as_str(), limit)
+    let steps = app.logs.recent_containing(consts::TEST_STEP_PREFIX, limit);
+    let lines = if steps.is_empty() {
+        app.logs.recent_from(SessionKind::Test.as_str(), limit)
+    } else {
+        steps
+    };
+    lines
         .into_iter()
         .map(|line| Line::from(Span::styled(line.text.clone(), log_line_style(&line.text))))
         .collect()

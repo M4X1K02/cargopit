@@ -128,8 +128,28 @@ impl LogState {
             .iter()
             .filter(|line| line.source == source)
             .collect();
-        let start = matching.len().saturating_sub(limit);
-        matching[start..].to_vec()
+        Self::last_unique(matching, limit)
+    }
+
+    pub fn recent_containing(&self, needle: &str, limit: usize) -> Vec<&LogLine> {
+        let matching: Vec<&LogLine> = self
+            .lines
+            .iter()
+            .filter(|line| line.text.contains(needle))
+            .collect();
+        Self::last_unique(matching, limit)
+    }
+
+    fn last_unique<'a>(matching: Vec<&'a LogLine>, limit: usize) -> Vec<&'a LogLine> {
+        let mut unique: Vec<&LogLine> = Vec::new();
+        for line in matching {
+            if unique.last().is_some_and(|prev| prev.text == line.text) {
+                continue;
+            }
+            unique.push(line);
+        }
+        let start = unique.len().saturating_sub(limit);
+        unique[start..].to_vec()
     }
 
     pub fn visible(&self) -> Vec<&LogLine> {
@@ -208,5 +228,16 @@ mod tests {
         assert!(!is_error_line(&logs.lines[0].text));
         logs.push("test".into(), "phase lock".into());
         assert_eq!(logs.recent_from("test", 1)[0].text, "phase lock");
+        logs.push(
+            "cargopit.log".into(),
+            format!("{}Testing wheel lock", crate::consts::TEST_STEP_PREFIX),
+        );
+        logs.push(
+            "test".into(),
+            format!("{}Testing wheel lock", crate::consts::TEST_STEP_PREFIX),
+        );
+        let steps = logs.recent_containing(crate::consts::TEST_STEP_PREFIX, 2);
+        assert_eq!(steps.len(), 1);
+        assert!(steps[0].text.contains("Testing wheel lock"));
     }
 }

@@ -46,17 +46,30 @@ impl SessionKind {
 }
 
 pub fn find_binary(name: &str) -> Option<PathBuf> {
-    which(name)
+    if let Some(path) = which(name) {
+        if !is_managed_binary(&path, name) {
+            return Some(path);
+        }
+    }
+    managed_binaries(name)
         .into_iter()
-        .chain([
-            paths::source_root().join(consts::BUILD_DIRNAME).join(name),
-            paths::local_bin_dir().join(name),
-            paths::data_home()
-                .join(consts::CONFIG_DIR_NAME)
-                .join(consts::BUILD_DIRNAME)
-                .join(name),
-        ])
+        .chain(which(name))
         .find(|path| is_executable(path))
+}
+
+fn managed_binaries(name: &str) -> [PathBuf; 3] {
+    [
+        paths::source_root().join(consts::BUILD_DIRNAME).join(name),
+        paths::local_bin_dir().join(name),
+        paths::data_home()
+            .join(consts::CONFIG_DIR_NAME)
+            .join(consts::BUILD_DIRNAME)
+            .join(name),
+    ]
+}
+
+fn is_managed_binary(path: &Path, name: &str) -> bool {
+    managed_binaries(name).iter().any(|managed| managed == path)
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -138,13 +151,40 @@ pub fn process_listing() -> String {
 }
 
 fn is_service_process(name: &str, comm: &str, args: &str) -> bool {
-    if comm.contains(consts::BINARY_TUI) || args.contains(consts::BINARY_TUI) {
+    if is_excluded_process(comm, args) {
         return false;
     }
-    if comm.contains("manager") || args.contains("manager") {
-        return false;
+    process_basename(comm) == name || args_launch_binary(args, name)
+}
+
+fn is_excluded_process(comm: &str, args: &str) -> bool {
+    comm.contains(consts::BINARY_TUI)
+        || args.contains(consts::BINARY_TUI)
+        || comm.contains("manager")
+        || args.contains("manager")
+}
+
+fn process_basename(token: &str) -> &str {
+    Path::new(token)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(token)
+}
+
+fn args_launch_binary(args: &str, name: &str) -> bool {
+    args.split_whitespace()
+        .next()
+        .is_some_and(|token| process_basename(token) == name)
+}
+
+pub fn wait_until_stopped(name: &str) {
+    let self_pid = std::process::id();
+    for _ in 0..consts::PROCESS_STOP_POLL_ATTEMPTS {
+        if !process_running(name, self_pid) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(consts::PROCESS_STOP_POLL_MS));
     }
-    comm == name || comm.ends_with(name) || args.contains(&format!("/{name}"))
 }
 
 fn cleanup_stale_pid_files(status: &ProcessStatus) -> Vec<String> {
@@ -480,5 +520,47 @@ mod tests {
             session_exit_message(SessionKind::Test, status),
             consts::MSG_TEST_FINISHED
         );
+    }
+
+    #[test]
+    fn repo_path_in_args_is_not_cargopit_play() {
+        assert!(!is_service_process(
+            consts::BINARY_CARGOPIT,
+            "cursor",
+            "/opt/cursor --workspace /home/dev/cargopit",
+        ));
+        assert!(!is_service_process(
+            consts::BINARY_CARGOPIT,
+            "cmake",
+            "cmake --build /home/dev/cargopit/build",
+        ));
+    }
+
+    #[test]
+    fn cargopit_play_command_is_detected() {
+        assert!(is_service_process(
+            consts::BINARY_CARGOPIT,
+            consts::BINARY_CARGOPIT,
+            "/opt/build/cargopit play",
+        ));
+    }
+
+    #[test]
+    fn tui_binary_is_not_play() {
+        assert!(!is_service_process(
+            consts::BINARY_CARGOPIT,
+            consts::BINARY_TUI,
+            "/opt/build/cargopit-tui",
+        ));
+    }
+
+    #[test]
+    fn path_stub_is_not_a_managed_install() {
+        let stub = PathBuf::from("/tmp/walk/bin").join(consts::BINARY_CARGOPIT);
+        assert!(!is_managed_binary(&stub, consts::BINARY_CARGOPIT));
+        let source_build = paths::source_root()
+            .join(consts::BUILD_DIRNAME)
+            .join(consts::BINARY_CARGOPIT);
+        assert!(is_managed_binary(&source_build, consts::BINARY_CARGOPIT));
     }
 }

@@ -472,10 +472,21 @@ impl App {
 
     fn start_play(&mut self) {
         self.status = process::check_processes();
-        if self.child.is_some() || self.status.cargopit_running {
+        if self.play_is_live() {
             self.message = consts::MSG_PLAY_ALREADY_RUNNING.into();
             return;
         }
+        self.spawn_play_session();
+    }
+
+    fn play_is_live(&self) -> bool {
+        self.child
+            .as_ref()
+            .is_some_and(|session| session.kind == SessionKind::Play)
+            || self.status.cargopit_running
+    }
+
+    fn spawn_play_session(&mut self) {
         match process::spawn_session(SessionKind::Play, &self.tui_state.play_flags, &self.config_path) {
             Ok(session) => {
                 self.attach_child(session);
@@ -489,8 +500,9 @@ impl App {
     fn restart_play(&mut self) {
         self.kill_tracked_child();
         let _ = process::stop_play();
-        self.status = process::check_processes();
-        self.start_play();
+        process::wait_until_stopped(consts::BINARY_CARGOPIT);
+        self.status.cargopit_running = false;
+        self.spawn_play_session();
     }
 
     fn start_test(&mut self) {
@@ -501,11 +513,15 @@ impl App {
         if !self.commit_form(false) {
             return;
         }
+        self.start_device_test(false);
+    }
+
+    fn start_device_test(&mut self, switch_to_logs: bool) {
         let scope = TestScope {
             config_index: Some(self.profile_index),
             device_index: Some(self.device_index),
         };
-        self.launch_test(scope, false);
+        self.launch_test(scope, switch_to_logs);
     }
 
     fn launch_test(&mut self, scope: TestScope, switch_to_logs: bool) {
@@ -581,6 +597,7 @@ impl App {
             consts::KEY_G_UPPER => self.reorder_device(1),
             consts::KEY_K_UPPER => self.reorder_device(-1),
             consts::KEY_SPACE => self.toggle_enabled(),
+            consts::KEY_TEST => self.start_device_test(true),
             consts::KEY_ADD => self.open_new_form(),
             consts::KEY_EDIT => self.open_edit_form(),
             consts::KEY_DUPLICATE => self.duplicate_device(),
@@ -750,7 +767,7 @@ impl App {
             return true;
         }
         self.screen = Screen::Devices;
-        if self.status.cargopit_running {
+        if self.play_is_live() {
             self.open_confirm(ConfirmKind::RestartAfterSave);
         }
         true
@@ -791,7 +808,7 @@ impl App {
                 if self.form.error.is_some() {
                     return Ok(());
                 }
-                if self.child.is_some() || self.status.cargopit_running {
+                if self.play_is_live() {
                     self.restart_play();
                 }
             }
