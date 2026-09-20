@@ -75,7 +75,7 @@ impl DeviceForm {
         let class = self.device.class();
         let type_name = schema::normalize_type_name(class, self.device.type_name());
         if field == FieldId::Class {
-            self.change_class(class.cycle());
+            self.change_class(class.cycle_by(delta));
             return;
         }
         if field == FieldId::Type {
