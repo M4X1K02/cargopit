@@ -1481,6 +1481,41 @@ mod tests {
     }
 
     #[test]
+    fn pressing_t_stops_a_running_test() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var(consts::ENV_XDG_CONFIG_HOME, dir.path().join("config"));
+        std::env::set_var(consts::ENV_XDG_CACHE_HOME, dir.path().join("cache"));
+        std::env::set_var(consts::ENV_XDG_STATE_HOME, dir.path().join("state"));
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let stub = bin.join(consts::BINARY_CARGOPIT);
+        std::fs::write(
+            &stub,
+            "#!/bin/sh\necho stub-test\ntrap 'exit 0' TERM\nexec sleep 30\n",
+        )
+        .unwrap();
+        let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).unwrap();
+        let previous_path = std::env::var_os(consts::ENV_PATH);
+        std::env::set_var(consts::ENV_PATH, &bin);
+        let mut app = App::new().unwrap();
+        let key =
+            |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+        app.handle_key(key(consts::KEY_TEST)).unwrap();
+        assert!(app.test_running(), "{}", app.message);
+        app.handle_key(key(consts::KEY_TEST)).unwrap();
+        assert!(!app.test_running(), "{}", app.message);
+        assert_eq!(app.message, consts::MSG_STOPPED_TEST);
+        match previous_path {
+            Some(path) => std::env::set_var(consts::ENV_PATH, path),
+            None => std::env::remove_var(consts::ENV_PATH),
+        }
+    }
+
+    #[test]
     fn test_logs_strip_ansi_and_keep_real_errors() {
         with_app(|app| {
             app.logs.push(

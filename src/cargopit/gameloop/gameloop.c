@@ -99,9 +99,16 @@
 #define TEST_STEP_PREFIX             "test step: "
 #define TEST_MSG_STARTING            "Starting"
 #define TEST_MSG_FINISHED            "Finished"
+#define TEST_MSG_STOPPED             "Stopped"
 #define TEST_LABEL_SERIAL_LIGHTS     "serial lights"
 #define TEST_LABEL_USB_LIGHTS        "USB lights"
 #define TEST_LABEL_DEVICE            "device"
+#define TEST_KEY_QUIT                'q'
+#define TEST_KEY_QUIT_UPPER          'Q'
+#define TEST_KEY_ESC                 '\033'
+#define TEST_STDIN_POLL_MS           0
+#define TEST_STDIN_POLL_FDS          1
+#define TEST_STDIN_READ_BYTES        1
 
 bool go = false;
 bool go2 = false;
@@ -116,6 +123,8 @@ loop_data* baton;
 device_loop_data* test_baton;
 SimDevice* test_simdevice;
 SimInfo* test_siminfo;
+static volatile sig_atomic_t tester_abort;
+static int tester_stdin_raw;
 
 static int require_simd(void)
 {
@@ -1443,7 +1452,7 @@ static int tester_enter_raw_stdin(struct termios* saved)
     tcgetattr(STDIN_FILENO, saved);
     raw = *saved;
     raw.c_lflag &= (~ICANON & ~ECHO);
-    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
     return 1;
@@ -1496,6 +1505,67 @@ static int tester_hold_ticks(unsigned int hold_us)
     return (int)(hold_us / TEST_TICK_US);
 }
 
+static void tester_on_signal(int signum)
+{
+    (void)signum;
+    tester_abort = 1;
+}
+
+static void tester_install_signals(void)
+{
+    struct sigaction action;
+
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = tester_on_signal;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGINT, &action, NULL);
+    sigaction(SIGTERM, &action, NULL);
+}
+
+static int tester_is_quit_key(char ch)
+{
+    return ch == TEST_KEY_QUIT || ch == TEST_KEY_QUIT_UPPER || ch == TEST_KEY_ESC;
+}
+
+static int tester_poll_quit_key(void)
+{
+    struct pollfd pfd;
+    char ch;
+    ssize_t nread;
+
+    if (tester_stdin_raw == 0)
+    {
+        return 0;
+    }
+    pfd.fd = STDIN_FILENO;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    if (poll(&pfd, TEST_STDIN_POLL_FDS, TEST_STDIN_POLL_MS) <= 0)
+    {
+        return 0;
+    }
+    nread = read(STDIN_FILENO, &ch, TEST_STDIN_READ_BYTES);
+    if (nread != TEST_STDIN_READ_BYTES)
+    {
+        return 0;
+    }
+    if (!tester_is_quit_key(ch))
+    {
+        return 0;
+    }
+    tester_abort = 1;
+    return 1;
+}
+
+static int tester_should_stop(void)
+{
+    if (tester_abort != 0)
+    {
+        return 1;
+    }
+    return tester_poll_quit_key();
+}
+
 typedef void (*tester_mod_fn)(SimData* simdata, int tick);
 
 static void tester_drive(
@@ -1509,6 +1579,10 @@ static void tester_drive(
     int tick;
     for (tick = 0; tick < ticks; tick++)
     {
+        if (tester_should_stop())
+        {
+            return;
+        }
         if (modify != NULL)
         {
             modify(simdata, tick);
@@ -1707,6 +1781,10 @@ static void tester_sweep_rpm(
     }
     while (1)
     {
+        if (tester_should_stop())
+        {
+            return;
+        }
         simdata->rpms = rpm;
         update_devices(devices, numdevices, simdata, testsimmap);
         usleep(TEST_TICK_US);
@@ -1760,6 +1838,10 @@ static void tester_phase(
     unsigned int hold_us,
     tester_mod_fn modify)
 {
+    if (tester_should_stop())
+    {
+        return;
+    }
     tester_announce(msg);
     tester_drive(devices, numdevices, simdata, testsimmap, tester_hold_ticks(hold_us), modify);
 }
@@ -1890,9 +1972,23 @@ static void tester_run_lights(SimDevice* device, SimData* simdata, SimMap* tests
     tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPEED_TOP, TEST_PHASE_HOLD_US, NULL);
 }
 
+static void tester_idle_all(
+    SimDevice* devices,
+    int numdevices,
+    SimData* simdata,
+    SimMap* testsimmap)
+{
+    tester_reset_idle(simdata);
+    update_devices(devices, numdevices, simdata, testsimmap);
+}
+
 static void tester_run_one_device(SimDevice* device, SimData* simdata, SimMap* testsimmap)
 {
     if (device->initialized == false)
+    {
+        return;
+    }
+    if (tester_should_stop())
     {
         return;
     }
@@ -1907,6 +2003,10 @@ static void tester_run_one_device(SimDevice* device, SimData* simdata, SimMap* t
     {
         tester_run_lights(device, simdata, testsimmap);
     }
+    if (tester_should_stop())
+    {
+        return;
+    }
     tester_reset_idle(simdata);
     tester_phase(device, 1, simdata, testsimmap, TEST_MSG_COAST, TEST_IDLE_HOLD_US, NULL);
     tester_announce_named(TEST_MSG_FINISHED, tester_device_label(device));
@@ -1920,6 +2020,9 @@ int tester(SimDevice* devices, int numdevices)
     int raw_applied;
     int i;
 
+    tester_abort = 0;
+    tester_stdin_raw = 0;
+    tester_install_signals();
     tester_enable_log_flush();
     slogi(TEST_STEP_PREFIX TEST_MSG_PREPARING, numdevices);
 
@@ -1928,10 +2031,21 @@ int tester(SimDevice* devices, int numdevices)
     tester_set_identity(simdata);
     testsimmap = tester_open_map(simdata);
     raw_applied = tester_enter_raw_stdin(&canonicalmode);
+    tester_stdin_raw = raw_applied;
 
     for (i = 0; i < numdevices; i++)
     {
+        if (tester_should_stop())
+        {
+            break;
+        }
         tester_run_one_device(&devices[i], simdata, testsimmap);
+    }
+
+    if (tester_should_stop())
+    {
+        tester_announce(TEST_MSG_STOPPED);
+        tester_idle_all(devices, numdevices, simdata, testsimmap);
     }
 
     tester_restore_stdin(raw_applied, &canonicalmode);

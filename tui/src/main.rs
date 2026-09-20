@@ -60,11 +60,23 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
         app.tick();
         terminal.draw(|frame| ui::draw(frame, app))?;
         if event::poll(Duration::from_millis(consts::EVENT_POLL_MS))? {
-            app.handle_event(event::read()?)?;
+            drain_events(app)?;
         }
         if app.should_quit {
             break;
         }
     }
     Ok(())
+}
+
+fn drain_events(app: &mut App) -> Result<()> {
+    loop {
+        app.handle_event(event::read()?)?;
+        if app.should_quit {
+            return Ok(());
+        }
+        if !event::poll(Duration::from_millis(consts::EVENT_DRAIN_MS))? {
+            return Ok(());
+        }
+    }
 }

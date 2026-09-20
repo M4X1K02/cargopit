@@ -7,7 +7,7 @@ use crate::paths;
 use crate::process;
 use crate::schema::DeviceClass;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Diagnostics {
     pub groups: String,
     pub in_input: bool,
@@ -23,29 +23,17 @@ pub struct Diagnostics {
 }
 
 pub fn collect(discovery: &Discovery, devices: &[(DeviceClass, String, String)]) -> Diagnostics {
+    let mut diag = collect_host();
+    apply_presence(&mut diag, discovery, devices);
+    diag
+}
+
+fn collect_host() -> Diagnostics {
     let groups = user_groups();
-    let connected = devices
-        .iter()
-        .filter(|(class, devid, devpath)| {
-            discovery.presence(*class, devid, devpath) == consts::PRESENCE_CONNECTED
-        })
-        .count();
-    let missing = devices
-        .iter()
-        .filter(|(class, devid, devpath)| {
-            discovery.presence(*class, devid, devpath) == consts::PRESENCE_MISSING
-        })
-        .count();
     Diagnostics {
-        in_input: groups
-            .split_whitespace()
-            .any(|g| g == consts::UDEV_GROUP_INPUT),
-        in_dialout: groups
-            .split_whitespace()
-            .any(|g| g == consts::UDEV_GROUP_DIALOUT),
-        in_uucp: groups
-            .split_whitespace()
-            .any(|g| g == consts::UDEV_GROUP_UUCP),
+        in_input: group_listed(&groups, consts::UDEV_GROUP_INPUT),
+        in_dialout: group_listed(&groups, consts::UDEV_GROUP_DIALOUT),
+        in_uucp: group_listed(&groups, consts::UDEV_GROUP_UUCP),
         groups,
         udev_present: Path::new(consts::UDEV_RULES_PATH).exists(),
         cargopit_bin: process::find_binary(consts::BINARY_CARGOPIT)
@@ -53,9 +41,33 @@ pub fn collect(discovery: &Discovery, devices: &[(DeviceClass, String, String)])
         simd_bin: process::find_binary(consts::BINARY_SIMD).map(|p| p.display().to_string()),
         simapi_exists: false,
         simapi_live: false,
-        connected,
-        missing,
+        connected: 0,
+        missing: 0,
     }
+}
+
+pub fn apply_presence(
+    diag: &mut Diagnostics,
+    discovery: &Discovery,
+    devices: &[(DeviceClass, String, String)],
+) {
+    diag.connected = count_presence(discovery, devices, consts::PRESENCE_CONNECTED);
+    diag.missing = count_presence(discovery, devices, consts::PRESENCE_MISSING);
+}
+
+fn group_listed(groups: &str, name: &str) -> bool {
+    groups.split_whitespace().any(|group| group == name)
+}
+
+fn count_presence(
+    discovery: &Discovery,
+    devices: &[(DeviceClass, String, String)],
+    wanted: &str,
+) -> usize {
+    devices
+        .iter()
+        .filter(|(class, devid, devpath)| discovery.presence(*class, devid, devpath) == wanted)
+        .count()
 }
 
 fn user_groups() -> String {

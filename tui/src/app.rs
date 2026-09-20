@@ -105,6 +105,7 @@ pub struct App {
     last_flow: Option<Instant>,
     child_rx: Option<Receiver<(SessionKind, String)>>,
     child: Option<ChildSession>,
+    diag: Diagnostics,
 }
 
 impl App {
@@ -126,8 +127,8 @@ impl App {
             config_path,
             raw_on_disk,
             tui_state,
-            status: process::check_processes(),
-            discovery: Discovery::live(),
+            status: ProcessStatus::default(),
+            discovery: Discovery::default(),
             logs: LogState::new(),
             message: String::new(),
             last_tick: Instant::now(),
@@ -168,10 +169,10 @@ impl App {
             last_flow: None,
             child_rx: None,
             child: None,
+            diag: Diagnostics::default(),
         };
         app.clamp_profile_index();
-        app.logs.refresh_files();
-        app.refresh_extra_games();
+        app.refresh_runtime();
         app.sample_telemetry();
         Ok(app)
     }
@@ -224,27 +225,63 @@ impl App {
         self.current_profile()?.devices.get(self.device_index)
     }
 
-    pub fn diagnostics(&self) -> Diagnostics {
-        let devices: Vec<(DeviceClass, String, String)> = self
-            .current_profile()
+    pub fn diagnostics(&self) -> &Diagnostics {
+        &self.diag
+    }
+
+    fn device_presence_keys(&self) -> Vec<(DeviceClass, String, String)> {
+        self.current_profile()
             .map(|profile| {
                 profile
                     .devices
                     .iter()
-                    .map(|d| {
+                    .map(|device| {
                         (
-                            d.class(),
-                            d.get_str(consts::KEY_DEVID).unwrap_or("").to_string(),
-                            d.get_str(consts::KEY_DEVPATH).unwrap_or("").to_string(),
+                            device.class(),
+                            device.get_str(consts::KEY_DEVID).unwrap_or("").to_string(),
+                            device
+                                .get_str(consts::KEY_DEVPATH)
+                                .unwrap_or("")
+                                .to_string(),
                         )
                     })
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
+
+    fn refresh_diagnostics(&mut self) {
+        let devices = self.device_presence_keys();
         let mut diag = diagnostics::collect(&self.discovery, &devices);
-        diag.simapi_exists = self.simapi_exists();
+        diag.simapi_exists = self.shm.mapped();
         diag.simapi_live = self.telemetry_live;
-        diag
+        self.diag = diag;
+    }
+
+    fn refresh_presence(&mut self) {
+        let devices = self.device_presence_keys();
+        diagnostics::apply_presence(&mut self.diag, &self.discovery, &devices);
+    }
+
+    fn sync_simapi_diag(&mut self) {
+        self.diag.simapi_exists = self.shm.mapped();
+        self.diag.simapi_live = self.telemetry_live;
+    }
+
+    fn refresh_runtime(&mut self) {
+        let listing = process::process_listing();
+        self.status = process::check_processes_from(&listing);
+        self.discovery = Discovery::live();
+        self.logs.refresh_files();
+        self.extra_games = simapi_shm::extras_from_listing(&self.simd, &listing);
+        self.refresh_diagnostics();
+        if !self.status.cleaned_pid_files.is_empty() {
+            self.message = format!(
+                "Cleaned stale PID files: {}",
+                self.status.cleaned_pid_files.join(", ")
+            );
+        }
+        self.last_tick = Instant::now();
     }
 
     pub fn simapi_exists(&self) -> bool {
@@ -259,27 +296,22 @@ impl App {
 
     pub fn tick(&mut self) {
         let shm_event = self.shm.drain();
+        let status_due =
+            self.last_tick.elapsed() >= Duration::from_millis(consts::STATUS_REFRESH_MS);
         if shm_event {
             if !self.shm.mapped() {
                 self.prev_flow = None;
                 self.last_flow = None;
             }
-            self.refresh_extra_games();
-        }
-        if self.last_tick.elapsed() >= Duration::from_millis(consts::STATUS_REFRESH_MS) {
-            self.status = process::check_processes();
-            self.discovery = Discovery::live();
-            self.logs.refresh_files();
-            self.refresh_extra_games();
-            if !self.status.cleaned_pid_files.is_empty() {
-                self.message = format!(
-                    "Cleaned stale PID files: {}",
-                    self.status.cleaned_pid_files.join(", ")
-                );
+            if !status_due {
+                self.refresh_extra_games();
             }
-            self.last_tick = Instant::now();
+        }
+        if status_due {
+            self.refresh_runtime();
         }
         self.sample_telemetry();
+        self.sync_simapi_diag();
         self.drain_child();
         if self.child.is_some() {
             self.logs.refresh_files();
@@ -533,6 +565,7 @@ impl App {
                     wrap_index(self.dashboard_index, consts::DASHBOARD_ACTIONS.len(), 1);
             }
             consts::KEY_ENTER => self.run_dashboard_action(self.dashboard_index),
+            consts::KEY_TEST => self.toggle_test(),
             _ => {}
         }
     }
@@ -547,7 +580,7 @@ impl App {
     fn run_dashboard_action(&mut self, index: usize) {
         match consts::DASHBOARD_ACTIONS.get(index).copied() {
             Some(consts::ACTION_START) => self.start_play(),
-            Some(consts::ACTION_TEST) => self.start_test(),
+            Some(consts::ACTION_TEST) => self.toggle_test(),
             Some(consts::ACTION_RESTART) => self.restart_play(),
             Some(consts::ACTION_STOP) => self.stop_all(),
             _ => {}
@@ -598,11 +631,15 @@ impl App {
         self.spawn_play_session();
     }
 
-    fn start_test(&mut self) {
-        self.launch_test(TestScope::default(), true);
+    fn toggle_test(&mut self) {
+        self.request_test(TestScope::default(), true);
     }
 
     fn start_editor_test(&mut self) {
+        if self.test_running() {
+            self.stop_tracked_test();
+            return;
+        }
         if !self.commit_form(false) {
             return;
         }
@@ -614,20 +651,19 @@ impl App {
             config_index: Some(self.profile_index),
             device_index: Some(self.device_index),
         };
+        self.request_test(scope, switch_to_logs);
+    }
+
+    fn request_test(&mut self, scope: TestScope, switch_to_logs: bool) {
+        if self.test_running() {
+            self.stop_tracked_test();
+            return;
+        }
         self.launch_test(scope, switch_to_logs);
     }
 
     fn launch_test(&mut self, scope: TestScope, switch_to_logs: bool) {
         self.status = process::check_processes();
-        if switch_to_logs
-            && self
-                .child
-                .as_ref()
-                .is_some_and(|session| session.kind == SessionKind::Test)
-        {
-            self.message = consts::MSG_TEST_ALREADY_RUNNING.into();
-            return;
-        }
         self.kill_tracked_child();
         if self.status.cargopit_running {
             let _ = process::stop_play();
@@ -680,6 +716,15 @@ impl App {
         self.child_rx = None;
     }
 
+    fn stop_tracked_test(&mut self) {
+        if !self.test_running() {
+            self.message = consts::MSG_NO_TEST_RUNNING.into();
+            return;
+        }
+        self.kill_tracked_child();
+        self.message = consts::MSG_STOPPED_TEST.into();
+    }
+
     fn handle_devices(&mut self, code: KeyCode) {
         match code {
             consts::KEY_QUIT | consts::KEY_QUIT_UPPER => self.should_quit = true,
@@ -718,6 +763,7 @@ impl App {
         self.profile_index = (self.profile_index as isize + delta).rem_euclid(len) as usize;
         self.device_index = 0;
         self.persist_profile_selection();
+        self.refresh_presence();
     }
 
     fn move_device(&mut self, delta: isize) {
@@ -1339,7 +1385,14 @@ impl App {
             consts::KEY_DOWN | consts::KEY_J => {
                 self.logs.scroll = self.logs.scroll.saturating_sub(1)
             }
-            consts::KEY_TEST | consts::KEY_SPACE => self.logs.filter = self.logs.filter.cycle(),
+            consts::KEY_TEST => {
+                if self.test_running() {
+                    self.stop_tracked_test();
+                    return;
+                }
+                self.logs.filter = self.logs.filter.cycle();
+            }
+            consts::KEY_SPACE => self.logs.filter = self.logs.filter.cycle(),
             _ => {}
         }
     }
@@ -1374,6 +1427,7 @@ impl App {
             Ok(()) => self.message = format!("Saved {}", self.config_path.display()),
             Err(err) => self.message = err.to_string(),
         }
+        self.refresh_presence();
     }
 }
 

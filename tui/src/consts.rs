@@ -53,6 +53,7 @@ pub const MIN_TERMINAL_HEIGHT: u16 = 20;
 
 pub const STATUS_REFRESH_MS: u64 = 1000;
 pub const EVENT_POLL_MS: u64 = 200;
+pub const EVENT_DRAIN_MS: u64 = 0;
 pub const FLOW_HOLD_MS: u64 = 1000;
 pub const PROCESS_STOP_WAIT_MS: u64 = 1000;
 pub const PROCESS_STOP_POLL_MS: u64 = 50;
@@ -343,9 +344,21 @@ pub const PKILL_SIGNAL_KILL: &str = "-9";
 pub const PS_BIN: &str = "ps";
 pub const PS_LIST_ARGS: &[&str] = &["axo", "pid,comm,args"];
 pub const PS_COMM_ARGS: &[&str] = &["-o", "comm="];
+pub const SIM_EXE_HOST_COMMS: &[&str] = &[
+    "wine",
+    "wine64",
+    "wine-preloader",
+    "wine64-preloader",
+    "wine64-preload",
+    "bash",
+    "sh",
+];
+pub const WINDOWS_EXE_SUFFIX: &str = ".exe";
 pub const PS_PID_FLAG: &str = "-p";
 pub const KILL_BIN: &str = "kill";
 pub const KILL_TERM: &str = "-TERM";
+pub const KILL_END_OF_OPTIONS: &str = "--";
+pub const PROCESS_GROUP_SIGNAL_PREFIX: &str = "-";
 pub const ID_BIN: &str = "id";
 pub const ID_GROUPS: &str = "-nG";
 pub const WHICH_CARGOPIT_PLAY: &str = "play";
@@ -377,7 +390,7 @@ pub const ACTION_RESTART: &str = "Restart";
 pub const ACTION_STOP: &str = "Stop";
 pub const ACTION_HINTS: &[&str] = &[
     "start play (simd if needed)",
-    "run a hardware test pass",
+    "start or stop a hardware test",
     "stop then start play",
     "stop cargopit and simd",
 ];
@@ -386,7 +399,8 @@ pub const MSG_STARTED_PLAY: &str = "Started cargopit play";
 pub const MSG_STARTED_TEST: &str = "Started cargopit test";
 pub const MSG_STARTED_DEVICE_TEST: &str = "Started test for this device";
 pub const MSG_PLAY_ALREADY_RUNNING: &str = "cargopit play is already running";
-pub const MSG_TEST_ALREADY_RUNNING: &str = "cargopit test is already running";
+pub const MSG_STOPPED_TEST: &str = "Stopped hardware test";
+pub const MSG_NO_TEST_RUNNING: &str = "No hardware test is running";
 pub const MSG_TEST_FINISHED: &str = "Hardware test finished";
 pub const MSG_PLAY_EXITED: &str = "cargopit play exited";
 pub const MSG_TEST_FAILED: &str = "Hardware test failed";
@@ -398,7 +412,7 @@ pub const PROFILE_FIELD_COUNT: usize = 1;
 
 pub const TOO_SMALL_TITLE: &str = "Terminal too small";
 pub const TEST_PANEL_IDLE: &str = "Idle - press t to test";
-pub const TEST_PANEL_RUNNING: &str = "Testing this device";
+pub const TEST_PANEL_RUNNING: &str = "Testing - press t to stop";
 const _: () =
     assert!(TEST_PANEL_IDLE.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize);
 const _: () =
@@ -608,7 +622,7 @@ pub const HELP_DESC_CYCLE: &str = "cycle";
 pub const HELP_DESC_TYPE: &str = "type";
 pub const HELP_DESC_UNSET: &str = "unset";
 pub const HELP_DESC_SAVE: &str = "save";
-pub const HELP_DESC_TEST_DEVICE: &str = "test this device";
+pub const HELP_DESC_TEST_DEVICE: &str = "start/stop test";
 pub const HELP_DESC_CANCEL: &str = "cancel";
 pub const HELP_DESC_NUDGE: &str = "nudge";
 pub const HELP_DESC_APPLY: &str = "apply/restart";
@@ -629,6 +643,7 @@ pub const HELP_DASHBOARD: &[HelpBinding] = &[
     help_key(HOTKEY_TAB_PAGES, HELP_DESC_PAGES),
     help_key(HOTKEY_MOVE, HELP_DESC_SELECT),
     help_key(HOTKEY_ENTER, HELP_DESC_RUN),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
     help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
@@ -647,6 +662,7 @@ pub const HELP_DEVICES: &[HelpBinding] = &[
     help_key(HOTKEY_SPACE, HELP_DESC_ENABLE),
     help_key(HOTKEY_REORDER, HELP_DESC_MOVE),
     help_key(HOTKEY_TEMPLATE, HELP_DESC_TEMPLATE),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
     help_key(HOTKEY_ENTER, HELP_DESC_TUNE),
     help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
 ];
@@ -660,6 +676,7 @@ pub const HELP_SETTINGS: &[HelpBinding] = &[
 pub const HELP_LOGS: &[HelpBinding] = &[
     help_key(HOTKEY_MOVE, HELP_DESC_SCROLL),
     help_key(HOTKEY_SPACE, HELP_DESC_FILTER),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
     help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
     help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
 ];
@@ -875,6 +892,8 @@ pub const SIMULATOR_API_SCS_TRUCKSIM2: u8 = 4;
 pub const SIMULATOR_API_OUTSIM: u8 = 5;
 pub const SIMULATOR_API_DIRT_RALLY_2: u8 = 6;
 pub const SIMULATOR_EXE_DIRT_RALLY_2: u64 = 690790;
+pub const SIMULATOR_EXE_ASSETTO_CORSA_RALLY: u64 = 3917090;
+pub const SIM_EXE_ACR: &str = "acr.exe";
 pub const SIMULATOR_API_F1_2018: u8 = 7;
 pub const SIMULATOR_API_RACE_ROOM: u8 = 8;
 pub const SIMULATOR_API_FORZA: u8 = 9;
