@@ -26,6 +26,7 @@
 #define AUDIO_GEAR_LATENCY_S 0.040
 #define AUDIO_MAX_BUFFER_S 0.400
 #define SHAKER_MAX_DIGITAL_DRIVE 0.40
+#define SHAKER_SINK_INPUT_UNMUTED 0
 
 #ifndef M_PI
 #define M_PI  (3.14159265)
@@ -425,6 +426,26 @@ void stream_success_cb(pa_stream *stream, int success, void *userdata) {
     return;
 }
 
+static void unmute_shaker_sink_input(pa_context* context, pa_stream* stream)
+{
+    uint32_t stream_index;
+    pa_operation* unmute;
+
+    stream_index = pa_stream_get_index(stream);
+    if (stream_index == PA_INVALID_INDEX)
+    {
+        return;
+    }
+
+    unmute = pa_context_set_sink_input_mute(
+        context, stream_index, SHAKER_SINK_INPUT_UNMUTED, NULL, NULL);
+    if (unmute == NULL)
+    {
+        return;
+    }
+    pa_operation_unref(unmute);
+}
+
 void stream_state_cb(pa_stream *s, void *mainloop) {
     pa_threaded_mainloop_signal(mainloop, 0);
 }
@@ -523,7 +544,8 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
     pa_stream_flags_t stream_flags;
     stream_flags = PA_STREAM_INTERPOLATE_TIMING
         | PA_STREAM_AUTO_TIMING_UPDATE
-        | PA_STREAM_ADJUST_LATENCY;
+        | PA_STREAM_ADJUST_LATENCY
+        | PA_STREAM_START_UNMUTED;
 
     if (pan == SOUND_PAN_ALL_CHANNELS || pan < 0 || pan >= channels)
     {
@@ -550,6 +572,7 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
         pa_threaded_mainloop_wait(mainloop);
     }
 
+    unmute_shaker_sink_input(context, stream);
     sounddevice->stream = stream;
     pa_threaded_mainloop_unlock(mainloop);
     return 0;

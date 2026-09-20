@@ -93,16 +93,13 @@
 #define TEST_MSG_RPM_MAX             "Setting rpms to redline"
 #define TEST_MSG_SUSPENSION          "Testing suspension"
 #define TEST_MSG_COAST               "Returning to idle"
-#define TESTER_CAP_RPM               (1u << 0)
-#define TESTER_CAP_FLAG              (1u << 1)
-#define TESTER_CAP_GEAR              (1u << 2)
-#define TESTER_CAP_SPIN              (1u << 3)
-#define TESTER_CAP_LOCK              (1u << 4)
-#define TESTER_CAP_ABS               (1u << 5)
-#define TESTER_CAP_BUTTONS           (1u << 6)
-#define TESTER_CAP_SUSP              (1u << 7)
-#define TESTER_CAP_SPEED             (1u << 8)
-#define TESTER_CAP_HARDWARE          (TESTER_CAP_RPM | TESTER_CAP_FLAG | TESTER_CAP_BUTTONS | TESTER_CAP_SPEED)
+#define TEST_MSG_PREPARING           "preparing test with %i devices..."
+#define TEST_STEP_PREFIX             "test step: "
+#define TEST_MSG_STARTING            "Starting"
+#define TEST_MSG_FINISHED            "Finished"
+#define TEST_LABEL_SERIAL_LIGHTS     "serial lights"
+#define TEST_LABEL_USB_LIGHTS        "USB lights"
+#define TEST_LABEL_DEVICE            "device"
 
 bool go = false;
 bool go2 = false;
@@ -1381,13 +1378,21 @@ static void tester_enable_log_flush(void)
     slog_config_get(&cfg);
     cfg.nFlush = 1;
     slog_config_set(&cfg);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
     fflush(stdout);
     fflush(stderr);
 }
 
 static void tester_announce(const char* msg)
 {
-    slogi("%s", msg);
+    slogi("%s%s", TEST_STEP_PREFIX, msg);
+    fflush(stdout);
+}
+
+static void tester_announce_named(const char* action, const char* name)
+{
+    slogi("%s%s %s", TEST_STEP_PREFIX, action, name);
     fflush(stdout);
 }
 
@@ -1416,16 +1421,6 @@ static void tester_drive(
         update_devices(devices, numdevices, simdata, testsimmap);
         usleep(TEST_TICK_US);
     }
-}
-
-static void tester_hold(
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata,
-    SimMap* testsimmap,
-    unsigned int hold_us)
-{
-    tester_drive(devices, numdevices, simdata, testsimmap, tester_hold_ticks(hold_us), NULL);
 }
 
 static void tester_mod_abs(SimData* simdata, int tick)
@@ -1498,56 +1493,44 @@ static int tester_has_effect(SimDevice* devices, int numdevices, VibrationEffect
     return 0;
 }
 
-static unsigned tester_effect_cap(VibrationEffectType effect)
+static int tester_is_haptic_effect_device(const SimDevice* device)
 {
-    switch (effect)
+    if (device->initialized == false)
     {
-        case EFFECT_ENGINERPM:
-            return TESTER_CAP_RPM;
+        return 0;
+    }
+    if (device->type == SIMDEV_SOUND)
+    {
+        return 1;
+    }
+    switch (device->hapticeffect.effecttype)
+    {
         case EFFECT_GEARSHIFT:
-            return TESTER_CAP_GEAR;
-        case EFFECT_ABSBRAKES:
-            return TESTER_CAP_ABS;
-        case EFFECT_TYRESLIP:
-            return TESTER_CAP_SPIN;
         case EFFECT_TYRELOCK:
-            return TESTER_CAP_LOCK;
+        case EFFECT_TYRESLIP:
+        case EFFECT_ABSBRAKES:
         case EFFECT_SUSPENSION:
-            return TESTER_CAP_SUSP;
+            return 1;
         default:
             return 0;
     }
 }
 
-static unsigned tester_device_caps(const SimDevice* device)
+static const char* tester_device_label(const SimDevice* device)
 {
-    unsigned caps;
-    if (device->initialized == false)
+    if (tester_is_haptic_effect_device(device))
     {
-        return 0;
+        return tester_effect_name(device->hapticeffect.effecttype);
     }
-    caps = tester_effect_cap(device->hapticeffect.effecttype);
-    if (device->type == SIMDEV_USB || device->type == SIMDEV_SERIAL)
+    if (device->type == SIMDEV_SERIAL)
     {
-        caps |= TESTER_CAP_HARDWARE;
+        return TEST_LABEL_SERIAL_LIGHTS;
     }
-    return caps;
-}
-
-static unsigned tester_caps(SimDevice* devices, int numdevices)
-{
-    unsigned caps = 0;
-    int i;
-    for (i = 0; i < numdevices; i++)
+    if (device->type == SIMDEV_USB)
     {
-        caps |= tester_device_caps(&devices[i]);
+        return TEST_LABEL_USB_LIGHTS;
     }
-    return caps;
-}
-
-static int tester_has_cap(unsigned caps, unsigned need)
-{
-    return (caps & need) != 0;
+    return TEST_LABEL_DEVICE;
 }
 
 static void tester_warn_if_missing(SimDevice* devices, int numdevices, VibrationEffectType effect)
@@ -1584,7 +1567,8 @@ static void tester_log_slip_play(
             devices[i].hapticeffect.configcheck,
             devices[i].hapticeffect.tyrediameterconfig);
         slogi(
-            "%s test play=%f threshold=%f brake=%f gas=%f yvel=%f slip=%f",
+            "%s%s play=%f threshold=%f brake=%f gas=%f yvel=%f slip=%f",
+            TEST_STEP_PREFIX,
             tester_effect_name(effect),
             play,
             devices[i].hapticeffect.threshold,
@@ -1700,172 +1684,160 @@ static void tester_phase_gear(
     tester_phase(devices, numdevices, simdata, testsimmap, msg, TEST_PHASE_HOLD_US, tester_mod_gear);
 }
 
+static void tester_reset_idle(SimData* simdata)
+{
+    tester_clear_effects(simdata);
+    simdata->velocity = 0;
+    simdata->rpms = TEST_RPM_IDLE;
+    simdata->playerflag = SIMAPI_FLAG_GREEN;
+    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
+}
+
+static void tester_run_engine(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    simdata->gas = TEST_GAS_CRUISE;
+    tester_announce(TEST_MSG_REV);
+    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_IDLE, TEST_RPM_MAX, TEST_RPM_SWEEP_STEP);
+    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_MAX, TEST_RPM_IDLE, TEST_RPM_SWEEP_STEP);
+    simdata->rpms = TEST_RPM_IDLE;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_RPM_IDLE, TEST_PHASE_HOLD_US, NULL);
+}
+
+static void tester_run_gear(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_FIRST, SIMAPI_GEAR_FIRST, TEST_GEAR_CHAR_FIRST);
+    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_SECOND, SIMAPI_GEAR_SECOND, TEST_GEAR_CHAR_SECOND);
+    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_THIRD, SIMAPI_GEAR_THIRD, TEST_GEAR_CHAR_THIRD);
+    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_FOURTH, SIMAPI_GEAR_FOURTH, TEST_GEAR_CHAR_FOURTH);
+}
+
+static void tester_run_spin(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    set_wheel_spin_simdata(simdata);
+    tester_log_slip_play(device, 1, simdata, EFFECT_TYRESLIP);
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPIN, TEST_PHASE_HOLD_US, NULL);
+}
+
+static void tester_run_lock(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    set_wheel_lock_simdata(simdata);
+    tester_log_slip_play(device, 1, simdata, EFFECT_TYRELOCK);
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_LOCK, TEST_PHASE_HOLD_US, NULL);
+}
+
+static void tester_run_abs(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    tester_set_abs(simdata);
+    tester_log_slip_play(device, 1, simdata, EFFECT_ABSBRAKES);
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_ABS, TEST_PHASE_HOLD_US, tester_mod_abs);
+}
+
+static void tester_run_suspension(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    simdata->gas = TEST_GAS_CRUISE;
+    tester_fill_corners(simdata->suspvelocity, TEST_SUSP_VEL_A);
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SUSPENSION, TEST_PHASE_HOLD_US, tester_mod_suspension);
+}
+
+static void tester_run_haptic(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    switch (device->hapticeffect.effecttype)
+    {
+        case EFFECT_ENGINERPM:
+            tester_run_engine(device, simdata, testsimmap);
+            return;
+        case EFFECT_GEARSHIFT:
+            tester_run_gear(device, simdata, testsimmap);
+            return;
+        case EFFECT_TYRESLIP:
+            tester_run_spin(device, simdata, testsimmap);
+            return;
+        case EFFECT_TYRELOCK:
+            tester_run_lock(device, simdata, testsimmap);
+            return;
+        case EFFECT_ABSBRAKES:
+            tester_run_abs(device, simdata, testsimmap);
+            return;
+        case EFFECT_SUSPENSION:
+            tester_run_suspension(device, simdata, testsimmap);
+            return;
+        default:
+            return;
+    }
+}
+
+static void tester_run_lights(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    simdata->gas = TEST_GAS_CRUISE;
+    tester_announce(TEST_MSG_REV);
+    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_IDLE, TEST_RPM_MAX, TEST_RPM_SWEEP_STEP);
+    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_MAX, TEST_RPM_IDLE, TEST_RPM_SWEEP_STEP);
+    simdata->rpms = TEST_RPM_IDLE;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_RPM_IDLE, TEST_PHASE_HOLD_US, NULL);
+
+    simdata->playerflag = SIMAPI_FLAG_GREEN;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_GREEN, TEST_PHASE_HOLD_US, NULL);
+    simdata->playerflag = SIMAPI_FLAG_YELLOW;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_YELLOW, TEST_PHASE_HOLD_US, NULL);
+    simdata->playerflag = SIMAPI_FLAG_BLUE;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_BLUE, TEST_PHASE_HOLD_US, NULL);
+    simdata->playerflag = SIMAPI_FLAG_RED;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_RED, TEST_PHASE_HOLD_US, NULL);
+
+    tester_set_brake_heat(simdata);
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_BUTTONS, TEST_PHASE_HOLD_US, NULL);
+
+    simdata->velocity = TEST_VELOCITY_SLOW;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPEED_SLOW, TEST_PHASE_HOLD_US, NULL);
+    simdata->velocity = TEST_VELOCITY_FAST;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPEED_FAST, TEST_PHASE_HOLD_US, NULL);
+    simdata->velocity = TEST_VELOCITY_TOP;
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPEED_TOP, TEST_PHASE_HOLD_US, NULL);
+}
+
+static void tester_run_one_device(SimDevice* device, SimData* simdata, SimMap* testsimmap)
+{
+    if (device->initialized == false)
+    {
+        return;
+    }
+
+    tester_announce_named(TEST_MSG_STARTING, tester_device_label(device));
+    set_basic_simdata(simdata);
+    if (tester_is_haptic_effect_device(device))
+    {
+        tester_run_haptic(device, simdata, testsimmap);
+    }
+    else
+    {
+        tester_run_lights(device, simdata, testsimmap);
+    }
+    tester_reset_idle(simdata);
+    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_COAST, TEST_IDLE_HOLD_US, NULL);
+    tester_announce_named(TEST_MSG_FINISHED, tester_device_label(device));
+}
+
 int tester(SimDevice* devices, int numdevices)
 {
     SimData* simdata;
     SimMap* testsimmap;
     struct termios canonicalmode;
     int raw_applied;
-    unsigned caps;
+    int i;
 
     tester_enable_log_flush();
-    slogi("preparing test with %i devices...", numdevices);
+    slogi(TEST_STEP_PREFIX TEST_MSG_PREPARING, numdevices);
 
     simdata = malloc(sizeof(SimData));
     memset(simdata, 0, sizeof(SimData));
     tester_set_identity(simdata);
     testsimmap = tester_open_map(simdata);
     raw_applied = tester_enter_raw_stdin(&canonicalmode);
-    caps = tester_caps(devices, numdevices);
 
-    set_basic_simdata(simdata);
-    simdata->velocity = TEST_VELOCITY_IDLE;
-    tester_hold(devices, numdevices, simdata, testsimmap, TEST_IDLE_HOLD_US);
-
-    if (tester_has_cap(caps, TESTER_CAP_RPM))
+    for (i = 0; i < numdevices; i++)
     {
-        simdata->gas = TEST_GAS_CRUISE;
-        tester_announce(TEST_MSG_REV);
-        tester_sweep_rpm(devices, numdevices, simdata, testsimmap, TEST_RPM_IDLE, TEST_RPM_MAX, TEST_RPM_SWEEP_STEP);
-        tester_sweep_rpm(devices, numdevices, simdata, testsimmap, TEST_RPM_MAX, TEST_RPM_IDLE, TEST_RPM_SWEEP_STEP);
-        simdata->rpms = TEST_RPM_IDLE;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_IDLE, TEST_PHASE_HOLD_US, NULL);
+        tester_run_one_device(&devices[i], simdata, testsimmap);
     }
-
-    if (tester_has_cap(caps, TESTER_CAP_FLAG))
-    {
-        simdata->playerflag = SIMAPI_FLAG_GREEN;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_GREEN, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_GEAR))
-    {
-        tester_phase_gear(
-            devices, numdevices, simdata, testsimmap,
-            TEST_MSG_FIRST, SIMAPI_GEAR_FIRST, TEST_GEAR_CHAR_FIRST);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_SPEED))
-    {
-        simdata->velocity = TEST_VELOCITY_SLOW;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPEED_SLOW, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_SPIN))
-    {
-        set_wheel_spin_simdata(simdata);
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPIN, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_BUTTONS))
-    {
-        tester_set_brake_heat(simdata);
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_BUTTONS, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_LOCK))
-    {
-        set_wheel_lock_simdata(simdata);
-        tester_log_slip_play(devices, numdevices, simdata, EFFECT_TYRELOCK);
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_LOCK, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    tester_clear_effects(simdata);
-    if (tester_has_cap(caps, TESTER_CAP_GEAR))
-    {
-        tester_phase_gear(
-            devices, numdevices, simdata, testsimmap,
-            TEST_MSG_SECOND, SIMAPI_GEAR_SECOND, TEST_GEAR_CHAR_SECOND);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_ABS))
-    {
-        tester_set_abs(simdata);
-        tester_log_slip_play(devices, numdevices, simdata, EFFECT_ABSBRAKES);
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_ABS, TEST_PHASE_HOLD_US, tester_mod_abs);
-    }
-
-    tester_clear_effects(simdata);
-    if (tester_has_cap(caps, TESTER_CAP_SPEED))
-    {
-        simdata->velocity = TEST_VELOCITY_FAST;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPEED_FAST, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_FLAG))
-    {
-        simdata->playerflag = SIMAPI_FLAG_YELLOW;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_YELLOW, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_GEAR))
-    {
-        tester_phase_gear(
-            devices, numdevices, simdata, testsimmap,
-            TEST_MSG_THIRD, SIMAPI_GEAR_THIRD, TEST_GEAR_CHAR_THIRD);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_RPM))
-    {
-        simdata->rpms = TEST_RPM_MID_LOW;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_MID_LOW, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_FLAG))
-    {
-        simdata->playerflag = SIMAPI_FLAG_BLUE;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_BLUE, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_RPM))
-    {
-        simdata->rpms = TEST_RPM_MID;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_MID, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_GEAR))
-    {
-        tester_phase_gear(
-            devices, numdevices, simdata, testsimmap,
-            TEST_MSG_FOURTH, SIMAPI_GEAR_FOURTH, TEST_GEAR_CHAR_FOURTH);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_SPEED))
-    {
-        simdata->velocity = TEST_VELOCITY_TOP;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SPEED_TOP, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_RPM))
-    {
-        simdata->rpms = TEST_RPM_HIGH;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_HIGH, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_FLAG))
-    {
-        simdata->playerflag = SIMAPI_FLAG_RED;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RED, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_RPM))
-    {
-        simdata->rpms = TEST_RPM_MAX;
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_RPM_MAX, TEST_PHASE_HOLD_US, NULL);
-    }
-
-    if (tester_has_cap(caps, TESTER_CAP_SUSP))
-    {
-        simdata->gas = TEST_GAS_CRUISE;
-        tester_fill_corners(simdata->suspvelocity, TEST_SUSP_VEL_A);
-        tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_SUSPENSION, TEST_PHASE_HOLD_US, tester_mod_suspension);
-    }
-
-    tester_clear_effects(simdata);
-    simdata->velocity = 0;
-    simdata->rpms = TEST_RPM_IDLE;
-    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
-    tester_phase(devices, numdevices, simdata, testsimmap, TEST_MSG_COAST, TEST_IDLE_HOLD_US, NULL);
 
     tester_restore_stdin(raw_applied, &canonicalmode);
     tester_close_map(testsimmap, devices, numdevices, simdata);
@@ -1898,6 +1870,7 @@ int run_hardware_test(CargopitSettings* ms, int config_index, int device_index)
     int error;
     int i;
 
+    tester_enable_log_flush();
     confignum = resolve_config_index(ms->config_str, config_index);
     if (confignum < 0)
     {
