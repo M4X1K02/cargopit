@@ -350,4 +350,23 @@ mod tests {
         assert_eq!(again.get_f64(consts::KEY_AMPFACTOR), Some(1.0));
         assert_eq!(again.get_str(consts::KEY_DEVPATH), Some("/dev/simdev0"));
     }
+
+    #[test]
+    fn serial_wheel_keep_keys_preserves_moza_r9() {
+        let mut device = DeviceEntry::new();
+        device.set_str(consts::KEY_DEVICE, consts::CLASS_SERIAL);
+        device.set_str(consts::KEY_TYPE, consts::TYPE_WHEEL);
+        device.set_str(consts::KEY_SUBTYPE, consts::SUBTYPE_MOZA_R9);
+        device.set_str(consts::KEY_DEVPATH, "/dev/serial/by-id/r9");
+        device.set_int(consts::KEY_BAUD, 115200);
+        device.keep_keys_for_class(DeviceClass::Serial, consts::TYPE_WHEEL);
+        assert_eq!(
+            device.get_str(consts::KEY_SUBTYPE),
+            Some(consts::SUBTYPE_MOZA_R9)
+        );
+        assert_eq!(
+            device.get_str(consts::KEY_DEVPATH),
+            Some("/dev/serial/by-id/r9")
+        );
+    }
 }

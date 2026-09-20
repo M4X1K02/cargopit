@@ -23,7 +23,7 @@ int serial_wheel_update(SimDevice* this, SimData* simdata)
     SerialDevice* serialdevice = (void *) this->derived;
 
     switch (serialdevice->devicetype) {
-      case SIMDEVSUBTYPE_MOZA_NEW:
+      case SERIALDEV__MOZA_NEW:
         moza_new_update(serialdevice, simdata);
         break;
 
@@ -31,7 +31,7 @@ int serial_wheel_update(SimDevice* this, SimData* simdata)
         moza_ks_pro_wheel_update(serialdevice, simdata);
         break;
 
-      case SIMDEVSUBTYPE_MOZAR5:
+      case SERIALDEV__MOZAR5:
       default:
         moza_update(serialdevice, simdata->rpms, simdata->maxrpm);
         break;

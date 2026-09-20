@@ -219,6 +219,12 @@ pub const USB_HARDWARE_SUBTYPES: &[&str] = &[
 ];
 
 pub const TACHOMETER_SUBTYPES: &[&str] = &[SUBTYPE_REVBURNER];
+pub const SERIAL_WHEEL_SUBTYPES: &[&str] = &[
+    SUBTYPE_MOZA_R9,
+    SUBTYPE_MOZA_NEW,
+    SUBTYPE_MOZA_R5,
+    SUBTYPE_MOZA_KS_PRO,
+];
 
 pub const USB_TYPES: &[&str] = &[TYPE_TACHOMETER, TYPE_HAPTIC, TYPE_WHEEL];
 pub const SOUND_TYPES: &[&str] = &[TYPE_HAPTIC];

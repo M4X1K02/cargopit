@@ -200,6 +200,12 @@ fn type_fields(class: DeviceClass, type_name: &str) -> &'static [FieldId] {
             consts::TYPE_CUSTOM | consts::TYPE_ARDUINO_CUSTOM => {
                 &[FieldId::Devpath, FieldId::Baud, FieldId::Ampfactor, FieldId::ConfigPath]
             }
+            consts::TYPE_WHEEL => &[
+                FieldId::Subtype,
+                FieldId::Devpath,
+                FieldId::Baud,
+                FieldId::Ampfactor,
+            ],
             _ => &[FieldId::Devpath, FieldId::Baud, FieldId::Ampfactor],
         },
     }
@@ -234,13 +240,11 @@ pub fn types_for_class(class: DeviceClass) -> &'static [&'static str] {
 }
 
 pub fn subtypes_for(class: DeviceClass, type_name: &str) -> &'static [&'static str] {
-    if class != DeviceClass::Usb {
-        return &[];
-    }
-    if type_name == consts::TYPE_TACHOMETER {
-        consts::TACHOMETER_SUBTYPES
-    } else {
-        consts::USB_HARDWARE_SUBTYPES
+    match class {
+        DeviceClass::Usb if type_name == consts::TYPE_TACHOMETER => consts::TACHOMETER_SUBTYPES,
+        DeviceClass::Usb => consts::USB_HARDWARE_SUBTYPES,
+        DeviceClass::Serial if type_name == consts::TYPE_WHEEL => consts::SERIAL_WHEEL_SUBTYPES,
+        _ => &[],
     }
 }
 
@@ -367,6 +371,9 @@ pub fn apply_defaults(device: &mut DeviceEntry, class: DeviceClass, type_name: &
             }
             if device.get(consts::KEY_AMPFACTOR).is_none() {
                 device.set_float(consts::KEY_AMPFACTOR, consts::DEFAULT_AMPFACTOR);
+            }
+            if type_name == consts::TYPE_WHEEL && device.get(consts::KEY_SUBTYPE).is_none() {
+                device.set_str(consts::KEY_SUBTYPE, consts::SUBTYPE_MOZA_R9);
             }
             if type_name == consts::TYPE_SIM_WIND && device.get(consts::KEY_FANPOWER).is_none() {
                 device.set_float(consts::KEY_FANPOWER, consts::DEFAULT_FANPOWER);
@@ -632,6 +639,25 @@ mod tests {
         assert!(fields.contains(&FieldId::Ampfactor));
         assert!(fields.contains(&FieldId::ConfigPath));
         assert!(fields.contains(&FieldId::NumLeds));
+    }
+
+    #[test]
+    fn serial_wheel_keeps_moza_r9_subtype() {
+        let fields = visible_fields(DeviceClass::Serial, consts::TYPE_WHEEL);
+        assert!(fields.contains(&FieldId::Subtype));
+        assert!(fields.contains(&FieldId::Devpath));
+        assert_eq!(
+            subtypes_for(DeviceClass::Serial, consts::TYPE_WHEEL),
+            consts::SERIAL_WHEEL_SUBTYPES
+        );
+        assert!(allowed_keys(DeviceClass::Serial, consts::TYPE_WHEEL).contains(&consts::KEY_SUBTYPE));
+
+        let mut wheel = DeviceEntry::new();
+        apply_defaults(&mut wheel, DeviceClass::Serial, consts::TYPE_WHEEL);
+        assert_eq!(
+            wheel.get_str(consts::KEY_SUBTYPE),
+            Some(consts::SUBTYPE_MOZA_R9)
+        );
     }
 
     #[test]
