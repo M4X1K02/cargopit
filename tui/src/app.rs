@@ -5,13 +5,14 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind};
+use ratatui::widgets::{ScrollbarState, TableState};
 
 use crate::config::{self, CargopitConfig, DeviceEntry, SimProfile};
 use crate::consts;
-use crate::diagnostics::{self, Diagnostics};
+use crate::diagnostics::{self, Diagnostics, SlowDiagnostics};
 use crate::form::DeviceForm;
-use crate::hardware::Discovery;
+use crate::hardware::{Discovery, LoadingState};
 use crate::libconfig::Value;
 use crate::logs::LogState;
 use crate::paths;
@@ -65,11 +66,15 @@ pub struct App {
     pub tui_state: TuiState,
     pub status: ProcessStatus,
     pub discovery: Discovery,
+    pub discovery_state: LoadingState,
     pub logs: LogState,
     pub message: String,
     pub last_tick: Instant,
     pub form: DeviceForm,
     pub device_index: usize,
+    pub device_table: TableState,
+    pub device_scroll: ScrollbarState,
+    pub tyre_table: TableState,
     pub profile_index: usize,
     pub dashboard_index: usize,
     pub settings_index: usize,
@@ -91,6 +96,16 @@ pub struct App {
     pub should_quit: bool,
     child_rx: Option<Receiver<(SessionKind, String)>>,
     child: Option<ChildSession>,
+    refresh_rx: Receiver<RefreshPayload>,
+    refresh_tx: mpsc::Sender<RefreshPayload>,
+    refresh_in_flight: bool,
+    slow_diagnostics: SlowDiagnostics,
+}
+
+struct RefreshPayload {
+    discovery: Discovery,
+    status: ProcessStatus,
+    slow: SlowDiagnostics,
 }
 
 impl App {
@@ -102,6 +117,7 @@ impl App {
         let raw_on_disk = config::read_raw(&config_path).unwrap_or_default();
         let simd = simd_config::load(&paths::simd_config_path()).unwrap_or_default();
         let tyres = tyres::load(&paths::diameters_path()).unwrap_or_default();
+        let (refresh_tx, refresh_rx) = mpsc::channel();
         let mut app = Self {
             screen: Screen::Dashboard,
             previous: Screen::Dashboard,
@@ -110,13 +126,17 @@ impl App {
             config_path,
             raw_on_disk,
             tui_state,
-            status: process::check_processes(),
-            discovery: Discovery::live(),
+            status: ProcessStatus::default(),
+            discovery: Discovery::default(),
+            discovery_state: LoadingState::Loading,
             logs: LogState::new(),
             message: String::new(),
             last_tick: Instant::now(),
             form: DeviceForm::blank(),
             device_index: 0,
+            device_table: TableState::default().with_selected(Some(0)),
+            device_scroll: ScrollbarState::default(),
+            tyre_table: TableState::default().with_selected(Some(0)),
             profile_index: 0,
             dashboard_index: 0,
             settings_index: 0,
@@ -142,8 +162,14 @@ impl App {
             should_quit: false,
             child_rx: None,
             child: None,
+            refresh_rx,
+            refresh_tx,
+            refresh_in_flight: false,
+            slow_diagnostics: SlowDiagnostics::default(),
         };
         app.logs.refresh_files();
+        app.sync_device_table();
+        app.request_refresh();
         Ok(app)
     }
 
@@ -176,20 +202,59 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        diagnostics::collect(&self.discovery, &devices)
+        diagnostics::assemble(&self.slow_diagnostics, &self.discovery, &devices)
+    }
+
+    fn request_refresh(&mut self) {
+        if self.refresh_in_flight {
+            return;
+        }
+        self.refresh_in_flight = true;
+        if self.discovery_state == LoadingState::Idle {
+            self.discovery_state = LoadingState::Loading;
+        }
+        let tx = self.refresh_tx.clone();
+        thread::spawn(move || {
+            let payload = RefreshPayload {
+                discovery: Discovery::live(),
+                status: process::check_processes(),
+                slow: SlowDiagnostics::live(),
+            };
+            let _ = tx.send(payload);
+        });
+    }
+
+    fn drain_refresh(&mut self) {
+        loop {
+            match self.refresh_rx.try_recv() {
+                Ok(payload) => {
+                    self.discovery = payload.discovery;
+                    self.status = payload.status;
+                    self.slow_diagnostics = payload.slow;
+                    self.discovery_state = LoadingState::Loaded;
+                    self.refresh_in_flight = false;
+                    if !self.status.cleaned_pid_files.is_empty() {
+                        self.message = format!(
+                            "Cleaned stale PID files: {}",
+                            self.status.cleaned_pid_files.join(", ")
+                        );
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.discovery_state = LoadingState::Error(consts::REFRESH_CHANNEL_CLOSED.into());
+                    self.refresh_in_flight = false;
+                    break;
+                }
+            }
+        }
     }
 
     pub fn tick(&mut self) {
+        self.drain_refresh();
         if self.last_tick.elapsed() >= Duration::from_millis(consts::STATUS_REFRESH_MS) {
-            self.status = process::check_processes();
-            self.discovery = Discovery::live();
             self.logs.refresh_files();
-            if !self.status.cleaned_pid_files.is_empty() {
-                self.message = format!(
-                    "Cleaned stale PID files: {}",
-                    self.status.cleaned_pid_files.join(", ")
-                );
-            }
+            self.request_refresh();
             self.last_tick = Instant::now();
         }
         self.drain_child();
@@ -228,9 +293,8 @@ impl App {
         if key.kind != KeyEventKind::Press {
             return Ok(());
         }
-        if self.form.edit_buffer.is_some() && matches!(self.screen, Screen::DeviceForm | Screen::DeviceTune)
-        {
-            self.handle_form_edit(key.code);
+        if self.form.is_editing() && matches!(self.screen, Screen::DeviceForm) {
+            self.handle_form_edit(key);
             return Ok(());
         }
         if is_global_tab(key.code) && is_main_tab(&self.screen) {
@@ -405,6 +469,7 @@ impl App {
         let len = self.config.profiles.len() as isize;
         self.profile_index = (self.profile_index as isize + delta).rem_euclid(len) as usize;
         self.device_index = 0;
+        self.sync_device_table();
     }
 
     fn move_device(&mut self, delta: isize) {
@@ -415,6 +480,34 @@ impl App {
             return;
         }
         self.device_index = wrap_index(self.device_index, profile.devices.len(), delta);
+        self.sync_device_table();
+    }
+
+    fn sync_device_table(&mut self) {
+        let len = self
+            .current_profile()
+            .map(|profile| profile.devices.len())
+            .unwrap_or(0);
+        if len == 0 {
+            self.device_index = 0;
+            self.device_table.select(None);
+            self.device_scroll = ScrollbarState::default();
+            return;
+        }
+        self.device_index = self.device_index.min(len - 1);
+        self.device_table.select(Some(self.device_index));
+        self.device_scroll = ScrollbarState::new(len).position(self.device_index);
+    }
+
+    fn sync_tyre_table(&mut self) {
+        let len = self.tyres.cars.len();
+        if len == 0 {
+            self.tyre_index = 0;
+            self.tyre_table.select(None);
+            return;
+        }
+        self.tyre_index = self.tyre_index.min(len - 1);
+        self.tyre_table.select(Some(self.tyre_index));
     }
 
     fn reorder_device(&mut self, delta: isize) {
@@ -428,6 +521,7 @@ impl App {
             profile.devices.swap(current, next);
         }
         self.device_index = next;
+        self.sync_device_table();
         self.persist_config();
     }
 
@@ -469,6 +563,7 @@ impl App {
             profile.devices.insert(insert_at, device);
         }
         self.device_index = insert_at;
+        self.sync_device_table();
         self.persist_config();
     }
 
@@ -506,18 +601,11 @@ impl App {
         Ok(())
     }
 
-    fn handle_form_edit(&mut self, code: KeyCode) {
-        let Some(buffer) = self.form.edit_buffer.as_mut() else {
-            return;
-        };
-        match code {
+    fn handle_form_edit(&mut self, key: KeyEvent) {
+        match key.code {
             consts::KEY_ESC => self.form.cancel_edit(),
             consts::KEY_ENTER => self.form.commit_edit(),
-            consts::KEY_BACKSPACE => {
-                buffer.pop();
-            }
-            KeyCode::Char(ch) => buffer.push(ch),
-            _ => {}
+            _ => self.form.handle_edit_event(&Event::Key(key)),
         }
     }
 
@@ -695,6 +783,7 @@ impl App {
                     }
                 }
                 self.device_index = index.saturating_sub(1);
+                self.sync_device_table();
                 self.persist_config();
             }
             ConfirmKind::DeleteProfile => {
@@ -885,19 +974,24 @@ impl App {
         match code {
             consts::KEY_ADD => {
                 self.tyres.cars.push(TyreCar::default());
+                self.tyre_index = self.tyres.cars.len() - 1;
+                self.sync_tyre_table();
                 tyres::save(&paths::diameters_path(), &self.tyres)?;
             }
             consts::KEY_DELETE => {
                 if self.tyre_index < self.tyres.cars.len() {
                     self.tyres.cars.remove(self.tyre_index);
+                    self.sync_tyre_table();
                     tyres::save(&paths::diameters_path(), &self.tyres)?;
                 }
             }
             consts::KEY_UP | consts::KEY_K => {
                 self.tyre_index = wrap_index(self.tyre_index, self.tyres.cars.len().max(1), -1);
+                self.sync_tyre_table();
             }
             consts::KEY_DOWN | consts::KEY_J => {
                 self.tyre_index = wrap_index(self.tyre_index, self.tyres.cars.len().max(1), 1);
+                self.sync_tyre_table();
             }
             consts::KEY_SAVE => tyres::save(&paths::diameters_path(), &self.tyres)?,
             _ => {}
@@ -923,7 +1017,10 @@ impl App {
     fn persist_config(&mut self) {
         self.raw_on_disk = config::read_raw(&self.config_path).unwrap_or_default();
         match config::save_file(&self.config_path, &self.config) {
-            Ok(()) => self.message = format!("Saved {}", self.config_path.display()),
+            Ok(()) => {
+                self.message = format!("Saved {}", self.config_path.display());
+                self.sync_device_table();
+            }
             Err(err) => self.message = err.to_string(),
         }
     }

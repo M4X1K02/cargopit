@@ -5,6 +5,26 @@ use std::process::Command;
 use crate::consts;
 use crate::schema::DeviceClass;
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum LoadingState {
+    #[default]
+    Idle,
+    Loading,
+    Loaded,
+    Error(String),
+}
+
+impl LoadingState {
+    pub fn label(&self) -> String {
+        match self {
+            Self::Idle => consts::LOADING_IDLE.to_string(),
+            Self::Loading => consts::LOADING_LABEL.to_string(),
+            Self::Loaded => consts::LOADING_LOADED.to_string(),
+            Self::Error(err) => format!("{}: {err}", consts::LOADING_ERROR_PREFIX),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HardwareChoice {
     pub value: String,
@@ -330,5 +350,15 @@ Sink #1
         assert_eq!(usb[0].value, "0EB7:183B");
         let serial = discovery.choices_for(DeviceClass::Serial, false);
         assert_eq!(serial[0].value, "/dev/ttyUSB0");
+    }
+
+    #[test]
+    fn loading_state_labels_are_named_constants() {
+        assert_eq!(LoadingState::Idle.label(), consts::LOADING_IDLE);
+        assert_eq!(LoadingState::Loading.label(), consts::LOADING_LABEL);
+        assert_eq!(LoadingState::Loaded.label(), consts::LOADING_LOADED);
+        assert!(LoadingState::Error("boom".into())
+            .label()
+            .starts_with(consts::LOADING_ERROR_PREFIX));
     }
 }

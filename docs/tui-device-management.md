@@ -136,13 +136,13 @@ From [awesome-ratatui](https://github.com/ratatui/awesome-ratatui): `tui-input` 
 
 ### What to do next (UI only)
 
-Order that leaves the TUI usable after each step:
+Order that leaves the TUI usable after each step (implemented in `tui/`):
 
-1. Panic hook + `color_eyre` in `main.rs` (Panic / Hello World).
-2. Devices (and tyres) as `Table` + `Scrollbar`; keep `device_index` as the selected row (Table Demo + Todo List detail pane).
-3. Form `InputMode` + `tui-input` for free-text fields (User Input).
-4. Background discovery with `LoadingState` on the presence column (Async GitHub, without tokio unless we already want it).
-5. Offline tune gauges for volume / amplitude / fanpower (Gauge). Charts stay out.
+1. Panic hook via `ratatui::init` / `restore` in `main.rs` (Panic / Hello World) — **done**. `color_eyre` is omitted because it pulls crates that need a newer rustc than distro `apt` cargo.
+2. Devices (and tyres) as `Table` + `Scrollbar`; keep `device_index` as the selected row (Table Demo + Todo List detail pane) — **done**.
+3. Form `InputMode` + `tui-input` for free-text fields (User Input) — **done**.
+4. Background discovery with `LoadingState` on the presence column (Async GitHub, without tokio unless we already want it) — **done**.
+5. Offline tune gauges for volume / amplitude / fanpower (Gauge). Charts stay out — **done**.
 
 ## Target information architecture
 

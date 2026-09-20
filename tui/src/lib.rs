@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod consts;
+pub mod device_table;
 pub mod diagnostics;
 pub mod form;
 pub mod hardware;

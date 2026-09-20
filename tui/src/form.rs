@@ -1,15 +1,25 @@
+use tui_input::backend::crossterm::EventHandler;
+use tui_input::Input;
+
 use crate::config::DeviceEntry;
 use crate::consts;
 use crate::hardware::{Discovery, HardwareChoice};
 use crate::libconfig::Value;
 use crate::schema::{self, DeviceClass, FieldId};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Normal,
+    Editing,
+}
+
 #[derive(Debug, Clone)]
 pub struct DeviceForm {
     pub device: DeviceEntry,
     pub field_index: usize,
     pub is_new: bool,
-    pub edit_buffer: Option<String>,
+    pub input: Input,
+    pub input_mode: InputMode,
     pub error: Option<String>,
 }
 
@@ -19,7 +29,8 @@ impl DeviceForm {
             device,
             field_index: 0,
             is_new,
-            edit_buffer: None,
+            input: Input::default(),
+            input_mode: InputMode::Normal,
             error: None,
         }
     }
@@ -28,6 +39,10 @@ impl DeviceForm {
         let mut device = DeviceEntry::new();
         schema::apply_defaults(&mut device, DeviceClass::Sound, consts::TYPE_HAPTIC);
         Self::new(device, true)
+    }
+
+    pub fn is_editing(&self) -> bool {
+        self.input_mode == InputMode::Editing
     }
 
     pub fn fields(&self) -> Vec<FieldId> {
@@ -42,16 +57,22 @@ impl DeviceForm {
     }
 
     pub fn move_field(&mut self, delta: isize) {
+        if self.is_editing() {
+            return;
+        }
         let len = self.fields().len() as isize;
         if len == 0 {
             return;
         }
         let next = (self.field_index as isize + delta).rem_euclid(len);
         self.field_index = next as usize;
-        self.edit_buffer = None;
+        self.cancel_edit();
     }
 
     pub fn cycle_current(&mut self, discovery: &Discovery, delta: i32) {
+        if self.is_editing() {
+            return;
+        }
         let Some(field) = self.current_field() else {
             return;
         };
@@ -193,6 +214,7 @@ impl DeviceForm {
         }
         self.device = next;
         self.field_index = 0;
+        self.cancel_edit();
     }
 
     pub fn change_type(&mut self, type_name: &str) {
@@ -203,6 +225,7 @@ impl DeviceForm {
         restore_compatible(&extra, &mut next, class, type_name);
         self.device = next;
         self.field_index = 0;
+        self.cancel_edit();
     }
 
     pub fn begin_edit(&mut self) {
@@ -212,21 +235,33 @@ impl DeviceForm {
         if schema::is_combo(field) && field != FieldId::Granularity {
             return;
         }
-        self.edit_buffer = Some(schema::display_value(&self.device, field));
+        self.input = Input::default().with_value(schema::display_value(&self.device, field));
+        self.input_mode = InputMode::Editing;
+    }
+
+    pub fn handle_edit_event(&mut self, event: &crossterm::event::Event) {
+        if !self.is_editing() {
+            return;
+        }
+        self.input.handle_event(event);
     }
 
     pub fn commit_edit(&mut self) {
-        let Some(buffer) = self.edit_buffer.take() else {
+        if !self.is_editing() {
             return;
-        };
+        }
+        let buffer = self.input.value().to_string();
         let Some(field) = self.current_field() else {
+            self.cancel_edit();
             return;
         };
         apply_typed(&mut self.device, field, &buffer);
+        self.cancel_edit();
     }
 
     pub fn cancel_edit(&mut self) {
-        self.edit_buffer = None;
+        self.input_mode = InputMode::Normal;
+        self.input = Input::default();
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -297,4 +332,43 @@ fn cycle_choices<'a>(items: &'a [HardwareChoice], current: &str, delta: i32) -> 
     let len = items.len() as i32;
     let next = (index as i32 + delta).rem_euclid(len) as usize;
     &items[next].value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    #[test]
+    fn begin_edit_then_commit_writes_identity() {
+        let mut form = DeviceForm::blank();
+        let devid = form
+            .fields()
+            .iter()
+            .position(|field| *field == FieldId::Devid)
+            .expect("sound devid field");
+        form.field_index = devid;
+        form.begin_edit();
+        assert!(form.is_editing());
+        form.input = Input::default().with_value("alsa_output.test".to_string());
+        form.commit_edit();
+        assert!(!form.is_editing());
+        assert_eq!(form.device.get_str(consts::KEY_DEVID), Some("alsa_output.test"));
+    }
+
+    #[test]
+    fn edit_event_inserts_characters() {
+        let mut form = DeviceForm::blank();
+        let devid = form
+            .fields()
+            .iter()
+            .position(|field| *field == FieldId::Devid)
+            .unwrap();
+        form.field_index = devid;
+        form.begin_edit();
+        form.input = Input::default();
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        form.handle_edit_event(&event);
+        assert_eq!(form.input.value(), "a");
+    }
 }

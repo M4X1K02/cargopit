@@ -22,8 +22,48 @@ pub struct Diagnostics {
     pub missing: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct SlowDiagnostics {
+    pub groups: String,
+    pub in_input: bool,
+    pub in_dialout: bool,
+    pub in_uucp: bool,
+    pub udev_present: bool,
+    pub cargopit_bin: Option<String>,
+    pub simd_bin: Option<String>,
+    pub simapi_exists: bool,
+    pub simapi_nonzero: bool,
+}
+
+impl SlowDiagnostics {
+    pub fn live() -> Self {
+        let groups = user_groups();
+        Self {
+            in_input: groups.split_whitespace().any(|g| g == consts::UDEV_GROUP_INPUT),
+            in_dialout: groups
+                .split_whitespace()
+                .any(|g| g == consts::UDEV_GROUP_DIALOUT),
+            in_uucp: groups.split_whitespace().any(|g| g == consts::UDEV_GROUP_UUCP),
+            groups,
+            udev_present: Path::new(consts::UDEV_RULES_PATH).exists(),
+            cargopit_bin: process::find_binary(consts::BINARY_CARGOPIT)
+                .map(|p| p.display().to_string()),
+            simd_bin: process::find_binary(consts::BINARY_SIMD).map(|p| p.display().to_string()),
+            simapi_exists: process::simapi_present(),
+            simapi_nonzero: process::simapi_nonzero(),
+        }
+    }
+}
+
 pub fn collect(discovery: &Discovery, devices: &[(DeviceClass, String, String)]) -> Diagnostics {
-    let groups = user_groups();
+    assemble(&SlowDiagnostics::live(), discovery, devices)
+}
+
+pub fn assemble(
+    slow: &SlowDiagnostics,
+    discovery: &Discovery,
+    devices: &[(DeviceClass, String, String)],
+) -> Diagnostics {
     let connected = devices
         .iter()
         .filter(|(class, devid, devpath)| {
@@ -37,18 +77,15 @@ pub fn collect(discovery: &Discovery, devices: &[(DeviceClass, String, String)])
         })
         .count();
     Diagnostics {
-        in_input: groups.split_whitespace().any(|g| g == consts::UDEV_GROUP_INPUT),
-        in_dialout: groups
-            .split_whitespace()
-            .any(|g| g == consts::UDEV_GROUP_DIALOUT),
-        in_uucp: groups.split_whitespace().any(|g| g == consts::UDEV_GROUP_UUCP),
-        groups,
-        udev_present: Path::new(consts::UDEV_RULES_PATH).exists(),
-        cargopit_bin: process::find_binary(consts::BINARY_CARGOPIT)
-            .map(|p| p.display().to_string()),
-        simd_bin: process::find_binary(consts::BINARY_SIMD).map(|p| p.display().to_string()),
-        simapi_exists: process::simapi_present(),
-        simapi_nonzero: process::simapi_nonzero(),
+        groups: slow.groups.clone(),
+        in_input: slow.in_input,
+        in_dialout: slow.in_dialout,
+        in_uucp: slow.in_uucp,
+        udev_present: slow.udev_present,
+        cargopit_bin: slow.cargopit_bin.clone(),
+        simd_bin: slow.simd_bin.clone(),
+        simapi_exists: slow.simapi_exists,
+        simapi_nonzero: slow.simapi_nonzero,
         connected,
         missing,
     }
@@ -97,4 +134,29 @@ pub fn copy_lua_template(name: &str) -> anyhow::Result<std::path::PathBuf> {
     let dest = dest_dir.join(name);
     std::fs::copy(&src, &dest)?;
     Ok(dest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hardware::HardwareChoice;
+
+    #[test]
+    fn assemble_counts_presence_from_discovery() {
+        let slow = SlowDiagnostics::default();
+        let discovery = Discovery {
+            pulse_sinks: vec![HardwareChoice {
+                value: "sink0".into(),
+                label: "Sink".into(),
+            }],
+            ..Discovery::default()
+        };
+        let devices = vec![
+            (DeviceClass::Sound, "sink0".into(), String::new()),
+            (DeviceClass::Sound, "missing-sink".into(), String::new()),
+        ];
+        let diag = assemble(&slow, &discovery, &devices);
+        assert_eq!(diag.connected, 1);
+        assert_eq!(diag.missing, 1);
+    }
 }
