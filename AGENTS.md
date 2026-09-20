@@ -29,7 +29,7 @@ Follow these on every change:
 | `tui/` | Ratatui manager: `cargopit-tui` |
 | `tools/` | Installer helpers, distro packaging |
 | `udev/` | `69-cargopit.rules` |
-| `.github/workflows/` | PR build (`pr-build.yaml`), installer CI (`installer.yml`), release packages (`ci.yaml`) |
+| `.github/workflows/` | PR build (`pr-build.yaml`), installer CI (`installer.yml`), manual release packages (`ci.yaml`) |
 
 ## Submodules
 
@@ -63,6 +63,10 @@ End-user source install (compiles simapi, simd, and this tree; does not configur
 ```bash
 ./install.sh --from-source
 ```
+
+## Release
+
+Packages are not published on merge. Push a version tag (for example `0.3.8`) or run **Make Packages** from the Actions tab. Only a tag uploads assets to a GitHub Release.
 
 ## Tests
 
