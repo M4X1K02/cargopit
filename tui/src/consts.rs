@@ -399,15 +399,14 @@ pub const PROFILE_FIELD_COUNT: usize = 2;
 pub const TOO_SMALL_TITLE: &str = "Terminal too small";
 pub const TEST_PANEL_IDLE: &str = "Idle - press t to test";
 pub const TEST_PANEL_RUNNING: &str = "Testing this device";
-const _: () = assert!(
-    TEST_PANEL_IDLE.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize
-);
-const _: () = assert!(
-    TEST_PANEL_RUNNING.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize
-);
+const _: () =
+    assert!(TEST_PANEL_IDLE.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize);
+const _: () =
+    assert!(TEST_PANEL_RUNNING.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize);
 pub const TUNING_OFFLINE_HINT: &str =
     "Offline tune: save writes disk. Apply restarts play if it was running. Live IPC is not implemented.";
-pub const RAW_VIEW_HINT: &str = "Read-only view of the last on-disk file (comments are lost on save).";
+pub const RAW_VIEW_HINT: &str =
+    "Read-only view of the last on-disk file (comments are lost on save).";
 pub const DIAGRAM_NO_PROFILE: &str = "No profile selected";
 pub const DIAGRAM_NO_DEVICE: &str = "No device selected";
 pub const DIAGRAM_EMPTY_DEVICES: &str = "No devices. Press a to add, T for a template.";
@@ -523,30 +522,205 @@ pub const FIELD_LABEL_WIDTH: usize = 16;
 pub const TAB_PAD: &str = " ";
 pub const TAB_ACTIVE_LEFT: &str = "[";
 pub const TAB_ACTIVE_RIGHT: &str = "]";
-pub const HELP_DASHBOARD: &str = "Tab/1-5 pages  j/k select  Enter run  q quit";
-pub const HELP_TELEMETRY: &str = "Tab/1-5 pages  live SIMAPI sample  q quit";
-pub const HELP_DEVICES: &str =
-    "j/k list  a add  e edit  y dup  d del  space enable  J/K move  T template  Enter tune  [ ] profile";
-pub const HELP_SETTINGS: &str = "j/k  Enter open  Esc back  q quit";
-pub const HELP_LOGS: &str = "j/k scroll  space filter  q quit";
-pub const HELP_FORM: &str =
-    "j/k field  h/l cycle  Enter type  Bksp unset  s save  t test this device  Esc cancel";
-pub const HELP_TUNE: &str =
-    "h/l nudge  Bksp unset  s save  t test this device  A apply/restart  Esc back";
-pub const HELP_CONFIRM: &str = "y confirm  n/Esc cancel";
-pub const HELP_BACK: &str = "Esc back  q quit";
-pub const HELP_FLAGS: &str = "j/k field  h/l cycle  Bksp unset  s save  Esc cancel";
-pub const HELP_SIMD: &str = "h/l/wheel columns  j/k rows  a add  d delete  s save  Esc back";
-pub const HELP_LUA: &str = "j/k template  Enter copy into ~/.config/cargopit  Esc back";
-pub const HELP_TACH: &str = "j/k field  h/l nudge  Enter generate XML  Esc back";
-pub const HELP_TYRES: &str = "j/k car  a add  d delete  s save  Esc back";
-pub const HELP_RAW: &str = "Read-only view of the last on-disk file. Esc back  q quit";
+pub const HELP_ITEM_SEP: &str = "  ";
+pub const HELP_KEY_DESC_SEP: &str = " ";
+
+pub const HELP_BLANK: &str = "";
+
+#[derive(Clone, Copy)]
+pub struct HelpBinding {
+    pub keys: &'static str,
+    pub desc: &'static str,
+}
+
+pub const fn help_key(keys: &'static str, desc: &'static str) -> HelpBinding {
+    HelpBinding { keys, desc }
+}
+
+pub const fn help_keys(keys: &'static str) -> HelpBinding {
+    HelpBinding {
+        keys,
+        desc: HELP_BLANK,
+    }
+}
+
+pub const fn help_note(desc: &'static str) -> HelpBinding {
+    HelpBinding {
+        keys: HELP_BLANK,
+        desc,
+    }
+}
+
+pub const HOTKEY_TAB_PAGES: &str = "Tab/1-5";
+pub const HOTKEY_MOVE: &str = "j/k";
+pub const HOTKEY_ENTER: &str = "Enter";
+pub const HOTKEY_QUIT: &str = "q";
+pub const HOTKEY_ADD: &str = "a";
+pub const HOTKEY_EDIT: &str = "e";
+pub const HOTKEY_DUP: &str = "y";
+pub const HOTKEY_DELETE: &str = "d";
+pub const HOTKEY_SPACE: &str = "space";
+pub const HOTKEY_REORDER: &str = "J/K";
+pub const HOTKEY_TEMPLATE: &str = "T";
+pub const HOTKEY_PROFILE: &str = "[ ]";
+pub const HOTKEY_CYCLE: &str = "h/l";
+pub const HOTKEY_UNSET: &str = "Bksp";
+pub const HOTKEY_SAVE: &str = "s";
+pub const HOTKEY_TEST: &str = "t";
+pub const HOTKEY_ESC: &str = "Esc";
+pub const HOTKEY_APPLY: &str = "A";
+pub const HOTKEY_CONFIRM: &str = "y";
+pub const HOTKEY_CANCEL: &str = "n/Esc";
+pub const HOTKEY_COLUMNS: &str = "h/l/wheel";
+pub const HOTKEY_SAVE_ENTER: &str = "Enter/s";
+
+pub const HELP_DESC_PAGES: &str = "pages";
+pub const HELP_DESC_SELECT: &str = "select";
+pub const HELP_DESC_RUN: &str = "run";
+pub const HELP_DESC_QUIT: &str = "quit";
+pub const HELP_DESC_LIST: &str = "list";
+pub const HELP_DESC_ADD: &str = "add";
+pub const HELP_DESC_EDIT: &str = "edit";
+pub const HELP_DESC_DUP: &str = "dup";
+pub const HELP_DESC_DEL: &str = "del";
+pub const HELP_DESC_ENABLE: &str = "enable";
+pub const HELP_DESC_MOVE: &str = "move";
+pub const HELP_DESC_TEMPLATE: &str = "template";
+pub const HELP_DESC_TUNE: &str = "tune";
+pub const HELP_DESC_PROFILE: &str = "profile";
+pub const HELP_DESC_OPEN: &str = "open";
+pub const HELP_DESC_BACK: &str = "back";
+pub const HELP_DESC_SCROLL: &str = "scroll";
+pub const HELP_DESC_FILTER: &str = "filter";
+pub const HELP_DESC_FIELD: &str = "field";
+pub const HELP_DESC_CYCLE: &str = "cycle";
+pub const HELP_DESC_TYPE: &str = "type";
+pub const HELP_DESC_UNSET: &str = "unset";
+pub const HELP_DESC_SAVE: &str = "save";
+pub const HELP_DESC_TEST_DEVICE: &str = "test this device";
+pub const HELP_DESC_CANCEL: &str = "cancel";
+pub const HELP_DESC_NUDGE: &str = "nudge";
+pub const HELP_DESC_APPLY: &str = "apply/restart";
+pub const HELP_DESC_CONFIRM: &str = "confirm";
+pub const HELP_DESC_COLUMNS: &str = "columns";
+pub const HELP_DESC_ROWS: &str = "rows";
+pub const HELP_DESC_DELETE: &str = "delete";
+pub const HELP_DESC_LUA_COPY: &str = "copy into ~/.config/cargopit";
+pub const HELP_DESC_TACH_XML: &str = "generate XML";
+pub const HELP_DESC_CAR: &str = "car";
+pub const HELP_DESC_TELEMETRY: &str = "live SIMAPI sample";
+pub const HELP_DESC_RAW: &str = "Read-only view of the last on-disk file.";
+pub const HELP_DESC_ADD_PROFILE: &str = "add empty profile";
+pub const HELP_DESC_DUP_PROFILE: &str = "duplicate current";
+
+pub const HELP_DASHBOARD: &[HelpBinding] = &[
+    help_key(HOTKEY_TAB_PAGES, HELP_DESC_PAGES),
+    help_key(HOTKEY_MOVE, HELP_DESC_SELECT),
+    help_key(HOTKEY_ENTER, HELP_DESC_RUN),
+    help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
+];
+pub const HELP_TELEMETRY: &[HelpBinding] = &[
+    help_key(HOTKEY_TAB_PAGES, HELP_DESC_PAGES),
+    help_note(HELP_DESC_TELEMETRY),
+    help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
+];
+pub const HELP_DEVICES: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_LIST),
+    help_key(HOTKEY_ADD, HELP_DESC_ADD),
+    help_key(HOTKEY_EDIT, HELP_DESC_EDIT),
+    help_key(HOTKEY_DUP, HELP_DESC_DUP),
+    help_key(HOTKEY_DELETE, HELP_DESC_DEL),
+    help_key(HOTKEY_SPACE, HELP_DESC_ENABLE),
+    help_key(HOTKEY_REORDER, HELP_DESC_MOVE),
+    help_key(HOTKEY_TEMPLATE, HELP_DESC_TEMPLATE),
+    help_key(HOTKEY_ENTER, HELP_DESC_TUNE),
+    help_key(HOTKEY_PROFILE, HELP_DESC_PROFILE),
+];
+pub const HELP_SETTINGS: &[HelpBinding] = &[
+    help_keys(HOTKEY_MOVE),
+    help_key(HOTKEY_ENTER, HELP_DESC_OPEN),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+    help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
+];
+pub const HELP_LOGS: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_SCROLL),
+    help_key(HOTKEY_SPACE, HELP_DESC_FILTER),
+    help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
+];
+pub const HELP_FORM: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_FIELD),
+    help_key(HOTKEY_CYCLE, HELP_DESC_CYCLE),
+    help_key(HOTKEY_ENTER, HELP_DESC_TYPE),
+    help_key(HOTKEY_UNSET, HELP_DESC_UNSET),
+    help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
+    help_key(HOTKEY_ESC, HELP_DESC_CANCEL),
+];
+pub const HELP_TUNE: &[HelpBinding] = &[
+    help_key(HOTKEY_CYCLE, HELP_DESC_NUDGE),
+    help_key(HOTKEY_UNSET, HELP_DESC_UNSET),
+    help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
+    help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
+    help_key(HOTKEY_APPLY, HELP_DESC_APPLY),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+];
+pub const HELP_CONFIRM: &[HelpBinding] = &[
+    help_key(HOTKEY_CONFIRM, HELP_DESC_CONFIRM),
+    help_key(HOTKEY_CANCEL, HELP_DESC_CANCEL),
+];
+pub const HELP_BACK: &[HelpBinding] = &[
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+    help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
+];
+pub const HELP_FLAGS: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_FIELD),
+    help_key(HOTKEY_CYCLE, HELP_DESC_CYCLE),
+    help_key(HOTKEY_UNSET, HELP_DESC_UNSET),
+    help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
+    help_key(HOTKEY_ESC, HELP_DESC_CANCEL),
+];
+pub const HELP_SIMD: &[HelpBinding] = &[
+    help_key(HOTKEY_COLUMNS, HELP_DESC_COLUMNS),
+    help_key(HOTKEY_MOVE, HELP_DESC_ROWS),
+    help_key(HOTKEY_ADD, HELP_DESC_ADD),
+    help_key(HOTKEY_DELETE, HELP_DESC_DELETE),
+    help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+];
+pub const HELP_LUA: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_TEMPLATE),
+    help_key(HOTKEY_ENTER, HELP_DESC_LUA_COPY),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+];
+pub const HELP_TACH: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_FIELD),
+    help_key(HOTKEY_CYCLE, HELP_DESC_NUDGE),
+    help_key(HOTKEY_ENTER, HELP_DESC_TACH_XML),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+];
+pub const HELP_TYRES: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_CAR),
+    help_key(HOTKEY_ADD, HELP_DESC_ADD),
+    help_key(HOTKEY_DELETE, HELP_DESC_DELETE),
+    help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+];
+pub const HELP_RAW: &[HelpBinding] = &[
+    help_note(HELP_DESC_RAW),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+    help_key(HOTKEY_QUIT, HELP_DESC_QUIT),
+];
+pub const PROFILE_HELP: &[HelpBinding] = &[
+    help_key(HOTKEY_ADD, HELP_DESC_ADD_PROFILE),
+    help_key(HOTKEY_DUP, HELP_DESC_DUP_PROFILE),
+    help_key(HOTKEY_SAVE_ENTER, HELP_DESC_SAVE),
+    help_key(HOTKEY_ESC, HELP_DESC_CANCEL),
+];
 pub const CONFIRM_DELETE_DEVICE: &str = "Delete this device? y/n";
 pub const CONFIRM_DELETE_PROFILE: &str = "Delete this profile? y/n";
 pub const CONFIRM_RESTART: &str = "Restart play to apply? y/n";
 pub const CONFIRM_TEMPLATE: &str = "Insert this template into the current profile? y/n";
 pub const CONFIRM_DISCARD_UNSAVED: &str = "Unsaved changes. Discard without saving? y/n";
-pub const PROFILE_HINT: &str = "a add empty profile   y duplicate current   Enter/s save   Esc cancel";
 pub const SIMD_EMPTY: &str = "No simd.config — press a to create from the simapi example.";
 pub const SIMD_UNNAMED: &str = "(unnamed)";
 pub const FLAG_LOG_DEFAULT: &str = "(default)";
@@ -646,12 +820,27 @@ pub const SIMD_PAGE_ROWS: usize = 8;
 
 pub const SIMD_FIELD_HELP: &[(&str, &str)] = &[
     (SIMD_FIELD_NAME, "Simulator title as simd matches it"),
-    (SIMD_FIELD_GAMEID, "Steam app id for shm compatibility matching"),
-    (SIMD_FIELD_LAUNCHEXE, "Windows exe name when the title launches"),
-    (SIMD_FIELD_LIVEEXE, "Windows exe name while the session is live"),
-    (SIMD_FIELD_BRIDGEDELAY, "Seconds to wait for the shm bridge (default 5)"),
+    (
+        SIMD_FIELD_GAMEID,
+        "Steam app id for shm compatibility matching",
+    ),
+    (
+        SIMD_FIELD_LAUNCHEXE,
+        "Windows exe name when the title launches",
+    ),
+    (
+        SIMD_FIELD_LIVEEXE,
+        "Windows exe name while the session is live",
+    ),
+    (
+        SIMD_FIELD_BRIDGEDELAY,
+        "Seconds to wait for the shm bridge (default 5)",
+    ),
     (SIMD_FIELD_SIMAPI, "SimulatorAPI enum value from simapi.h"),
-    (SIMD_FIELD_USEUDP, "Force UDP telemetry for this title when supported"),
+    (
+        SIMD_FIELD_USEUDP,
+        "Force UDP telemetry for this title when supported",
+    ),
 ];
 
 pub const SIMULATOR_API_TEST: u8 = 0;

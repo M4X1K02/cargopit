@@ -1,24 +1,22 @@
-//! Palette and shared widget styles. Color literals stay in this module.
+//! Pit-brass palette: zinc neutrals and a single brass accent.
+//! Color literals stay in this module.
 
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, BorderType, Borders};
 
-use crate::consts;
+use crate::consts::{self, HelpBinding};
 
-pub const COLOR_ACCENT: Color = Color::Cyan;
-pub const COLOR_OK: Color = Color::Green;
-pub const COLOR_ERR: Color = Color::Red;
-pub const COLOR_WARN: Color = Color::Yellow;
-pub const COLOR_MUTED: Color = Color::Gray;
-pub const COLOR_TEXT: Color = Color::White;
-pub const COLOR_USB: Color = Color::Cyan;
-pub const COLOR_SOUND: Color = Color::Magenta;
-pub const COLOR_SERIAL: Color = Color::Yellow;
-pub const COLOR_SELECTED_FG: Color = Color::Black;
-pub const COLOR_SELECTED_BG: Color = Color::Cyan;
-pub const COLOR_STATUS_BG: Color = Color::Blue;
-pub const COLOR_HELP_BG: Color = Color::DarkGray;
-pub const COLOR_GAUGE_BG: Color = Color::DarkGray;
+pub const COLOR_ACCENT: Color = Color::Rgb(201, 152, 74);
+pub const COLOR_TEXT: Color = Color::Rgb(214, 208, 196);
+pub const COLOR_MUTED: Color = Color::Rgb(132, 126, 116);
+pub const COLOR_OK: Color = COLOR_ACCENT;
+pub const COLOR_ERR: Color = COLOR_TEXT;
+pub const COLOR_WARN: Color = COLOR_MUTED;
+pub const COLOR_SELECTED_FG: Color = Color::Rgb(28, 26, 24);
+pub const COLOR_SELECTED_BG: Color = COLOR_ACCENT;
+pub const COLOR_BAR_BG: Color = Color::Rgb(38, 36, 34);
+pub const COLOR_GAUGE_BG: Color = Color::Rgb(52, 50, 48);
 
 pub fn style_title() -> Style {
     Style::default()
@@ -45,17 +43,25 @@ pub fn style_selected() -> Style {
 }
 
 pub fn style_status_bar() -> Style {
-    Style::default()
-        .fg(COLOR_TEXT)
-        .bg(COLOR_STATUS_BG)
+    Style::default().fg(COLOR_TEXT).bg(COLOR_BAR_BG)
 }
 
 pub fn style_help_bar() -> Style {
-    Style::default().fg(COLOR_TEXT).bg(COLOR_HELP_BG)
+    Style::default().fg(COLOR_MUTED).bg(COLOR_BAR_BG)
+}
+
+pub fn style_hotkey() -> Style {
+    Style::default()
+        .fg(COLOR_ACCENT)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub fn style_help_desc() -> Style {
+    Style::default().fg(COLOR_MUTED)
 }
 
 pub fn style_error() -> Style {
-    Style::default().fg(COLOR_ERR)
+    Style::default().fg(COLOR_ERR).add_modifier(Modifier::BOLD)
 }
 
 pub fn style_ok() -> Style {
@@ -80,6 +86,30 @@ pub fn style_gauge() -> Style {
 
 pub fn style_dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
+}
+
+pub fn help_spans(items: &[HelpBinding]) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        push_help_item(&mut spans, index > 0, item);
+    }
+    spans
+}
+
+fn push_help_item(spans: &mut Vec<Span<'static>>, separate: bool, item: &HelpBinding) {
+    if separate {
+        spans.push(Span::styled(consts::HELP_ITEM_SEP, style_help_desc()));
+    }
+    if item.keys.is_empty() {
+        spans.push(Span::styled(item.desc, style_help_desc()));
+        return;
+    }
+    spans.push(Span::styled(item.keys, style_hotkey()));
+    if item.desc.is_empty() {
+        return;
+    }
+    spans.push(Span::styled(consts::HELP_KEY_DESC_SEP, style_help_desc()));
+    spans.push(Span::styled(item.desc, style_help_desc()));
 }
 
 pub fn panel(title: impl Into<String>) -> Block<'static> {
@@ -125,7 +155,10 @@ mod tests {
 
     #[test]
     fn bar_empty_and_full() {
-        assert_eq!(bar(0.0, consts::GAUGE_WIDTH).chars().count(), consts::GAUGE_WIDTH);
+        assert_eq!(
+            bar(0.0, consts::GAUGE_WIDTH).chars().count(),
+            consts::GAUGE_WIDTH
+        );
         assert!(bar(0.0, consts::GAUGE_WIDTH)
             .chars()
             .all(|ch| ch == consts::GAUGE_EMPTY));
@@ -139,5 +172,21 @@ mod tests {
         assert_eq!(percent(-1.0), 0);
         assert_eq!(percent(2.0), consts::GAUGE_PERCENT_MAX);
         assert_eq!(percent(0.5), consts::GAUGE_PERCENT_MAX / 2);
+    }
+
+    #[test]
+    fn help_spans_color_keys_apart_from_descriptions() {
+        let spans = help_spans(consts::HELP_DASHBOARD);
+        let key = spans
+            .iter()
+            .find(|span| span.content.as_ref() == consts::HOTKEY_QUIT)
+            .expect("quit key");
+        let desc = spans
+            .iter()
+            .find(|span| span.content.as_ref() == consts::HELP_DESC_QUIT)
+            .expect("quit description");
+        assert_eq!(key.style.fg, Some(COLOR_ACCENT));
+        assert_eq!(desc.style.fg, Some(COLOR_MUTED));
+        assert_ne!(key.style.fg, desc.style.fg);
     }
 }

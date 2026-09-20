@@ -15,7 +15,7 @@ pub fn led_span(name: &str, on: bool, on_label: &'static str, off_label: &'stati
     let (glyph, color, label) = if on {
         (consts::LED_ON, theme::COLOR_OK, on_label)
     } else {
-        (consts::LED_OFF, theme::COLOR_ERR, off_label)
+        (consts::LED_OFF, theme::COLOR_MUTED, off_label)
     };
     Span::styled(
         format!(" {glyph} {name} {label} "),
@@ -27,7 +27,7 @@ pub fn led_span_compact(name: &str, on: bool) -> Span<'static> {
     let (glyph, color) = if on {
         (consts::LED_ON, theme::COLOR_OK)
     } else {
-        (consts::LED_OFF, theme::COLOR_ERR)
+        (consts::LED_OFF, theme::COLOR_MUTED)
     };
     Span::styled(
         format!(" {glyph} {name} "),
@@ -37,7 +37,7 @@ pub fn led_span_compact(name: &str, on: bool) -> Span<'static> {
 
 pub fn simapi_span_compact(exists: bool, live: bool) -> Span<'static> {
     let (glyph, color) = if !exists {
-        (consts::LED_OFF, theme::COLOR_ERR)
+        (consts::LED_OFF, theme::COLOR_MUTED)
     } else if live {
         (consts::LED_ON, theme::COLOR_OK)
     } else {
@@ -51,7 +51,7 @@ pub fn simapi_span_compact(exists: bool, live: bool) -> Span<'static> {
 
 pub fn simapi_span(exists: bool, live: bool) -> Span<'static> {
     let (glyph, color, label) = if !exists {
-        (consts::LED_OFF, theme::COLOR_ERR, consts::SIMAPI_MISSING)
+        (consts::LED_OFF, theme::COLOR_MUTED, consts::SIMAPI_MISSING)
     } else if live {
         (consts::LED_ON, theme::COLOR_OK, consts::SIMAPI_LIVE)
     } else {
@@ -66,18 +66,17 @@ pub fn simapi_span(exists: bool, live: bool) -> Span<'static> {
 pub fn presence_style(presence: &str) -> Style {
     match presence {
         consts::PRESENCE_CONNECTED => theme::style_ok(),
-        consts::PRESENCE_MISSING => theme::style_error(),
+        consts::PRESENCE_MISSING => theme::style_muted(),
         _ => theme::style_warn(),
     }
 }
 
 pub fn class_style(class: DeviceClass) -> Style {
-    let color = match class {
-        DeviceClass::Usb => theme::COLOR_USB,
-        DeviceClass::Sound => theme::COLOR_SOUND,
-        DeviceClass::Serial => theme::COLOR_SERIAL,
-    };
-    Style::default().fg(color).add_modifier(Modifier::BOLD)
+    match class {
+        DeviceClass::Usb | DeviceClass::Sound | DeviceClass::Serial => Style::default()
+            .fg(theme::COLOR_ACCENT)
+            .add_modifier(Modifier::BOLD),
+    }
 }
 
 pub fn pipeline_lines(
