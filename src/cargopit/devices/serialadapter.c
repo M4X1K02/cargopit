@@ -14,7 +14,7 @@
 
 static cargopit_serial_device cargopit_serial_devices[SERIAL_DEVICE_CAPACITY];
 
-int msastrcicmp(char const *a, char const *b)
+static int msastrcicmp(char const *a, char const *b)
 {
     for (;; a++, b++) {
         int d = tolower((unsigned char)*a) - tolower((unsigned char)*b);
@@ -23,7 +23,7 @@ int msastrcicmp(char const *a, char const *b)
     }
 }
 
-int check(enum sp_return result)
+static int check(enum sp_return result)
 {
     char* error_message;
 
