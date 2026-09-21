@@ -138,7 +138,7 @@ cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
-Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`, `BUILD_TUI` (default ON; needs cargo). Static analysis: `-Danalyze=on`.
+Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`, `BUILD_TUI` (default ON; needs cargo), and `ENABLE_STATIC_ANALYSIS`.
 
 ### Dependencies
 
@@ -216,9 +216,13 @@ Logs: `~/.cache/cargopit/*.log`.
 ### Static Analysis
 
 ```bash
-cmake -B build -Danalyze=on
-cmake --build build
+./tools/static-analysis.sh
 ```
+
+This configures a C-only analysis build with GCC's `-fanalyzer`, high-signal
+buffer and format warnings, and a first-pass audit for unsafe legacy C APIs.
+Use `--strict` to make those API findings and compiler diagnostics fail the
+command, or `--skip-build` to run only the source audit.
 
 ### Valgrind
 
