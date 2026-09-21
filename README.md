@@ -4,13 +4,7 @@ Cargopit is a hard fork of [monocoque](https://github.com/Spacefreak18/monocoque
 This source was modified in 2026. Original copyright 2022 Paul Jones.
 The program remains GNU GPL v3 or later; see [License](#license).
 
-```
-   _________    ____  __________  ____  __________
-  / ____/   |  / __ \/ ____/ __ \/ __ \/  _/_  __/
- / /   / /| | / /_/ / / __/ / / / /_/ // /  / /
-/ /___/ ___ |/ _, _/ /_/ / /_/ / ____// /  / /
-\____/_/  |_/_/ |_|\____/\____/_/   /___/ /_/
-```
+![Cargopit — USB, serial, and shakers, with the simd to cargopit signal path](docs/tui/banner.png)
 
 Linux device manager for driving and flight simulators. It reads live telemetry through the [simapi](https://github.com/spacefreak18/simapi) shared-memory API and drives USB HID, serial/Arduino, and PulseAudio (PipeWire) devices.
 
@@ -220,10 +214,6 @@ cd build
 valgrind -v --leak-check=full --show-leak-kinds=all --suppressions=../.valgrindrc ./cargopit play
 ```
 
-## Join the Discussion
-
-[Sim Racing Matrix Space](https://matrix.to/#/#simracing:matrix.org)
-
 ## License
 
 The program is GNU GPL v3 or later. Keep `LICENSE.rst` intact; that file is
@@ -242,6 +232,3 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 
 - frequency cap (low-pass filter) for sound haptic effects
 - road and kerb sound haptic effects
-- Windows port
-- more memory testing
-- cleanup tests which are copies of upstream examples

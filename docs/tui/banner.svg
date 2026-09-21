@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360">
+  <defs>
+    <linearGradient id="brass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#e4c48a"/>
+      <stop offset="0.5" stop-color="#c9984a"/>
+      <stop offset="1" stop-color="#8c6840"/>
+    </linearGradient>
+    <linearGradient id="gauge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#c9984a"/>
+      <stop offset="0.78" stop-color="#c9984a"/>
+      <stop offset="0.78" stop-color="#343230"/>
+      <stop offset="1" stop-color="#343230"/>
+    </linearGradient>
+    <clipPath id="panel">
+      <rect x="20" y="20" width="1240" height="320" rx="18"/>
+    </clipPath>
+  </defs>
+  <rect width="1280" height="360" fill="#0e0d0c"/>
+  <rect x="20" y="20" width="1240" height="320" rx="18" fill="#161412"/>
+  <rect x="20" y="20" width="1240" height="320" rx="18" fill="none" stroke="#c9984a" stroke-width="1.25"/>
+  <g clip-path="url(#panel)">
+    <rect x="20" y="20" width="5" height="320" fill="url(#brass)"/>
+    <rect x="20" y="300" width="1240" height="40" fill="#262422"/>
+    <rect x="20" y="300" width="968" height="3" fill="url(#gauge)"/>
+    <line x1="900" y1="56" x2="900" y2="286" stroke="#343230" stroke-width="1"/>
+    <g transform="translate(948,112) scale(3.15)">
+      <path d="M 25 28 C 35 28, 40 22, 55 22 L 72 24 C 76 24, 80 28, 85 28 L 85 34 L 25 34 Z" fill="#c9984a"/>
+      <path d="M 25 28 L 12 30 C 10 30.5, 10 32.5, 12 33 L 25 34 Z" fill="#8c6840"/>
+      <rect x="5" y="31" width="10" height="4" rx="1" fill="#1c1a18"/>
+      <path d="M 82 28 L 84 15 L 92 15 L 90 28 Z" fill="#1c1a18"/>
+      <rect x="80" y="13" width="14" height="4" rx="0.5" fill="#2a2826"/>
+      <path d="M 58 22 C 58 16, 64 16, 66 16 L 70 24 Z" fill="#e4c48a"/>
+      <ellipse cx="61" cy="19" rx="2" ry="1.5" fill="#1c1a18"/>
+      <path d="M 48 23 C 48 20, 54 20, 54 23 Z" fill="#1c1a18"/>
+      <circle cx="52" cy="19" r="2.5" fill="#d6d0c4"/>
+      <path d="M 51.5 17.5 L 54.5 18.5 L 53.5 20.5 L 51.5 19.5 Z" fill="#1c1a18"/>
+      <path d="M 38 27 L 55 25 L 58 34 L 36 34 Z" fill="#8c6840"/>
+      <circle cx="78" cy="32" r="11" fill="#1c1a18"/>
+      <circle cx="78" cy="32" r="5" fill="#343230"/>
+      <circle cx="78" cy="32" r="2" fill="#c9984a"/>
+      <circle cx="22" cy="33" r="9" fill="#1c1a18"/>
+      <circle cx="22" cy="33" r="4.2" fill="#343230"/>
+      <circle cx="22" cy="33" r="1.8" fill="#c9984a"/>
+    </g>
+    <text x="64" y="78" fill="#847e74" font-family="JetBrains Mono" font-size="15" letter-spacing="3.4">USB  &#183;  SERIAL  &#183;  SHAKERS</text>
+    <text x="60" y="162" fill="#d6d0c4" font-family="JetBrains Mono ExtraLight" font-size="78" letter-spacing="8">CARGOPIT</text>
+    <rect x="64" y="182" width="168" height="3" rx="1" fill="url(#brass)"/>
+    <text x="64" y="224" fill="#847e74" font-family="JetBrains Mono" font-size="18">Linux device manager for driving and flight simulators</text>
+    <g font-family="JetBrains Mono" font-size="15">
+      <circle cx="72" cy="270" r="5.5" fill="#c9984a"/>
+      <text x="86" y="275" fill="#d6d0c4">simd</text>
+      <path d="M146 270 H186" fill="none" stroke="#c9984a" stroke-width="1.6"/>
+      <path d="M178 264 L186 270 L178 276" fill="none" stroke="#c9984a" stroke-width="1.6"/>
+      <circle cx="210" cy="270" r="5.5" fill="#c9984a"/>
+      <text x="224" y="275" fill="#d6d0c4">sim</text>
+      <path d="M270 270 H310" fill="none" stroke="#c9984a" stroke-width="1.6"/>
+      <path d="M302 264 L310 270 L302 276" fill="none" stroke="#c9984a" stroke-width="1.6"/>
+      <circle cx="334" cy="270" r="5.5" fill="#c9984a"/>
+      <text x="348" y="275" fill="#d6d0c4">SIMAPI</text>
+      <path d="M430 270 H470" fill="none" stroke="#c9984a" stroke-width="1.6"/>
+      <path d="M462 264 L470 270 L462 276" fill="none" stroke="#c9984a" stroke-width="1.6"/>
+      <circle cx="494" cy="270" r="5.5" fill="#c9984a"/>
+      <text x="508" y="275" fill="#d6d0c4">cargopit</text>
+    </g>
+    <circle cx="1088" cy="320" r="4.5" fill="#c9984a"/>
+    <text x="1102" y="325" fill="#c9984a" font-family="JetBrains Mono" font-size="14">ready</text>
+  </g>
+</svg>
