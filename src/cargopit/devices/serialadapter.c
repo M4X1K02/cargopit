@@ -164,16 +164,17 @@ static cargopit_serial_device* cargopit_get_serial_device(uint8_t serialdevicenu
 int cargopit_serial_write(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
-    if (dev == NULL)
+    if (dev == NULL || timeout < 0)
     {
         return -1;
     }
 
+    unsigned int serial_timeout = (unsigned int)timeout;
     int result = -1;
     if(dev->busy == false && dev->open == true)
     {
         dev->busy = true;
-        result = sp_blocking_write(dev->port, data, size, timeout);
+        result = sp_blocking_write(dev->port, data, size, serial_timeout);
     }
     else
     {
@@ -188,11 +189,12 @@ int cargopit_serial_write(uint8_t serialdevicenum, void* data, size_t size, int 
 int cargopit_serial_write_block(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
-    if (dev == NULL)
+    if (dev == NULL || timeout < 0)
     {
         return -1;
     }
 
+    unsigned int serial_timeout = (unsigned int)timeout;
     int result = -1;
     if(dev->open == true)
     {
@@ -203,7 +205,7 @@ int cargopit_serial_write_block(uint8_t serialdevicenum, void* data, size_t size
         }
 
         dev->busy = true;
-        result = sp_blocking_write(dev->port, data, size, timeout);
+        result = sp_blocking_write(dev->port, data, size, serial_timeout);
         slogi("actually performed write");
     }
 
@@ -214,11 +216,12 @@ int cargopit_serial_write_block(uint8_t serialdevicenum, void* data, size_t size
 int cargopit_serial_read_block(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
-    if (dev == NULL)
+    if (dev == NULL || timeout < 0)
     {
         return -1;
     }
 
+    unsigned int serial_timeout = (unsigned int)timeout;
     int result = -1;
     if(dev->open == true)
     {
@@ -229,7 +232,7 @@ int cargopit_serial_read_block(uint8_t serialdevicenum, void* data, size_t size,
         }
 
         dev->busy = true;
-        result = sp_blocking_read(dev->port, data, size, timeout);
+        result = sp_blocking_read(dev->port, data, size, serial_timeout);
         slogi("actually performed read");
     }
 
