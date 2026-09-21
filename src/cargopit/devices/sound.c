@@ -9,7 +9,7 @@ void context_state_cb(pa_context* context, void* mainloop) {
     pa_threaded_mainloop_signal(mainloop, 0);
 }
 
-int setupsound()
+int setupsound(void)
 {
 
 
@@ -52,7 +52,7 @@ int setupsound()
     return 0;
 }
 
-int freesound()
+int freesound(void)
 {
     if (mainloop) {
         pa_threaded_mainloop_lock(mainloop);

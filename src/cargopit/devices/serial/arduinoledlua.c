@@ -4,13 +4,62 @@
 #include <string.h>
 #include <math.h>
 #include <sys/time.h>
+#include <limits.h>
+#include <stdint.h>
 
 #include "arduinoledlua.h"
 #include "arduino.h"
 
 #include "../../slog/slog.h"
 
-long long ledTimeInMilliseconds(void) {
+#define LUA_TOTAL_LEDS_NAME "TotalLeds"
+#define LUA_LED_BUFFER_NAME "buff"
+#define RGB_CHANNEL_RED 0
+#define RGB_CHANNEL_GREEN 1
+#define RGB_CHANNEL_BLUE 2
+#define LED_COLOR_FULL UINT8_MAX
+#define LED_COLOR_ORANGE_GREEN 165
+
+static int get_total_leds(lua_State* L)
+{
+    if (L == NULL)
+    {
+        return 0;
+    }
+
+    lua_getglobal(L, LUA_TOTAL_LEDS_NAME);
+    if (!lua_isnumber(L, -1))
+    {
+        lua_pop(L, 1);
+        return 0;
+    }
+
+    lua_Integer total_leds = lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if (total_leds <= 0 || total_leds > INT_MAX)
+    {
+        return 0;
+    }
+
+    return (int)total_leds;
+}
+
+static uint8_t* get_led_buffer(lua_State* L)
+{
+    if (L == NULL)
+    {
+        return NULL;
+    }
+
+    lua_pushstring(L, LUA_LED_BUFFER_NAME);
+    lua_gettable(L, LUA_REGISTRYINDEX);
+    uint8_t* bytes = (uint8_t*)lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return bytes;
+}
+
+long long ledTimeInMilliseconds(void)
+{
     struct timeval tv;
 
     gettimeofday(&tv,NULL);
@@ -105,55 +154,23 @@ uint8_t get_color_rgb_value(int color, int rgb)
     switch (color)
     {
         case LUALEDCOLOR_RED:
-            switch (rgb)
-            {
-                case 0:
-                    return 255;
-                case 1:
-                    return 0;
-                case 2:
-                    return 0;
-            }
+            return rgb == RGB_CHANNEL_RED ? LED_COLOR_FULL : 0;
         case LUALEDCOLOR_GREEN:
-            switch (rgb)
-            {
-                case 0:
-                    return 0;
-                case 1:
-                    return 255;
-                case 2:
-                    return 0;
-            }
+            return rgb == RGB_CHANNEL_GREEN ? LED_COLOR_FULL : 0;
         case LUALEDCOLOR_BLUE:
-            switch (rgb)
-            {
-                case 0:
-                    return 0;
-                case 1:
-                    return 0;
-                case 2:
-                    return 255;
-            }
+            return rgb == RGB_CHANNEL_BLUE ? LED_COLOR_FULL : 0;
         case LUALEDCOLOR_YELLOW:
-            switch (rgb)
+            if (rgb == RGB_CHANNEL_RED || rgb == RGB_CHANNEL_GREEN)
             {
-                case 0:
-                    return 255;
-                case 1:
-                    return 255;
-                case 2:
-                    return 0;
+                return LED_COLOR_FULL;
             }
+            return 0;
         case LUALEDCOLOR_ORANGE:
-            switch (rgb)
+            if (rgb == RGB_CHANNEL_RED)
             {
-                case 0:
-                    return 255;
-                case 1:
-                    return 165;
-                case 2:
-                    return 0;
+                return LED_COLOR_FULL;
             }
+            return rgb == RGB_CHANNEL_GREEN ? LED_COLOR_ORANGE_GREEN : 0;
         default:
             return 0;
     }
@@ -161,6 +178,10 @@ uint8_t get_color_rgb_value(int color, int rgb)
 
 int set_led_range_to_color(lua_State *L)
 {
+    if (L == NULL)
+    {
+        return 1;
+    }
 
     slogt("lua called c function set_led_range_to_color");
 
@@ -174,34 +195,34 @@ int set_led_range_to_color(lua_State *L)
 
     range_start = range_start - 1;
 
-    lua_getglobal(L, "TotalLeds");
-    int numlights = 0;
-    if (lua_isnumber(L, -1))
-    {
-        numlights = lua_tonumber(L, -1);
-    }
+    int numlights = get_total_leds(L);
     slogd("num leds is %i", numlights);
 
-    if(range_end > numlights)
+    if (range_start < 0 || range_end <= range_start || range_end > numlights)
     {
-        range_end = numlights;
+        if (range_end > numlights)
+        {
+            range_end = numlights;
+        }
+        if (range_start < 0 || range_end <= range_start)
+        {
+            slogt("Invalid range, doing nothing");
+            return 1;
+        }
     }
 
-    if(range_end == 0)
+    uint8_t* bytes = get_led_buffer(L);
+    if (bytes == NULL)
     {
-        slogt("Invalid range, doing nothing");
+        slogt("LED buffer is unavailable");
         return 1;
     }
 
-    lua_pushstring(L, "buff");
-    lua_gettable(L, LUA_REGISTRYINDEX);
-    char* bytes = lua_touserdata(L, -1);
-
     slogt("first byte of buff is x%02x", bytes[0]);
 
-    uint8_t color0 = get_color_rgb_value(color, 0);
-    uint8_t color1 = get_color_rgb_value(color, 1);
-    uint8_t color2 = get_color_rgb_value(color, 2);
+    uint8_t color0 = get_color_rgb_value(color, RGB_CHANNEL_RED);
+    uint8_t color1 = get_color_rgb_value(color, RGB_CHANNEL_GREEN);
+    uint8_t color2 = get_color_rgb_value(color, RGB_CHANNEL_BLUE);
 
     for( int i = range_start; i < range_end; i++)
     {
@@ -210,10 +231,15 @@ int set_led_range_to_color(lua_State *L)
         bytes[(i * 3) + 2] = color2;
     }
 
+    return 0;
 }
 
 int set_led_range_to_rgb_color(lua_State *L)
 {
+    if (L == NULL)
+    {
+        return 1;
+    }
 
     slogt("lua called c function set_led_range_to_rgb_color");
 
@@ -236,27 +262,27 @@ int set_led_range_to_rgb_color(lua_State *L)
 
     range_start = range_start - 1;
 
-    lua_getglobal(L, "TotalLeds");
-    int numlights = 0;
-    if (lua_isnumber(L, -1))
-    {
-        numlights = lua_tonumber(L, -1);
-    }
+    int numlights = get_total_leds(L);
     slogd("num leds is %i", numlights);
 
-    if(range_end > numlights)
+    if (range_start < 0 || range_end <= range_start || range_end > numlights)
     {
-        range_end = numlights;
+        if (range_end > numlights)
+        {
+            range_end = numlights;
+        }
+        if (range_start < 0 || range_end <= range_start)
+        {
+            return 1;
+        }
     }
 
-    if(range_end == 0)
+    uint8_t* bytes = get_led_buffer(L);
+    if (bytes == NULL)
     {
+        slogt("LED buffer is unavailable");
         return 1;
     }
-
-    lua_pushstring(L, "buff");
-    lua_gettable(L, LUA_REGISTRYINDEX);
-    char* bytes = lua_touserdata(L, -1);
 
     slogt("first byte of buff is x%02x", bytes[0]);
 
@@ -267,10 +293,16 @@ int set_led_range_to_rgb_color(lua_State *L)
         bytes[(i * 3) + 2] = color2;
     }
 
+    return 0;
 }
 
 int set_led_to_color(lua_State *L)
 {
+    if (L == NULL)
+    {
+        return 1;
+    }
+
     slogt("lua called c function set_led_to_rgb_color");
 
     int led = lua_tonumber(L, 1);
@@ -281,38 +313,42 @@ int set_led_to_color(lua_State *L)
 
     led = led - 1;
 
-    lua_getglobal(L, "TotalLeds");
-    int numlights = 0;
-    if (lua_isnumber(L, -1))
-    {
-        numlights = lua_tonumber(L, -1);
-    }
+    int numlights = get_total_leds(L);
     slogd("num leds is %i", numlights);
 
-    if(led > numlights)
+    if (led < 0 || led >= numlights)
     {
         return 1;
     }
 
-    lua_pushstring(L, "buff");
-    lua_gettable(L, LUA_REGISTRYINDEX);
-    char* bytes = lua_touserdata(L, -1);
-
+    uint8_t* bytes = get_led_buffer(L);
+    if (bytes == NULL)
+    {
+        slogt("LED buffer is unavailable");
+        return 1;
+    }
     slogt("first byte of buff is x%02x", bytes[0]);
 
-    uint8_t color0 = get_color_rgb_value(color, 0);
-    uint8_t color1 = get_color_rgb_value(color, 1);
-    uint8_t color2 = get_color_rgb_value(color, 2);
+    uint8_t color0 = get_color_rgb_value(color, RGB_CHANNEL_RED);
+    uint8_t color1 = get_color_rgb_value(color, RGB_CHANNEL_GREEN);
+    uint8_t color2 = get_color_rgb_value(color, RGB_CHANNEL_BLUE);
 
     bytes[(led * 3) + 0] = color0;
     bytes[(led * 3) + 1] = color1;
     bytes[(led * 3) + 2] = color2;
+
+    return 0;
 
 }
 
 
 int set_led_to_rgb_color(lua_State *L)
 {
+    if (L == NULL)
+    {
+        return 1;
+    }
+
     slogt("lua called c function set_led_to_rgb_color");
 
     int led = lua_tonumber(L, 1);
@@ -329,49 +365,49 @@ int set_led_to_rgb_color(lua_State *L)
 
     led = led - 1;
 
-    lua_getglobal(L, "TotalLeds");
-    int numlights = 0;
-    if (lua_isnumber(L, -1))
-    {
-        numlights = lua_tonumber(L, -1);
-    }
+    int numlights = get_total_leds(L);
     slogd("num leds is %i", numlights);
 
-    if(led > numlights)
+    if (led < 0 || led >= numlights)
     {
         return 1;
     }
 
-    lua_pushstring(L, "buff");
-    lua_gettable(L, LUA_REGISTRYINDEX);
-    char* bytes = lua_touserdata(L, -1);
-
+    uint8_t* bytes = get_led_buffer(L);
+    if (bytes == NULL)
+    {
+        slogt("LED buffer is unavailable");
+        return 1;
+    }
     slogt("first byte of buff is x%02x", bytes[0]);
 
     bytes[(led * 3) + 0] = color0;
     bytes[(led * 3) + 1] = color1;
     bytes[(led * 3) + 2] = color2;
 
+    return 0;
+
 }
 
 
 int led_clear_all(lua_State *L)
 {
+    if (L == NULL)
+    {
+        return 1;
+    }
 
     slogt("lua called c function led_clear_all");
 
-    lua_getglobal(L, "TotalLeds");
-    int numlights = 0;
-    if (lua_isnumber(L, -1))
-    {
-        numlights = lua_tonumber(L, -1);
-    }
+    int numlights = get_total_leds(L);
     slogd("num leds is %i", numlights);
 
-    lua_pushstring(L, "buff");
-    lua_gettable(L, LUA_REGISTRYINDEX);
-    char* bytes = lua_touserdata(L, -1);
-
+    uint8_t* bytes = get_led_buffer(L);
+    if (bytes == NULL)
+    {
+        slogt("LED buffer is unavailable");
+        return 1;
+    }
     slogt("first byte of buff is x%02x", bytes[0]);
 
     for( int i = 0; i < numlights; i++)
@@ -381,10 +417,15 @@ int led_clear_all(lua_State *L)
         bytes[(i * 3) + 2] = 0x00;
     }
 
+    return 0;
 }
 
 int led_clear_range(lua_State *L)
 {
+    if (L == NULL)
+    {
+        return 1;
+    }
 
     slogt("lua called c function led_clear_range");
 
@@ -396,35 +437,36 @@ int led_clear_range(lua_State *L)
 
     range_start = range_start - 1;
 
-    lua_getglobal(L, "TotalLeds");
-    int numlights = 0;
-    if (lua_isnumber(L, -1))
-    {
-        numlights = lua_tonumber(L, -1);
-    }
+    int numlights = get_total_leds(L);
     slogd("num leds is %i", numlights);
 
-    if(range_end > numlights)
+    if (range_start < 0 || range_end <= range_start || range_end > numlights)
     {
-        range_end = numlights;
+        if (range_end > numlights)
+        {
+            range_end = numlights;
+        }
+        if (range_start < 0 || range_end <= range_start)
+        {
+            return 1;
+        }
     }
 
-    if(range_end == 0)
+    uint8_t* bytes = get_led_buffer(L);
+    if (bytes == NULL)
     {
+        slogt("LED buffer is unavailable");
         return 1;
     }
 
-    lua_pushstring(L, "buff");
-    lua_gettable(L, LUA_REGISTRYINDEX);
-    char* bytes = lua_touserdata(L, -1);
-
     slogt("first byte of buff is x%02x", bytes[0]);
 
-    for( int i = 0; i < numlights; i++)
+    for (int i = range_start; i < range_end; i++)
     {
         bytes[(i * 3) + 0] = 0x00;
         bytes[(i * 3) + 1] = 0x00;
         bytes[(i * 3) + 2] = 0x00;
     }
 
+    return 0;
 }

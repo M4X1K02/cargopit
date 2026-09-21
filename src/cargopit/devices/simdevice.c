@@ -10,12 +10,22 @@
 
 int update(SimDevice* this, SimData* simdata)
 {
-    ((vtable*)this->vtable)->update(this, simdata);
+    if (this == NULL || this->vtable == NULL)
+    {
+        return -1;
+    }
+
+    return ((vtable*)this->vtable)->update(this, simdata);
 }
 
 int simdevfree(SimDevice* this)
 {
-    ((vtable*)this->vtable)->free(this);
+    if (this == NULL || this->vtable == NULL)
+    {
+        return -1;
+    }
+
+    return ((vtable*)this->vtable)->free(this);
 }
 
 int devupdate(SimDevice* this, SimData* simdata)

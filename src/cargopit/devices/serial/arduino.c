@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <errno.h>
+#include <limits.h>
 
 #include "arduino.h"
 #include "arduinoledlua.h"
@@ -10,6 +12,8 @@
 #include "../../slog/slog.h"
 
 #define arduino_timeout 9000
+#define SERIAL_NUMBER_BASE 10
+#define ARDUINO_FIRST_LED 1
 
 int arduino_check(enum sp_return result)
 {
@@ -23,10 +27,13 @@ int arduino_check(enum sp_return result)
             error_message = sp_last_error_message();
             sloge("error: serial write failed: %s", error_message);
             sp_free_error_message(error_message);
+            return result;
         case SP_ERR_SUPP:
             printf("Error: Not supported.\n");
+            return result;
         case SP_ERR_MEM:
             printf("Error: Couldn't allocate memory.\n");
+            return result;
         case SP_OK:
         default:
             return result;
@@ -48,6 +55,11 @@ int arduino_update(SerialDevice* serialdevice, void* data, size_t size)
 int GetNumberOfLeds(SerialDevice* serialdevice, int* numlights)
 
 {
+    if (serialdevice == NULL || numlights == NULL)
+    {
+        return -1;
+    }
+
     int count = 0;
     int bytesWaiting;
     char buf[256];
@@ -109,8 +121,22 @@ int GetNumberOfLeds(SerialDevice* serialdevice, int* numlights)
                         count++;
                     }
                 }
-                int ret = atoi(buf);
-                *numlights = ret;
+                char* endptr = NULL;
+                errno = 0;
+                long parsed_lights = strtol(buf, &endptr, SERIAL_NUMBER_BASE);
+                while (endptr != NULL && (*endptr == '\r' || *endptr == '\n'))
+                {
+                    endptr++;
+                }
+
+                if (errno == ERANGE || endptr == buf || parsed_lights < 0 ||
+                    parsed_lights > INT_MAX || (endptr != NULL && *endptr != '\0'))
+                {
+                    sloge("Invalid LED count received from serial device: %s", buf);
+                    return -1;
+                }
+
+                *numlights = (int)parsed_lights;
                 return retval;
             }
         }
@@ -139,6 +165,10 @@ int arduino_init(SerialDevice* serialdevice, const char* portdev)
 int arduino_custom_init(SerialDevice* serialdevice, const char* portdev, const char* luafile, bool uselights)
 {
     int error = arduino_init(serialdevice, portdev);
+    if (error != 0)
+    {
+        return error;
+    }
 
     int numlights = 0;
 
@@ -146,6 +176,12 @@ int arduino_custom_init(SerialDevice* serialdevice, const char* portdev, const c
     {
         error = GetNumberOfLeds(serialdevice, &numlights);
         slogi("numlights is %i\n", numlights);
+        if (error < 0)
+        {
+            cargopit_serial_free(serialdevice);
+            return error;
+        }
+
         // close, error and free if numlights is 0
         serialdevice->numleds = numlights;
     }
@@ -159,6 +195,12 @@ int arduino_custom_init(SerialDevice* serialdevice, const char* portdev, const c
     slogi("LUA config specified for this device... initializing...");
 
     lua_State* L = luaL_newstate();
+    if (L == NULL)
+    {
+        cargopit_serial_free(serialdevice);
+        return -1;
+    }
+
     luaL_openlibs(L);
 
     int top=lua_gettop(L);
@@ -168,9 +210,9 @@ int arduino_custom_init(SerialDevice* serialdevice, const char* portdev, const c
         /* If something went wrong, error message is at the top of */
         /* the stack */
         fprintf(stderr, "Couldn't load file: %s\n", lua_tostring(L, -1));
-        lua_close(serialdevice->m.L);
+        lua_close(L);
+        cargopit_serial_free(serialdevice);
         return -1;
-        exit(1);
     }
     lua_setglobal(L,"myFunc");
 
@@ -184,6 +226,11 @@ int arduino_custom_init(SerialDevice* serialdevice, const char* portdev, const c
 
 int arduino_simled_update(SerialDevice* serialdevice, SimData* simdata)
 {
+    if (serialdevice == NULL || simdata == NULL || serialdevice->numleds < ARDUINO_FIRST_LED)
+    {
+        return -1;
+    }
+
     int result = 1;
 
     int total_leds = serialdevice->numleds;
@@ -195,7 +242,21 @@ int arduino_simled_update(SerialDevice* serialdevice, SimData* simdata)
     {
         endled = total_leds;
     }
+    if (startled < ARDUINO_FIRST_LED)
+    {
+        startled = ARDUINO_FIRST_LED;
+    }
+    if (endled > total_leds)
+    {
+        endled = total_leds;
+    }
+
     int num_avail_leds = endled - startled + 1;
+    if (num_avail_leds < ARDUINO_FIRST_LED)
+    {
+        return -1;
+    }
+
     int rpm = simdata->rpms;
     int maxrpm = simdata->maxrpm;
     int litleds = 0;
@@ -269,6 +330,11 @@ int arduino_simled_update(SerialDevice* serialdevice, SimData* simdata)
 
 int arduino_customled_update(SerialDevice* serialdevice, SimData* simdata)
 {
+    if (serialdevice == NULL || serialdevice->numleds < ARDUINO_FIRST_LED)
+    {
+        return -1;
+    }
+
     int result = 1;
 
     int total_leds = serialdevice->numleds;

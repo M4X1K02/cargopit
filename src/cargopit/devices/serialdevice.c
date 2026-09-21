@@ -291,8 +291,16 @@ static const vtable arduino_simhaptic_vtable = { &arduino_simhaptic_update, &ser
 static const vtable serialwheel_vtable = { &serial_wheel_update, &serial_wheel_free };
 
 SerialDevice* new_serial_device(DeviceSettings* ds, CargopitSettings* ms, SimInfo* siminfo) {
+    if (ds == NULL || ms == NULL || siminfo == NULL)
+    {
+        return NULL;
+    }
 
-    SerialDevice* this = (SerialDevice*) malloc(sizeof(SerialDevice));
+    SerialDevice* this = calloc(1, sizeof(*this));
+    if (this == NULL)
+    {
+        return NULL;
+    }
 
     this->m.update = &update;
     this->m.free = &simdevfree;

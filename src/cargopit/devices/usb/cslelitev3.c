@@ -8,7 +8,8 @@
 #include "../../helper/confighelper.h"
 #include "../slog/slog.h"
 
-const char* SYSFSRUMBLEPATH = "/sys/module/hid_fanatec/drivers/hid:f*/0003:0EB7:183B.*/rumble";
+static const char* SYSFS_RUMBLE_PATH =
+    "/sys/module/hid_fanatec/drivers/hid:f*/0003:0EB7:183B.*/rumble";
 
 
 int cslelitev3_update(USBDevice* usbdevice, int effecttype, int play)
@@ -41,53 +42,62 @@ int cslelitev3_update(USBDevice* usbdevice, int effecttype, int play)
 
 int cslelitev3_free(USBDevice* usbdevice)
 {
-    int res = 0;
+    if (usbdevice == NULL)
+    {
+        return 1;
+    }
 
     free(usbdevice->dev);
+    usbdevice->dev = NULL;
 
-    fflush(usbdevice->filehandle);
-    fclose(usbdevice->filehandle);
+    if (usbdevice->filehandle != NULL)
+    {
+        fflush(usbdevice->filehandle);
+        fclose(usbdevice->filehandle);
+        usbdevice->filehandle = NULL;
+    }
 
-    return res;
+    return 0;
 }
 
 int cslelitev3_init(USBDevice* usbdevice)
 {
     slogi("initializing CSL Elite V3 Pedals...");
 
-    int res = 0;
-
-
-    glob_t globlist;
-    int i = 0;
-    if (glob(SYSFSRUMBLEPATH, GLOB_PERIOD, NULL, &globlist) == GLOB_NOSPACE || glob(SYSFSRUMBLEPATH, GLOB_PERIOD, NULL, &globlist) == GLOB_NOMATCH)
+    if (usbdevice == NULL)
     {
-        res = 1;
+        return 1;
     }
-    if (glob(SYSFSRUMBLEPATH, GLOB_PERIOD, NULL, &globlist) == GLOB_ABORTED)
+
+    glob_t globlist = {0};
+    int glob_result = glob(SYSFS_RUMBLE_PATH, GLOB_PERIOD, NULL, &globlist);
+    if (glob_result != 0)
     {
-        res = 2;
-    }
-    if (res == 0)
-    {
-        while (globlist.gl_pathv[i])
+        globfree(&globlist);
+        if (glob_result == GLOB_ABORTED)
         {
-            if (i == 0)
-            {
-                usbdevice->dev = strdup(globlist.gl_pathv[i]);
-            }
-            i++;
+            sloge("Permissions issue finding Club Sport Elite V3 Pedals");
+            return 2;
         }
+
+        sloge("Could not find attached Club Sport Elite V3 Pedals");
+        return 1;
     }
+
+    if (globlist.gl_pathc == 0 || globlist.gl_pathv == NULL)
+    {
+        globfree(&globlist);
+        sloge("Could not find attached Club Sport Elite V3 Pedals");
+        return 1;
+    }
+
+    usbdevice->dev = strdup(globlist.gl_pathv[0]);
     globfree(&globlist);
 
-    if (res == 1) {
-        sloge("Could not find attach Club Sport Elite V3 Pedals");
-        return res;
-    }
-    if (res == 2) {
-        sloge("Permissions issue finding Club Sport Elite V3 Pedals");
-        return res;
+    if (usbdevice->dev == NULL)
+    {
+        sloge("Could not allocate the pedal device path");
+        return 1;
     }
 
     usbdevice->filehandle = fopen(usbdevice->dev, "w");
@@ -95,10 +105,12 @@ int cslelitev3_init(USBDevice* usbdevice)
     if (!usbdevice->filehandle)
     {
         sloge("Could not open pedal device...");
-        return res;
+        free(usbdevice->dev);
+        usbdevice->dev = NULL;
+        return 1;
     }
 
     slogd("CSL Elite V3 Pedals Successfully initialized...");
 
-    return res;
+    return 0;
 }

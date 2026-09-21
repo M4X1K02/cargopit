@@ -13,6 +13,14 @@ SET_SOURCE_FILES_PROPERTIES( src/cargopit.c PROPERTIES LANGUAGE C)
 option(BUILD_SHARED "Build cargopit shared library" OFF)
 option(ENABLE_TESTS "Build test suite" OFF)
 option(BUILD_TUI "Build cargopit-tui (ratatui)" ON)
+option(ENABLE_STATIC_ANALYSIS "Enable GCC static analysis and C safety warnings" OFF)
+option(STATIC_ANALYSIS_AS_ERRORS "Treat static analysis diagnostics as errors" OFF)
+
+# Keep the historical spelling working for existing build instructions.
+if(analyze)
+    message(DEPRECATION "The analyze option is deprecated; use ENABLE_STATIC_ANALYSIS=ON")
+    set(ENABLE_STATIC_ANALYSIS ON)
+endif()
 
 
 project(cargopit)
@@ -108,11 +116,11 @@ target_include_directories(cargopit-cli PUBLIC config ${LIBXML_INCLUDE_DIR} ${LU
 
 
 # used for enabling additional compiler options if supported
-include(CheckCXXCompilerFlag)
+include(CheckCCompilerFlag)
 
-function(enable_cxx_compiler_flag_if_supported flag)
+function(enable_c_compiler_flag_if_supported flag)
     message(STATUS "[cargopit] Checking if compiler supports warning flag '${flag}'")
-    check_cxx_compiler_flag("${flag}" flag_supported)
+    check_c_compiler_flag("${flag}" flag_supported)
     if(flag_supported)
         message(STATUS "[cargopit] Enabling warning flag '${flag}'")
         target_compile_options(cargopit INTERFACE "${flag}")
@@ -122,11 +130,11 @@ endfunction()
 
 # enable a large amount of extra warnings, regardless of build mode
 if (MSVC) # MSVC supports different warning options to GCC/Clang
-    enable_cxx_compiler_flag_if_supported("/W3")  # set warning level 3
+    enable_c_compiler_flag_if_supported("/W3")  # set warning level 3
     # if tests are enabled, enable converting all warnings to errors too
     if (ENABLE_TESTS)
         # add_compile_options(/WX)
-        enable_cxx_compiler_flag_if_supported("/WX")
+        enable_c_compiler_flag_if_supported("/WX")
     endif()
 else() # GCC/Clang warning option
     # NOTE: GCC and Clang support most of the same options, but neither supports all
@@ -136,33 +144,28 @@ else() # GCC/Clang warning option
     #
     # enable all warnings about 'questionable constructs'
 
-    if(analyze)
-        message("-- Analyzer is on")
-        target_compile_options(cargopit PRIVATE -fanalyzer -Wno-analyzer-possible-null-argument -Wno-analyzer-possible-null-dereference -fsanitize=address -g -fno-omit-frame-pointer)
-    endif()
-
-    enable_cxx_compiler_flag_if_supported("-Wall")
+    enable_c_compiler_flag_if_supported("-Wall")
     # issue 'pedantic' warnings for strict ISO compliance
-    enable_cxx_compiler_flag_if_supported("-pedantic")
+    enable_c_compiler_flag_if_supported("-pedantic")
     # enable 'extra' strict warnings
-    enable_cxx_compiler_flag_if_supported("-Wextra")
+    enable_c_compiler_flag_if_supported("-Wextra")
     # enable sign conversion warnings
-    enable_cxx_compiler_flag_if_supported("-Wsign-conversion")
+    enable_c_compiler_flag_if_supported("-Wsign-conversion")
     # enable warnings about mistakes in Doxygen documentation
-    enable_cxx_compiler_flag_if_supported("-Wdocumentation")
+    enable_c_compiler_flag_if_supported("-Wdocumentation")
     # if tests are enabled, enable converting all warnings to errors too
     if (ENABLE_TESTS)
-        enable_cxx_compiler_flag_if_supported("-Werror")
+        enable_c_compiler_flag_if_supported("-Werror")
         # exclude the following kinds of warnings from being converted into errors
         # unknown-pragma is useful to have as a warning but not as an error, if you have
         # pragmas which are for the consumption of one compiler only
-        enable_cxx_compiler_flag_if_supported("-Wno-error=unknown-pragmas")
+        enable_c_compiler_flag_if_supported("-Wno-error=unknown-pragmas")
         # unused variable and function warnings are helpful but we don't need them as errors
-        enable_cxx_compiler_flag_if_supported("-Wno-error=unused-function")
-        enable_cxx_compiler_flag_if_supported("-Wno-error=unused-variable")
-        enable_cxx_compiler_flag_if_supported("-Wno-error=unused-parameter")
-        enable_cxx_compiler_flag_if_supported("-Wno-error=unused-private-field")
-        enable_cxx_compiler_flag_if_supported("-Wno-error=unused-but-set-variable")
+        enable_c_compiler_flag_if_supported("-Wno-error=unused-function")
+        enable_c_compiler_flag_if_supported("-Wno-error=unused-variable")
+        enable_c_compiler_flag_if_supported("-Wno-error=unused-parameter")
+        enable_c_compiler_flag_if_supported("-Wno-error=unused-private-field")
+        enable_c_compiler_flag_if_supported("-Wno-error=unused-but-set-variable")
     endif()
 endif()
 
@@ -172,6 +175,71 @@ if(ENABLE_TESTS AND NOT CARGOPIT_SUBPROJECT)
     message(STATUS "[cargopit] Unit Tests Enabled")
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if(ENABLE_STATIC_ANALYSIS)
+    if(MSVC)
+        message(FATAL_ERROR "ENABLE_STATIC_ANALYSIS requires GCC")
+    endif()
+
+    check_c_compiler_flag("-fanalyzer" CARGOPIT_HAS_FANALYZER)
+    if(NOT CARGOPIT_HAS_FANALYZER)
+        message(FATAL_ERROR "ENABLE_STATIC_ANALYSIS requires GCC with -fanalyzer support")
+    endif()
+
+    set(CARGOPIT_STATIC_ANALYSIS_FLAGS
+        -fanalyzer
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wformat=2
+        -Wformat-overflow=2
+        -Wformat-truncation=2
+        -Warray-bounds=2
+        -Wstringop-overflow=4
+        -Wnull-dereference
+        -Wshadow
+        -Wconversion
+        -Wsign-conversion
+        -Wstrict-prototypes
+        -Wmissing-prototypes
+        -Wold-style-definition
+        -Wvla
+        -Wswitch-enum
+        -Walloca
+        -Wduplicated-cond
+        -Wduplicated-branches
+        -Wlogical-op)
+
+    if(STATIC_ANALYSIS_AS_ERRORS)
+        list(APPEND CARGOPIT_STATIC_ANALYSIS_FLAGS -Werror)
+    endif()
+
+    # The simulatorapi target is a pinned external submodule. Analyze the
+    # project-owned C targets without making third-party diagnostics block this
+    # repository's first-pass checks.
+    set(CARGOPIT_STATIC_ANALYSIS_TARGETS
+        cargopit
+        cargopit-cli
+        gameloop
+        helper
+        devices
+        slog)
+    if(ENABLE_TESTS AND NOT CARGOPIT_SUBPROJECT)
+        list(APPEND CARGOPIT_STATIC_ANALYSIS_TARGETS
+            confighelper_test
+            ensure_simd_test
+            simd_telemetry_test
+            tester_simdata_test
+            acr_udp_test)
+    endif()
+
+    foreach(analysis_target IN LISTS CARGOPIT_STATIC_ANALYSIS_TARGETS)
+        if(TARGET "${analysis_target}")
+            target_compile_options("${analysis_target}" PRIVATE
+                ${CARGOPIT_STATIC_ANALYSIS_FLAGS})
+        endif()
+    endforeach()
 endif()
 
 if(BUILD_TUI)

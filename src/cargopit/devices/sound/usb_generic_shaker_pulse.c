@@ -27,6 +27,7 @@
 #define AUDIO_MAX_BUFFER_S 0.400
 #define SHAKER_MAX_DIGITAL_DRIVE 0.40
 #define SHAKER_SINK_INPUT_UNMUTED 0
+#define PERCENT_SCALE 100.0
 
 #ifndef M_PI
 #define M_PI  (3.14159265)
@@ -548,7 +549,7 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
     pa_cvolume cv;
     pa_cvolume_mute(&cv, channels);
 
-    pa_volume_t channel_volume = PA_CLAMP_VOLUME((pa_volume_t)((volume/100.d)*PA_VOLUME_NORM));
+    pa_volume_t channel_volume = PA_CLAMP_VOLUME((pa_volume_t)((volume / PERCENT_SCALE) * PA_VOLUME_NORM));
 
     pa_stream_flags_t stream_flags;
     stream_flags = PA_STREAM_INTERPOLATE_TIMING

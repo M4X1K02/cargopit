@@ -19,7 +19,7 @@
 
 int appstate = 0;
 
-void display_banner()
+static void display_banner(void)
 {
     printf("______  ______________   ___________________________________  ___________\n");
     printf("___   |/  /_  __ \\__  | / /_  __ \\_  ____/_  __ \\_  __ \\_  / / /__  ____/\n");
@@ -28,8 +28,12 @@ void display_banner()
     printf("/_/  /_/  \\____/ /_/ |_/  \\____/ \\____/  \\____/ \\___\\_\\\\____/  /_____/   \n");
 }
 
-void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* configdir_str, char* cachedir_str)
+static void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* configdir_str, char* cachedir_str)
 {
+    if (p == NULL || ms == NULL)
+    {
+        return;
+    }
 
     if(p->user_specified_config_file == true && does_file_exist(p->config_filepath))
     {
@@ -54,6 +58,11 @@ void SetSettingsFromParameters(Parameters* p, CargopitSettings* ms, char* config
     }
     else
     {
+        if (cachedir_str == NULL)
+        {
+            return;
+        }
+
         ms->log_dirname_str = strdup(cachedir_str);
         ms->log_filename_str = strdup("cargopit.log");
     }
@@ -99,6 +108,13 @@ int main(int argc, char** argv)
     // Fedora.
     p = calloc(1, sizeof(Parameters));
     CargopitSettings* ms = calloc(1, sizeof(CargopitSettings));
+    if (p == NULL || ms == NULL)
+    {
+        fprintf(stderr, "Could not allocate program settings\n");
+        free(ms);
+        free(p);
+        return EXIT_FAILURE;
+    }
 
     ConfigError ppe = getParameters(argc, argv, p);
     if (ppe == E_SUCCESS_AND_EXIT || ppe == E_SOMETHING_BAD)
@@ -150,8 +166,8 @@ int main(int argc, char** argv)
     slog_config_get(&slgCfg);
     slgCfg.eColorFormat = SLOG_COLORING_TAG;
     slgCfg.eDateControl = SLOG_TIME_ONLY;
-    strcpy(slgCfg.sFileName, ms->log_filename_str);
-    strcpy(slgCfg.sFilePath, ms->log_dirname_str);
+    snprintf(slgCfg.sFileName, sizeof(slgCfg.sFileName), "%s", ms->log_filename_str);
+    snprintf(slgCfg.sFilePath, sizeof(slgCfg.sFilePath), "%s", ms->log_dirname_str);
     slgCfg.nTraceTid = 0;
     slgCfg.nToScreen = 1;
     slgCfg.nUseHeap = 0;
@@ -183,7 +199,6 @@ int main(int argc, char** argv)
     slogd("using diameters file %s %i", ms->tyre_diameter_config, ms->configcheck);
     config_t cfg;
     config_init(&cfg);
-    config_setting_t* config_devices = NULL;
     if (!config_read_file(&cfg, ms->config_str))
     {
         sloge("Issue with cargopit config file: %s:%d - %s", config_error_file(&cfg), config_error_line(&cfg), config_error_text(&cfg));
@@ -203,12 +218,24 @@ int main(int argc, char** argv)
     if (ms->program_action == A_CONFIG_TACH)
     {
         int error = 0;
-        SimDevice* tachdev = malloc(sizeof(SimDevice));
+        SimDevice* tachdev = calloc(1, sizeof(*tachdev));
+        SimData* sdata = calloc(1, sizeof(*sdata));
+        SimInfo* siminfo = calloc(1, sizeof(*siminfo));
+        DeviceSettings* ds = calloc(1, sizeof(*ds));
+
+        if (tachdev == NULL || sdata == NULL || siminfo == NULL || ds == NULL)
+        {
+            sloge("Could not allocate tachometer configuration state");
+            free(tachdev);
+            free(sdata);
+            free(siminfo);
+            free(ds);
+            slog_destroy();
+            goto cleanup_final;
+        }
+
         tachdev->initialized = false;
-        SimData* sdata = malloc(sizeof(SimData));
-        SimInfo* siminfo = malloc(sizeof(SimInfo));
         simapi_set_faux_siminfo(siminfo);
-        DeviceSettings* ds = malloc(sizeof(DeviceSettings));
 
         error = devsetup("USB", "Tachometer", "None", ms, ds, NULL);
 
@@ -243,25 +270,23 @@ int main(int argc, char** argv)
             slogt("freeing tachmoeter device");
             tachdev->free(tachdev);
         }
-        //free(tachdev);
+        free(tachdev);
         free(sdata);
+        free(siminfo);
         free(ds);
+        slog_destroy();
     }
     else
     {
 
         int error = 0;
         error = CARGOPIT_ERROR_NONE;
-        //setupsound();
-        bool pulseaudio = false;
-
         if (ms->program_action == A_PLAY)
         {
             ms->useconfig = 1;
             slogi("running cargopit in gameloop mode..");
 //#ifdef USE_PULSEAUDIO
             //pa_threaded_mainloop_unlock(mainloop);
-            pulseaudio = true;
 //#endif
 
             if(ms->disable_audio == false)

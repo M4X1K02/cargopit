@@ -142,6 +142,7 @@ static const char* slog_get_tag(slog_flag_t eFlag)
 {
     switch (eFlag)
     {
+        case SLOG_NOTAG: return NULL;
         case SLOG_NOTE: return "note";
         case SLOG_INFO: return "info";
         case SLOG_WARN: return "warn";
@@ -208,7 +209,7 @@ static uint8_t slog_open_file(slog_file_t *pFile, const slog_config_t *pCfg, con
     return 1;
 }
 
-uint16_t slog_get_usec()
+uint16_t slog_get_usec(void)
 {
     struct timeval tv;
     if (gettimeofday(&tv, NULL) < 0) return 0;
@@ -234,7 +235,7 @@ void slog_get_date(slog_date_t *pDate)
     pDate->nUsec = slog_get_usec();
 }
 
-static size_t slog_get_tid()
+static size_t slog_get_tid(void)
 {
 #ifdef __linux__
     return (size_t)syscall(__NR_gettid);
@@ -357,7 +358,6 @@ static void slog_display_heap(const slog_context_t *pCtx, va_list args)
     char sLogInfo[SLOG_INFO_MAX];
 
     nBytes += vasprintf(&pMessage, pCtx->pFormat, args);
-    va_end(args);
 
     if (pMessage == NULL)
     {
@@ -558,7 +558,7 @@ void slog_init(const char* pName, uint16_t nFlags, uint8_t nTdSafe)
     slog_sync_init(&g_slog);
 }
 
-void slog_destroy()
+void slog_destroy(void)
 {
     slog_lock(&g_slog);
 

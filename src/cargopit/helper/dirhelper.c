@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <dirent.h>
+#include <errno.h>
 
 #include <pwd.h>
 #include <sys/types.h>
@@ -13,40 +14,97 @@
 
 #include <string.h>
 
+#define DIRECTORY_MODE 0700
+#define DIRECTORY_SEPARATOR_CHAR '/'
+#define DIRECTORY_FORMAT "%s/%s"
+#define DIRECTORY_FORMAT_WITH_SEPARATOR "%s%s"
+#define USER_DIRECTORY_FORMAT "%s/%s/%s/"
+
+static char* join_path(const char* directory, const char* entry)
+{
+    if (directory == NULL || entry == NULL)
+    {
+        return NULL;
+    }
+
+    if (directory[0] == '\0')
+    {
+        return strdup(entry);
+    }
+
+    size_t directory_length = strlen(directory);
+    char* fullpath = NULL;
+    int result;
+    if (directory[directory_length - 1] == DIRECTORY_SEPARATOR_CHAR)
+    {
+        result = asprintf(&fullpath, DIRECTORY_FORMAT_WITH_SEPARATOR, directory, entry);
+    }
+    else
+    {
+        result = asprintf(&fullpath, DIRECTORY_FORMAT, directory, entry);
+    }
+
+    if (result < 0)
+    {
+        return NULL;
+    }
+
+    return fullpath;
+}
+
 void create_dir(char* dir)
 {
-    struct stat st = {0};
-    if (stat(dir, &st) == -1)
+    if (dir == NULL)
     {
-        mkdir(dir, 0700);
+        return;
+    }
+
+    struct stat st = {0};
+    if (stat(dir, &st) == -1 && mkdir(dir, DIRECTORY_MODE) == -1 && errno != EEXIST)
+    {
+        return;
     }
 }
 
 void create_xdg_dir(const char* dir)
 {
-    struct stat st = {0};
-    if (stat(dir, &st) == -1)
+    if (dir == NULL)
     {
-        mkdir(dir, 0700);
+        return;
+    }
+
+    struct stat st = {0};
+    if (stat(dir, &st) == -1 && mkdir(dir, DIRECTORY_MODE) == -1 && errno != EEXIST)
+    {
+        return;
     }
 }
 
 char* create_user_dir(char* home_dir_str, const char* dirtype, const char* programname)
 {
-    // +3 for slashes
-    size_t ss = (4 + strlen(home_dir_str) + strlen(dirtype) + strlen(programname));
-    char* config_dir_str = malloc(ss);
+    if (home_dir_str == NULL || dirtype == NULL || programname == NULL)
+    {
+        return NULL;
+    }
 
-    snprintf (config_dir_str, ss, "%s/%s/%s/", home_dir_str, dirtype, programname);
+    char* config_dir_str = NULL;
+    if (asprintf(&config_dir_str, USER_DIRECTORY_FORMAT,
+                 home_dir_str, dirtype, programname) < 0)
+    {
+        return NULL;
+    }
 
     create_dir(config_dir_str);
     return config_dir_str;
 }
 
-char* gethome()
+char* gethome(void)
 {
     char* homedir = getenv("HOME");
-    return homedir;
+    if (homedir != NULL && homedir[0] != '\0')
+    {
+        return homedir;
+    }
 
     uid_t uid = getuid();
     struct passwd* pw = getpwuid(uid);
@@ -59,143 +117,155 @@ char* gethome()
     return pw->pw_dir;
 }
 
-time_t get_file_creation_time(char* path)
-{
-    struct stat attr;
-    stat(path, &attr);
-    return attr.st_mtime;
-}
-
 void delete_dir(char* path)
 {
+    if (path == NULL)
+    {
+        return;
+    }
 
-    struct dirent* de;
     DIR* dr = opendir(path);
-
     if (dr == NULL)
     {
-        printf("Could not open current directory");
+        return;
     }
-
-    // Refer http://pubs.opengroup.org/onlinepubs/7990989775/xsh/readdir.html
-    while ((de = readdir(dr)) != NULL)
-    {
-        char* fullpath = ( char* ) malloc(1 + strlen(path) + strlen("/") + strlen(de->d_name));
-        strcpy(fullpath, path);
-        strcat(fullpath, "/");
-        strcat(fullpath, de->d_name);
-        unlink(fullpath);
-        free(fullpath);
-    }
-    closedir(dr);
-    rmdir(path);
-
-}
-
-void delete_oldest_dir(char* path)
-{
-    char* oldestdir = path;
 
     struct dirent* de;
-    DIR* dr = opendir(path);
-
-    if (dr == NULL)
-    {
-        printf("Could not open current directory");
-    }
-
-    // Refer http://pubs.opengroup.org/onlinepubs/7990989775/xsh/readdir.html
-    char filename_qfd[100] ;
-    char* deletepath = NULL;
-    time_t tempoldest = 0;
     while ((de = readdir(dr)) != NULL)
     {
-        struct stat stbuf;
-
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
         {
             continue;
         }
 
-        char* fullpath = ( char* ) malloc(1 + strlen(path) + strlen(de->d_name));
-        strcpy(fullpath, path);
-        strcat(fullpath, de->d_name);
+        char* fullpath = join_path(path, de->d_name);
+        if (fullpath == NULL)
+        {
+            continue;
+        }
 
-        stat(fullpath, &stbuf);
+        unlink(fullpath);
+        free(fullpath);
+    }
+
+    closedir(dr);
+    rmdir(path);
+}
+
+static bool delete_oldest_dir(char* path)
+{
+    if (path == NULL)
+    {
+        return false;
+    }
+
+    DIR* dr = opendir(path);
+    if (dr == NULL)
+    {
+        return false;
+    }
+
+    struct dirent* de;
+    char* deletepath = NULL;
+    bool have_oldest = false;
+    time_t oldest_time = 0;
+    while ((de = readdir(dr)) != NULL)
+    {
+        if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+        {
+            continue;
+        }
+
+        char* fullpath = join_path(path, de->d_name);
+        if (fullpath == NULL)
+        {
+            continue;
+        }
+
+        struct stat stbuf;
+        if (stat(fullpath, &stbuf) != 0)
+        {
+            free(fullpath);
+            continue;
+        }
+
+        time_t current_time = stbuf.st_mtime;
         if (S_ISDIR(stbuf.st_mode))
         {
-            strcpy(fullpath, path);
-            strcat(fullpath, de->d_name);
-            if (tempoldest == 0)
+            if (!have_oldest || current_time < oldest_time)
             {
-                tempoldest = get_file_creation_time(fullpath);
-                free(deletepath);
-                deletepath = strdup(fullpath);
-            }
-            else
-            {
-                time_t t = get_file_creation_time(fullpath);
-                double diff = tempoldest - t;
-                if (diff > 0)
+                char* candidate = strdup(fullpath);
+                if (candidate != NULL)
                 {
-                    tempoldest = t;
                     free(deletepath);
-                    deletepath = strdup(fullpath);
+                    deletepath = candidate;
+                    oldest_time = current_time;
+                    have_oldest = true;
                 }
             }
-
         }
 
         free(fullpath);
     }
+
     closedir(dr);
+
+    if (deletepath == NULL)
+    {
+        return false;
+    }
+
     delete_dir(deletepath);
     free(deletepath);
+    return true;
 }
 
 void restrict_folders_to_cache(char* path, int cachesize)
 {
-    int numfolders = 0;
-
-    struct dirent* de;
-    DIR* dr = opendir(path);
-
-    if (dr == NULL)
+    if (path == NULL || cachesize < 1)
     {
-        printf("Could not open current directory");
+        return;
     }
 
-    // Refer http://pubs.opengroup.org/onlinepubs/7990989775/xsh/readdir.html
+    int numfolders = 0;
+    DIR* dr = opendir(path);
+    if (dr == NULL)
+    {
+        return;
+    }
+
+    struct dirent* de;
     while ((de = readdir(dr)) != NULL)
     {
-
         if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
         {
             continue;
         }
 
-        char* fullpath = ( char* ) malloc(1 + strlen(path) + strlen(de->d_name));
-        strcpy(fullpath, path);
-        strcat(fullpath, de->d_name);
-        strcat(fullpath, "/");
+        char* fullpath = join_path(path, de->d_name);
+        if (fullpath == NULL)
+        {
+            continue;
+        }
 
         struct stat stbuf;
-        stat(fullpath,&stbuf);
-
-        if (S_ISDIR(stbuf.st_mode))
+        if (stat(fullpath, &stbuf) == 0 && S_ISDIR(stbuf.st_mode))
         {
             numfolders++;
         }
         free(fullpath);
     }
 
-    while (numfolders >= cachesize)
-    {
-        delete_oldest_dir(path);
-        numfolders--;
-    }
     closedir(dr);
 
+    while (numfolders > cachesize)
+    {
+        if (!delete_oldest_dir(path))
+        {
+            break;
+        }
+        numfolders--;
+    }
 }
 
 bool does_directory_exist(char* path)
@@ -263,8 +333,10 @@ bool does_file_exist(const char* file)
 #endif
 }
 
-char* expand_tilde(char* path) {
-    if (path[0] != '~') {
+char* expand_tilde(char* path)
+{
+    if (path == NULL || path[0] != '~')
+    {
         return path;
     }
 
@@ -273,19 +345,12 @@ char* expand_tilde(char* path) {
         return path;
     }
 
-    size_t expanded_size = strlen(home_dir) + strlen(path);
-    char* expanded_path = (char*)malloc(expanded_size + 1);
-
-    if (!expanded_path) {
+    char* expanded_path = NULL;
+    if (asprintf(&expanded_path, "%s%s", home_dir, path + 1) < 0)
+    {
         return path;
     }
 
-    strcpy(expanded_path, home_dir);
-    strcat(expanded_path, path + 1);
-
-    if (path) {
-        free(path);
-    }
-
+    free(path);
     return expanded_path;
 }

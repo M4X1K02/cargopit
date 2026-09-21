@@ -52,6 +52,45 @@ static void check_int(const char* name, int got, int expected)
     }
 }
 
+static void check_device_mapping(
+    const char* device_type,
+    const char* device_subtype,
+    int expected_error,
+    bool expected_valid)
+{
+    DeviceSettings ds = {0};
+    int error = strtodev(device_type, device_subtype, &ds);
+    if (error != expected_error || ds.is_valid != expected_valid)
+    {
+        fprintf(stderr,
+                "FAIL: strtodev(%s, %s) = error %d valid %d, expected error %d valid %d\n",
+                device_type,
+                device_subtype,
+                error,
+                ds.is_valid,
+                expected_error,
+                expected_valid);
+        failures++;
+    }
+}
+
+static void check_effect_mapping(const char* effect, int expected_error, bool expected_valid)
+{
+    DeviceSettings ds = {0};
+    int error = strtoeffecttype(effect, &ds);
+    if (error != expected_error || ds.is_valid != expected_valid)
+    {
+        fprintf(stderr,
+                "FAIL: strtoeffecttype(%s) = error %d valid %d, expected error %d valid %d\n",
+                effect,
+                error,
+                ds.is_valid,
+                expected_error,
+                expected_valid);
+        failures++;
+    }
+}
+
 static void check_sound_channel_helpers(void)
 {
     uint32_t stereo = sound_channel_mask_all(SOUND_CHANNELS_STEREO);
@@ -125,6 +164,11 @@ int main(void)
     check("LogitechG29", SIMDEVSUBTYPE_LOGITECH_G29);
     check("not-a-real-subtype", SIMDEVSUBTYPE_UNKNOWN);
     check("", SIMDEVSUBTYPE_UNKNOWN);
+    check_device_mapping("USB", "Tachometer", CARGOPIT_ERROR_NONE, true);
+    check_device_mapping("USB", "not-a-real-subtype", CARGOPIT_ERROR_INVALID_DEV, false);
+    check_device_mapping("Serial", "not-a-real-subtype", CARGOPIT_ERROR_INVALID_DEV, false);
+    check_effect_mapping("Engine", CARGOPIT_ERROR_NONE, true);
+    check_effect_mapping("not-a-real-effect", CARGOPIT_ERROR_INVALID_DEV, false);
 
     char* path = write_two_profiles();
     if (path == NULL)

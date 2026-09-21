@@ -10,6 +10,7 @@
 #include <regex.h>
 
 static const char BUG_REPORT_URL[] = "github.com/M4X1K02/cargopit";
+#define ARGTABLE_ERROR_COUNT 20
 
 static void apply_config_file_arg(struct arg_file* arg_conf, Parameters* p)
 {
@@ -22,6 +23,10 @@ static void apply_config_file_arg(struct arg_file* arg_conf, Parameters* p)
 
 int freeparams(Parameters* p)
 {
+    if (p == NULL)
+    {
+        return 0;
+    }
 
     if(p->config_dirpath != NULL)
     {
@@ -78,13 +83,13 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     struct arg_lit* arg_audio1       = arg_lit0("a", "disable_audio", "force disable of audio devices");
     struct arg_file* arg_conf        = arg_file0("c", "config-file", "<config_file>", NULL);
     struct arg_file* arg_log         = arg_filen("l", "log", "<log_file>", 0, 1, NULL);
-    struct arg_str* arg_confdir      = arg_str1(NULL, NULL, "configdir", "<config_dir>");
+    struct arg_str* arg_confdir      = arg_str0(NULL, "config-dir", "<config_dir>", "use a custom config directory");
     struct arg_int* arg_fps          = arg_int0("f", "fps", "fps", "main data refresh rate");
     struct arg_int* arg_config_index_play = arg_int0(NULL, "config-index", "<n>", "config profile index");
     struct arg_lit* help1            = arg_litn(NULL,"help", 0, 1, "print this help and exit");
     struct arg_lit* vers             = arg_litn(NULL,"version", 0, 1, "print version information and exit");
-    struct arg_end* end1             = arg_end(20);
-    void* argtable1[]                = {cmd1,arg_log,arg_conf,arg_fps,arg_udp,arg_audio1,arg_config_index_play,arg_verbosity1,help1,vers,end1};
+    struct arg_end* end1             = arg_end(ARGTABLE_ERROR_COUNT);
+    void* argtable1[]                = {cmd1,arg_log,arg_conf,arg_confdir,arg_fps,arg_udp,arg_audio1,arg_config_index_play,arg_verbosity1,help1,vers,end1};
     int nerrors1;
 
     struct arg_rex* cmd2a            = arg_rex1(NULL, NULL, "config", NULL, REG_ICASE, NULL);
@@ -94,7 +99,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     struct arg_file* arg_save        = arg_filen("s", "savefile", "<savefile>", 1, 1, NULL);
     struct arg_lit* help2            = arg_litn(NULL,"help", 0, 1, "print this help and exit");
     struct arg_lit* vers2            = arg_litn(NULL,"version", 0, 1, "print version information and exit");
-    struct arg_end* end2             = arg_end(20);
+    struct arg_end* end2             = arg_end(ARGTABLE_ERROR_COUNT);
     void* argtable2[]                = {cmd2a,cmd2b,arg_max_revs,arg_granularity,arg_save,arg_verbosity2,help2,vers2,end2};
     int nerrors2;
 
@@ -105,16 +110,14 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     struct arg_lit* arg_audio2       = arg_lit0("a", "disable_audio", "force disable of audio devices");
     struct arg_lit* help3            = arg_litn(NULL,"help", 0, 1, "print this help and exit");
     struct arg_lit* vers3            = arg_litn(NULL,"version", 0, 1, "print version information and exit");
-    struct arg_end* end3             = arg_end(20);
+    struct arg_end* end3             = arg_end(ARGTABLE_ERROR_COUNT);
     void* argtable3[]                = {cmd3,arg_conf3,arg_device_index,arg_config_index,arg_verbosity3,arg_audio2,help3,vers3,end3};
     int nerrors3;
 
     struct arg_lit*  help0           = arg_lit0(NULL,"help",     "print this help and exit");
     struct arg_lit*  version0        = arg_lit0(NULL,"version",  "print version information and exit");
-    struct arg_end*  end0            = arg_end(20);
+    struct arg_end*  end0            = arg_end(ARGTABLE_ERROR_COUNT);
     void* argtable0[]                = {help0,version0,end0};
-    int nerrors0;
-
     if (arg_nullcheck(argtable0) != 0)
     {
         printf("%s: insufficient memory\n",progname);
@@ -136,7 +139,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         goto cleanup;
     }
 
-    nerrors0 = arg_parse(argc,argv,argtable0);
+    (void)arg_parse(argc,argv,argtable0);
     nerrors1 = arg_parse(argc,argv,argtable1);
     nerrors2 = arg_parse(argc,argv,argtable2);
     nerrors3 = arg_parse(argc,argv,argtable3);
@@ -155,6 +158,11 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         p->verbosity_count = arg_verbosity1->count;
 
         apply_config_file_arg(arg_conf, p);
+        if (arg_confdir->count > 0)
+        {
+            p->config_dirpath = strdup(arg_confdir->sval[0]);
+            p->user_specified_config_dir = true;
+        }
         if (arg_udp->count > 0)
         {
             p->udp = true;
