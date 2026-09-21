@@ -4,7 +4,20 @@ Cargopit is a hard fork of [monocoque](https://github.com/Spacefreak18/monocoque
 This source was modified in 2026. Original copyright 2022 Paul Jones.
 The program remains GNU GPL v3 or later; see [License](#license).
 
-![Cargopit — USB, serial, and shakers, with the simd to cargopit signal path](docs/tui/banner.png)
+```
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│            ●●●●●   ●●●   ●●●●    ●●●●   ●●●   ●●●●   ●●●●●  ●●●●●            │
+│            ●      ●   ●  ●   ●  ●      ●   ●  ●   ●    ●      ●              │
+│            ●      ●●●●●  ●●●●   ●  ●●  ●   ●  ●●●●     ●      ●              │
+│            ●      ●   ●  ●  ●   ●   ●  ●   ●  ●        ●      ●              │
+│            ●●●●●  ●   ●  ●   ●   ●●●    ●●●   ●      ●●●●●    ●              │
+│                                                                              │
+│                        USB   ·   SERIAL   ·   SHAKERS                        │
+│                                                                              │
+│  ● simd  ──►  ● sim  ──►  ● SIMAPI  ──►  ● cargopit          ████████ ready  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+```
 
 Linux device manager for driving and flight simulators. It reads live telemetry through the [simapi](https://github.com/spacefreak18/simapi) shared-memory API and drives USB HID, serial/Arduino, and PulseAudio (PipeWire) devices.
 
