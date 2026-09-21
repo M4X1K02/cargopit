@@ -18,8 +18,6 @@ typedef struct
 }
 cargopit_serial_device;
 
-static cargopit_serial_device cargopit_serial_devices[20];
-
 int cargopit_input_wait(uint8_t serialdevicenum);
 int cargopit_wait_for_event(uint8_t serialdevicenum, int event);
 int cargopit_serial_write(uint8_t serialdevicenum, void* data, size_t size, int timeout);

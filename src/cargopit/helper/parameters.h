@@ -59,15 +59,4 @@ ConfigError;
 int freeparams(Parameters* p);
 ConfigError getParameters(int argc, char** argv, Parameters* p);
 
-struct _errordesc
-{
-    int  code;
-    char* message;
-} static errordesc[] =
-{
-    { E_SUCCESS_AND_EXIT, "No error and exiting" },
-    { E_SUCCESS_AND_DO,   "No error and continuing" },
-    { E_SOMETHING_BAD,    "Something bad happened" },
-};
-
 #endif

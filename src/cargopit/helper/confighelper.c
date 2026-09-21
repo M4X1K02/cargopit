@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include <libxml/parser.h>
 #include <libxml/xmlreader.h>
@@ -529,7 +530,10 @@ int getconfigtouse(const char* config_file_str, char* car, int sim)
 
 int loadtachconfig(char* config_file, DeviceSettings* ds)
 {
-
+    if (config_file == NULL || ds == NULL)
+    {
+        return 1;
+    }
 
     xmlNode* rootnode = NULL;
     xmlNode* curnode = NULL;
@@ -555,7 +559,7 @@ int loadtachconfig(char* config_file, DeviceSettings* ds)
         return 1;
     }
 
-    int arraysize = 0;
+    size_t arraysize = 0;
     for (curnode = rootnode; curnode; curnode = curnode->next)
     {
         for (cursubnode = curnode->children; cursubnode; cursubnode = cursubnode->next)
@@ -575,10 +579,28 @@ int loadtachconfig(char* config_file, DeviceSettings* ds)
         }
     }
 
-    uint32_t pulses_array[arraysize];
-    uint32_t rpms_array[arraysize];
-    slogt("rev burner settings array size %i", arraysize);
-    int i = 0;
+    if (arraysize == 0 || arraysize > INT_MAX)
+    {
+        xmlFreeDoc(doc);
+        xmlCleanupParser();
+        sloge("Rev burner XML contains no settings");
+        return 1;
+    }
+
+    uint32_t* pulses_array = calloc(arraysize, sizeof(*pulses_array));
+    uint32_t* rpms_array = calloc(arraysize, sizeof(*rpms_array));
+    if (pulses_array == NULL || rpms_array == NULL)
+    {
+        free(pulses_array);
+        free(rpms_array);
+        xmlFreeDoc(doc);
+        xmlCleanupParser();
+        sloge("Could not allocate rev burner settings");
+        return 1;
+    }
+
+    slogt("rev burner settings array size %zu", arraysize);
+    size_t i = 0;
     for (curnode = rootnode; curnode; curnode = curnode->next)
     {
         if (curnode->type == XML_ELEMENT_NODE)
@@ -588,16 +610,24 @@ int loadtachconfig(char* config_file, DeviceSettings* ds)
                 {
                     for (cursubsubsubnode = cursubsubnode->children; cursubsubsubnode; cursubsubsubnode = cursubsubsubnode->next)
                     {
-                        if (strcicmp(cursubsubsubnode->name, "Value") == 0)
+                        if (strcicmp(cursubsubsubnode->name, "Value") == 0 &&
+                            i < arraysize)
                         {
                             xmlChar* a = xmlNodeGetContent(cursubsubsubnode);
-                            rpms_array[i] = strtol((char*) a, &buf, 10);
+                            if (a != NULL)
+                            {
+                                rpms_array[i] = strtol((char*) a, &buf, 10);
+                            }
                             xmlFree(a);
                         }
-                        if (strcicmp(cursubsubsubnode->name, "TimeValue") == 0)
+                        if (strcicmp(cursubsubsubnode->name, "TimeValue") == 0 &&
+                            i < arraysize)
                         {
                             xmlChar* a = xmlNodeGetContent(cursubsubsubnode);
-                            pulses_array[i] = strtol((char*) a, &buf, 10);
+                            if (a != NULL)
+                            {
+                                pulses_array[i] = strtol((char*) a, &buf, 10);
+                            }
                             xmlFree(a);
                             i++;
                         }
@@ -606,13 +636,9 @@ int loadtachconfig(char* config_file, DeviceSettings* ds)
             }
     }
 
-    ds->tachsettings.pulses_array = malloc(sizeof(pulses_array));
-    ds->tachsettings.rpms_array = malloc(sizeof(rpms_array));
-    ds->tachsettings.size = arraysize;
-
-    memcpy(ds->tachsettings.pulses_array, pulses_array, sizeof(pulses_array));
-    memcpy(ds->tachsettings.rpms_array, rpms_array, sizeof(rpms_array));
-
+    ds->tachsettings.pulses_array = pulses_array;
+    ds->tachsettings.rpms_array = rpms_array;
+    ds->tachsettings.size = (int)arraysize;
 
     xmlFreeDoc(doc);
     xmlCleanupParser();
@@ -1691,6 +1717,11 @@ int settingsfree(DeviceSettings ds)
 
 int cargopitsettingsfree(CargopitSettings* ms)
 {
+    if (ms == NULL)
+    {
+        return 0;
+    }
+
     if(ms->tyre_diameter_config != NULL)
     {
         free(ms->tyre_diameter_config);
@@ -1711,6 +1742,8 @@ int cargopitsettingsfree(CargopitSettings* ms)
         free(ms->log_dirname_str);
         ms->log_dirname_str = NULL;
     }
+
+    return 0;
 }
 
 uint32_t sound_channel_mask_all(int channels)

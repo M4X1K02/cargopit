@@ -7,6 +7,8 @@
 #include <errno.h>
 #include <linux/input.h>
 #include <string.h>
+#include <stdbool.h>
+#include <limits.h>
 #include <termios.h>
 #include <poll.h>
 
@@ -19,14 +21,30 @@
 #include "../slog/slog.h"
 
 #define DEFAULT_UPDATE_RATE      30.0
+#define INTEGER_TEXT_EXTRA_BYTES 2U
+#define INTEGER_TEXT_BUFFER_SIZE (sizeof(int) * CHAR_BIT + INTEGER_TEXT_EXTRA_BYTES)
+
+static bool read_input_character(char* character)
+{
+    if (character == NULL)
+    {
+        return false;
+    }
+
+    int input = getchar();
+    if (input == EOF)
+    {
+        return false;
+    }
+
+    *character = (char)input;
+    return true;
+}
 
 int WriteXmlFromArrays(int nodes, int rpm_array[], int values_array[], int maxrevs, const char* save_file)
 {
     xmlDocPtr doc = NULL;
     xmlNodePtr rootnode = NULL, onenode = NULL, settingsvaluenode = NULL, maxdisplayvaluenode = NULL;
-    char buff[256];
-    int i, j;
-
     doc = xmlNewDoc(BAD_CAST "1.0");
 
     rootnode = xmlNewNode(NULL, BAD_CAST "TachometerSettings");
@@ -37,11 +55,11 @@ int WriteXmlFromArrays(int nodes, int rpm_array[], int values_array[], int maxre
     {
         onenode = xmlNewNode(NULL, BAD_CAST "SettingsItem");
 
-        char value[10];
-        sprintf(value, "%d", values_array[i]);
+        char value[INTEGER_TEXT_BUFFER_SIZE];
+        snprintf(value, sizeof(value), "%d", values_array[i]);
 
-        char rpm[10];
-        sprintf(rpm, "%d", rpm_array[i]);
+        char rpm[INTEGER_TEXT_BUFFER_SIZE];
+        snprintf(rpm, sizeof(rpm), "%d", rpm_array[i]);
 
         xmlNewChild(onenode, NULL, BAD_CAST "Value", BAD_CAST value);
         xmlNewChild(onenode, NULL, BAD_CAST "TimeValue", BAD_CAST rpm);
@@ -50,8 +68,8 @@ int WriteXmlFromArrays(int nodes, int rpm_array[], int values_array[], int maxre
 
 
     xmlAddChild(rootnode, settingsvaluenode);
-    char revs[10];
-    sprintf(revs, "%d", maxrevs);
+    char revs[INTEGER_TEXT_BUFFER_SIZE];
+    snprintf(revs, sizeof(revs), "%d", maxrevs);
     maxdisplayvaluenode = xmlNewChild(rootnode, NULL, BAD_CAST "MaxDisplayValue", BAD_CAST revs);
 
     xmlSaveFormatFileEnc(save_file,  doc, "UTF-8", 1);
@@ -121,7 +139,11 @@ int config_tachometer(int max_revs, int granularity, const char* save_file, SimD
         if (i==0)
         {
             fprintf(stdout, "Press Return to continue...\n");
-            scanf("%c",&ch);
+            if (!read_input_character(&ch))
+            {
+                tcsetattr(0, TCSANOW, &canonicalmode);
+                return -1;
+            }
         }
         sleep(2);
         fprintf(stdout, "Set tachometer revs to %i: Press > to increase, < to decrease, and Return to accept (m increases by 1000, n decreases by 1000, c increases by 100, z decreases by 100...\n", values_array[i]);
@@ -138,7 +160,11 @@ int config_tachometer(int max_revs, int granularity, const char* save_file, SimD
             if( poll(&mypoll, 1, 1000.0/update_rate) )
             {
                 ch = ' ';
-                scanf("%c", &ch);
+                if (!read_input_character(&ch))
+                {
+                    go = 0;
+                    continue;
+                }
 
                 if (ch == 'n')
                 {

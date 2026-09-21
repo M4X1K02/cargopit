@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <errno.h>
+#include <limits.h>
 
 #include "arduino.h"
 #include "arduinoledlua.h"
@@ -10,6 +12,7 @@
 #include "../../slog/slog.h"
 
 #define arduino_timeout 9000
+#define SERIAL_NUMBER_BASE 10
 
 int arduino_check(enum sp_return result)
 {
@@ -23,10 +26,13 @@ int arduino_check(enum sp_return result)
             error_message = sp_last_error_message();
             sloge("error: serial write failed: %s", error_message);
             sp_free_error_message(error_message);
+            return result;
         case SP_ERR_SUPP:
             printf("Error: Not supported.\n");
+            return result;
         case SP_ERR_MEM:
             printf("Error: Couldn't allocate memory.\n");
+            return result;
         case SP_OK:
         default:
             return result;
@@ -48,6 +54,11 @@ int arduino_update(SerialDevice* serialdevice, void* data, size_t size)
 int GetNumberOfLeds(SerialDevice* serialdevice, int* numlights)
 
 {
+    if (serialdevice == NULL || numlights == NULL)
+    {
+        return -1;
+    }
+
     int count = 0;
     int bytesWaiting;
     char buf[256];
@@ -109,8 +120,22 @@ int GetNumberOfLeds(SerialDevice* serialdevice, int* numlights)
                         count++;
                     }
                 }
-                int ret = atoi(buf);
-                *numlights = ret;
+                char* endptr = NULL;
+                errno = 0;
+                long parsed_lights = strtol(buf, &endptr, SERIAL_NUMBER_BASE);
+                while (endptr != NULL && (*endptr == '\r' || *endptr == '\n'))
+                {
+                    endptr++;
+                }
+
+                if (errno == ERANGE || endptr == buf || parsed_lights < 0 ||
+                    parsed_lights > INT_MAX || (endptr != NULL && *endptr != '\0'))
+                {
+                    sloge("Invalid LED count received from serial device: %s", buf);
+                    return -1;
+                }
+
+                *numlights = (int)parsed_lights;
                 return retval;
             }
         }

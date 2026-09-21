@@ -13,11 +13,11 @@ int cargopit_mainloop(CargopitSettings* ms);
 int start_loop(CargopitSettings* ms);
 int start_test(test_loop_args* test_loop_data);
 int cargopit_mainloop_stop(CargopitSettings* ms);
-int cargopit_testloop_stop();
+int cargopit_testloop_stop(void);
 
 const char* get_simd_onoff(void);
 const char* get_simexe_name(void);
-SimData* get_test_simdata();
+SimData* get_test_simdata(void);
 
 
 void set_basic_simdata(SimData* simdata);

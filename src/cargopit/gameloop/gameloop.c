@@ -234,7 +234,7 @@ static void close_walk_cb(uv_handle_t* handle, void* arg)
 }
 #define ASSERT(expr) expr
 
-int showstats(SimData* simdata)
+static void showstats(SimData* simdata)
 {
     printf("\r");
     for (int i=0; i<4; i++)
@@ -255,7 +255,6 @@ int showstats(SimData* simdata)
             {
                 while (speed > 0)
                 {
-                    int mod = speed % 10;
                     speed = speed / 10;
                     digits++;
                 }
@@ -298,7 +297,6 @@ int showstats(SimData* simdata)
             {
                 while (rpms > 0)
                 {
-                    int mod = rpms % 10;
                     rpms = rpms / 10;
                     digits++;
                 }
@@ -351,7 +349,6 @@ int showstats(SimData* simdata)
             {
                 while (alt > 0)
                 {
-                    int mod = alt % 10;
                     alt = alt / 10;
                     digits++;
                 }
@@ -420,18 +417,20 @@ void tyrediametercheckcallback(uv_timer_t* handle)
     device_loop_data* f = (device_loop_data*) b;
     SimData* simdata = f->simdata;
 
-    if(simdata->car != NULL || simdata->car[0] != 0)
+    if (simdata->car[0] != '\0')
     {
         slogi("car is %s", simdata->car);
         // check for saved tyre diameter in config file
         // if not saved version exists get tyre diameter and save it
         // use config check variable to track if the config check has been performed
         // avoid many opens of the same file
-        int error = 0;
         if(hasTyreDiameter(simdata)==false && f->ms->configcheck == 0)
         {
             slogi("attempting load of tyre diameter config");
-            error = loadtyreconfig(simdata, f->ms->tyre_diameter_config, true);
+            if (loadtyreconfig(simdata, f->ms->tyre_diameter_config, true) != 0)
+            {
+                slogw("could not load tyre diameter config");
+            }
             f->ms->configcheck = 1;
         }
 
@@ -972,7 +971,12 @@ void cb(uv_poll_t* handle, int status, int events)
     void* b = uv_handle_get_data((uv_handle_t*) handle);
     loop_data* f = (loop_data*) b;
     char ch;
-    scanf("%c", &ch);
+    ssize_t bytes_read = read(STDIN_FILENO, &ch, sizeof(ch));
+    if (bytes_read != sizeof(ch))
+    {
+        return;
+    }
+
     if (ch == 'q')
     {
         if(f->releasing == false && doui == false)
@@ -1056,7 +1060,7 @@ void* cargopit_mainloop_start(void* arg)
     return NULL;
 }
 
-SimData* get_test_simdata()
+SimData* get_test_simdata(void)
 {
     if(test_baton == NULL)
     {
@@ -1103,7 +1107,7 @@ void* cargopit_testloop_start(void* arg)
     return NULL;
 }
 
-int cargopit_testloop_stop()
+int cargopit_testloop_stop(void)
 {
     uv_timer_stop(&testdevicetimer);
 
@@ -1798,9 +1802,18 @@ static void tester_sweep_rpm(
 
 static SimMap* tester_open_map(SimData* simdata)
 {
-    SimMap* testsimmap = malloc(sizeof(SimMap));
+    if (simdata == NULL)
+    {
+        return NULL;
+    }
+
+    SimMap* testsimmap = calloc(1, sizeof(*testsimmap));
+    if (testsimmap == NULL)
+    {
+        return NULL;
+    }
+
     int shmerr;
-    memset(testsimmap, 0, sizeof(SimMap));
     shmerr = simapi_universalmap_open(testsimmap, simdata);
     if (shmerr == SIMAPI_ERROR_NONE)
     {
@@ -1817,16 +1830,26 @@ static void tester_close_map(
     int numdevices,
     SimData* simdata)
 {
-    if (testsimmap == NULL)
+    if (simdata == NULL)
     {
         return;
     }
+
     simdata->simon = false;
     simdata->simstatus = SIMAPI_STATUS_OFF;
     update_devices(devices, numdevices, simdata, testsimmap);
-    munmap(testsimmap->addr, sizeof(SimData));
-    close(testsimmap->fd);
-    free(testsimmap);
+    if (testsimmap != NULL)
+    {
+        if (testsimmap->addr != NULL)
+        {
+            munmap(testsimmap->addr, sizeof(SimData));
+        }
+        if (testsimmap->fd >= 0)
+        {
+            close(testsimmap->fd);
+        }
+        free(testsimmap);
+    }
 }
 
 static void tester_phase(
@@ -2026,8 +2049,12 @@ int tester(SimDevice* devices, int numdevices)
     tester_enable_log_flush();
     slogi(TEST_STEP_PREFIX TEST_MSG_PREPARING, numdevices);
 
-    simdata = malloc(sizeof(SimData));
-    memset(simdata, 0, sizeof(SimData));
+    simdata = calloc(1, sizeof(*simdata));
+    if (simdata == NULL)
+    {
+        sloge("Could not allocate test telemetry state");
+        return 1;
+    }
     tester_set_identity(simdata);
     testsimmap = tester_open_map(simdata);
     raw_applied = tester_enter_raw_stdin(&canonicalmode);

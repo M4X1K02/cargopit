@@ -29,12 +29,17 @@
 
 int moza_ks_pro_wheel_update(SerialDevice* serialdevice, SimData* simData)
 {
+    if (serialdevice == NULL || simData == NULL || simData->maxrpm <= 0)
+    {
+        return -1;
+    }
+
     static uint8_t last_flag = 0xff;
     unsigned char bytes[] = MOZA_RPM_MASK_TEMPLATE;
-    int size = MOZA_RPM_MASK_PAYLOAD_SIZE;
+    size_t size = MOZA_RPM_MASK_PAYLOAD_SIZE;
     float perctflt = ((float)simData->rpms/(float)simData->maxrpm)*100;
-    int perct = round(perctflt);
-    if (perct >= 98 && (simData->mtick >> 7) & 1 == 1) perct = 0;
+    int perct = (int)round(perctflt);
+    if (perct >= 98 && (((simData->mtick >> 7) & 1U) == 1U)) perct = 0;
 
 
     if (perct >= 75)

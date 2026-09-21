@@ -23,6 +23,8 @@ int usbdev_update(SimDevice* this, SimData* simdata)
             // this should be directed via vtable to wheeldevice.c
             //wheeldev_update(usbdevice, simdata);
             break;
+        case USBDEV_GENERICHAPTIC:
+            break;
     }
 
     return 0;
@@ -41,6 +43,8 @@ int usbdev_free(SimDevice* this)
             break;
         case USBDEV_WHEEL_OR_PEDALS :
             wheeldev_free(usbdevice);
+            break;
+        case USBDEV_GENERICHAPTIC:
             break;
     }
 
@@ -64,6 +68,8 @@ int usbdev_init(USBDevice* usbdevice, DeviceSettings* ds, SimInfo* siminfo)
         case USBDEV_WHEEL_OR_PEDALS :
             error = wheeldev_init(usbdevice, ds);
             break;
+        case USBDEV_GENERICHAPTIC:
+            break;
     }
 
     return error;
@@ -75,8 +81,17 @@ static const vtable usb_wheeldevice_vtable = { &wheeldev_update, &usbdev_free };
 static const vtable usb_wheelhaptic_vtable = { &wheelhapticdev_update, &usbdev_free };
 
 USBDevice* new_usb_device(DeviceSettings* ds, CargopitSettings* ms, SimInfo* siminfo) {
+    if (ds == NULL || ms == NULL || siminfo == NULL)
+    {
+        return NULL;
+    }
 
-    USBDevice* this = (USBDevice*) malloc(sizeof(USBDevice));
+    USBDevice* this = calloc(1, sizeof(*this));
+    if (this == NULL)
+    {
+        return NULL;
+    }
+
     int error = 0;
 
     this->m.update = &update;
@@ -103,7 +118,6 @@ USBDevice* new_usb_device(DeviceSettings* ds, CargopitSettings* ms, SimInfo* sim
         }
         else
         {
-            int error = 0;
             this->type = USBDEV_WHEEL_OR_PEDALS;
             initializeHapticEffect(&this->m.hapticeffect, &ds->hapticsettings, ms);
             this->m.vtable = &usb_wheelhaptic_vtable;

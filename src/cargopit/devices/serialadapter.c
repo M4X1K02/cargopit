@@ -10,6 +10,10 @@
 #include "serialadapter.h"
 #include "../slog/slog.h"
 
+#define SERIAL_DEVICE_CAPACITY 20
+
+static cargopit_serial_device cargopit_serial_devices[SERIAL_DEVICE_CAPACITY];
+
 int msastrcicmp(char const *a, char const *b)
 {
     for (;; a++, b++) {
@@ -46,6 +50,12 @@ int check(enum sp_return result)
 
 int cargopit_serial_free(SerialDevice* serialdevice)
 {
+    if (serialdevice == NULL || serialdevice->id < 0 ||
+        serialdevice->id >= SERIAL_DEVICE_CAPACITY)
+    {
+        return -1;
+    }
+
     cargopit_serial_device cargopit_serial_dev = cargopit_serial_devices[serialdevice->id];
 
     if(cargopit_serial_dev.open == true)
@@ -78,11 +88,16 @@ int cargopit_serial_free(SerialDevice* serialdevice)
         }
 
     }
-}
 
+    return 0;
+}
 
 int cargopit_wait_for_event(uint8_t serialdevicenum, int event)
 {
+    if (serialdevicenum >= SERIAL_DEVICE_CAPACITY)
+    {
+        return -1;
+    }
 
     slogt("serial device id %i", serialdevicenum);
     cargopit_serial_device cargopit_serial_dev = cargopit_serial_devices[serialdevicenum];
@@ -117,6 +132,11 @@ int cargopit_wait_for_event(uint8_t serialdevicenum, int event)
 
 int cargopit_input_wait(uint8_t serialdevicenum)
 {
+    if (serialdevicenum >= SERIAL_DEVICE_CAPACITY)
+    {
+        return -1;
+    }
+
     cargopit_serial_device cargopit_serial_dev = cargopit_serial_devices[serialdevicenum];
     return sp_input_waiting(cargopit_serial_dev.port);
 }
@@ -124,6 +144,11 @@ int cargopit_input_wait(uint8_t serialdevicenum)
 // Helper function to get and validate device
 static cargopit_serial_device* cargopit_get_serial_device(uint8_t serialdevicenum)
 {
+    if (serialdevicenum >= SERIAL_DEVICE_CAPACITY)
+    {
+        return NULL;
+    }
+
     cargopit_serial_device* dev = &cargopit_serial_devices[serialdevicenum];
     slogt("serial device id %i", serialdevicenum);
     slogt("port name: %s, busy %i, open %i, openfail %i", dev->portname, dev->busy, dev->open, dev->openfail);
@@ -139,6 +164,10 @@ static cargopit_serial_device* cargopit_get_serial_device(uint8_t serialdevicenu
 int cargopit_serial_write(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
+    if (dev == NULL)
+    {
+        return -1;
+    }
 
     int result = -1;
     if(dev->busy == false && dev->open == true)
@@ -159,6 +188,10 @@ int cargopit_serial_write(uint8_t serialdevicenum, void* data, size_t size, int 
 int cargopit_serial_write_block(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
+    if (dev == NULL)
+    {
+        return -1;
+    }
 
     int result = -1;
     if(dev->open == true)
@@ -181,6 +214,10 @@ int cargopit_serial_write_block(uint8_t serialdevicenum, void* data, size_t size
 int cargopit_serial_read_block(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
+    if (dev == NULL)
+    {
+        return -1;
+    }
 
     int result = -1;
     if(dev->open == true)
@@ -207,6 +244,11 @@ int cargopit_serial_read_block(uint8_t serialdevicenum, void* data, size_t size,
 int cargopit_serial_share_port(uint8_t serialdevicenum)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
+    if (dev == NULL)
+    {
+        return -1;
+    }
+
     if (dev->port == NULL || dev->open == false)
     {
         return -1;
@@ -239,10 +281,15 @@ int cargopit_serial_share_port(uint8_t serialdevicenum)
 
 int cargopit_serial_open(SerialDevice* serialdevice, const char* portdev)
 {
+    if (serialdevice == NULL || portdev == NULL)
+    {
+        return -1;
+    }
+
     int serial_device_num = -1;
     bool notfound = true;
     slogi("looking to open physical serialdevice %s", portdev);
-    for(int i = 0; i < 10; i++)
+    for (int i = 0; i < SERIAL_DEVICE_CAPACITY; i++)
     {
         if(cargopit_serial_devices[i].open == true && cargopit_serial_devices[i].openfail == false)
         {
@@ -260,22 +307,32 @@ int cargopit_serial_open(SerialDevice* serialdevice, const char* portdev)
     {
         slogd("no existing connections found, looking to create new");
         int i = -1;
-        bool avail = false;
-        while(avail == false)
+        for (int candidate = 0; candidate < SERIAL_DEVICE_CAPACITY; candidate++)
         {
-            i++;
-            if(cargopit_serial_devices[i].open == false && cargopit_serial_devices[i].openfail == false)
+            if (cargopit_serial_devices[candidate].open == false &&
+                cargopit_serial_devices[candidate].openfail == false)
             {
-                avail = true;
+                i = candidate;
                 break;
             }
+        }
+
+        if (i < 0)
+        {
+            sloge("No serial device slots are available");
+            return -1;
         }
 
 
         slogi("opening physical serial device...");
         int error = 0;
         char* port_name = strdup(portdev);
-        cargopit_serial_devices[i].portname = strdup(port_name);
+        if (port_name == NULL)
+        {
+            return -1;
+        }
+
+        cargopit_serial_devices[i].portname = port_name;
 
         struct sp_port* sp;
         slogd("Looking for port %s", port_name);
@@ -284,7 +341,6 @@ int cargopit_serial_open(SerialDevice* serialdevice, const char* portdev)
         {
             sloge("Error opening serial port");
             free(port_name);
-            free(cargopit_serial_devices[i].portname);
             cargopit_serial_devices[i].portname = NULL;
             cargopit_serial_devices[i].open = false;
             cargopit_serial_devices[i].openfail = false;
@@ -313,7 +369,6 @@ int cargopit_serial_open(SerialDevice* serialdevice, const char* portdev)
 
         serial_device_num = i;
 
-        free(port_name);
         slogd("Successfully setup cargopit serial device...");
     }
 

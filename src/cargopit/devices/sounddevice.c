@@ -389,7 +389,7 @@ int sounddev_suspension_update(SimDevice* this, SimData* simdata)
 
 int sounddev_gearshift_update(SimDevice* this, SimData* simdata)
 {
-    gear_sound_set(this, simdata);
+    return gear_sound_set(this, simdata);
 }
 
 
@@ -485,8 +485,16 @@ static const vtable absbrakes_sound_simdevice_vtable = { &sounddev_absbrakes_upd
 static const vtable suspension_sound_simdevice_vtable = { &sounddev_suspension_update, &sounddev_free };
 
 SoundDevice* new_sound_device(DeviceSettings* ds, CargopitSettings* ms, SimInfo* siminfo) {
+    if (ds == NULL || ms == NULL || siminfo == NULL)
+    {
+        return NULL;
+    }
 
-    SoundDevice* this = (SoundDevice*) calloc(1, sizeof(SoundDevice));
+    SoundDevice* this = calloc(1, sizeof(*this));
+    if (this == NULL)
+    {
+        return NULL;
+    }
 
     this->m.update = &update;
     this->m.free = &simdevfree;
@@ -504,8 +512,9 @@ SoundDevice* new_sound_device(DeviceSettings* ds, CargopitSettings* ms, SimInfo*
                 slogw("Skipping sound effect setup because sim does not support haptic effects");
                 error = CARGOPIT_ERROR_UNSUPPORTED_SIM_FEATURE;
             }
-        defaut:
-            error = 0;
+            break;
+        default:
+            break;
     }
 
 

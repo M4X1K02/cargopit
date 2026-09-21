@@ -7,7 +7,7 @@ extern pa_threaded_mainloop* mainloop;
 extern pa_context* context;
 
 
-int setupsound();
-int freesound();
+int setupsound(void);
+int freesound(void);
 
 #endif
