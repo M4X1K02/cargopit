@@ -35,3 +35,17 @@ jobs:
         run: ctest --test-dir build --output-on-failure --timeout 30
       - name: TUI tests
         run: cargo test --manifest-path tui/Cargo.toml --target-dir build/tui
+
+  static-analysis:
+    name: Legacy C static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Update apt
+        run: sudo apt update
+      - name: Install C dependencies
+        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+      - name: Run static analysis
+        run: bash tools/static-analysis.sh --ci --build-dir build/static-analysis

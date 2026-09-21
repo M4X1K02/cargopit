@@ -647,9 +647,17 @@ int loadtachconfig(char* config_file, DeviceSettings* ds)
 }
 
 int gettyre(config_setting_t* device_settings, DeviceSettings* ds) {
+    if (device_settings == NULL || ds == NULL)
+    {
+        return CONFIG_FALSE;
+    }
 
-    const char* temp;
+    const char* temp = NULL;
     int found = config_setting_lookup_string(device_settings, "tyre", &temp);
+    if (!found || temp == NULL)
+    {
+        return found;
+    }
 
     ds->hapticsettings.tyre = ALLFOUR;
 
@@ -677,6 +685,8 @@ int gettyre(config_setting_t* device_settings, DeviceSettings* ds) {
     {
         ds->hapticsettings.tyre = REARRIGHT;
     }
+
+    return found;
 
 }
 

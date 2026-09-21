@@ -12,10 +12,13 @@ readonly SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly DEFAULT_BUILD_DIR="${SOURCE_DIR}/build/static-analysis"
 readonly PROJECT_C_PATH="src/cargopit"
 readonly UNSAFE_API_PATTERN='(^|[^[:alnum:]_])(gets|strcpy|strcat|sprintf|vsprintf|scanf|sscanf|fscanf|strncpy|strncat|atoi|atol|atof|system|popen)[[:space:]]*\('
+readonly CI_WARNING_PATTERN='warning:.*\[-W(analyzer-|array-bounds|stringop-overflow|format-overflow|format-truncation|return-type|free-nonheap-object|use-after-free)'
+readonly CI_WARNING_EXCLUDE_PATTERN="/src/cargopit/simulatorapi/"
 
 build_dir="${DEFAULT_BUILD_DIR}"
 strict=0
 skip_build=0
+ci=0
 
 usage() {
     cat <<EOF
@@ -29,6 +32,8 @@ Options:
   --skip-build     Only run the source API audit
   --strict         Return failure when the API audit finds a match and treat
                    compiler diagnostics as errors
+  --ci             Fail on high-confidence analyzer diagnostics and unsafe
+                   API findings; intended for continuous integration
   -h, --help       Show this help
 EOF
 }
@@ -53,6 +58,10 @@ while (($# > 0)); do
             strict=1
             shift
             ;;
+        --ci)
+            ci=1
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -62,6 +71,10 @@ while (($# > 0)); do
             ;;
     esac
 done
+
+if ((ci == 1 && skip_build == 1)); then
+    fail "--ci requires a build; remove --skip-build"
+fi
 
 if [[ "${build_dir}" != /* ]]; then
     build_dir="${SOURCE_DIR}/${build_dir}"
@@ -93,7 +106,25 @@ if ((skip_build == 0)); then
     )
 
     "${cmake_command}" "${cmake_args[@]}"
-    "${cmake_command}" --build "${build_dir}" --parallel
+    analysis_log="${build_dir}/static-analysis.log"
+    if ! "${cmake_command}" --build "${build_dir}" --parallel 2>&1 |
+        tee "${analysis_log}"; then
+        exit 1
+    fi
+
+    if ((ci == 1)); then
+        ci_findings="$(
+            grep -nE "${CI_WARNING_PATTERN}" "${analysis_log}" |
+                grep -vF "${CI_WARNING_EXCLUDE_PATTERN}" ||
+                true
+        )"
+        if [[ -n "${ci_findings}" ]]; then
+            printf 'High-confidence static analysis diagnostics found:\n%s\n' \
+                "${ci_findings}" >&2
+            exit 1
+        fi
+        printf 'CI static analysis diagnostic gate passed.\n'
+    fi
 fi
 
 git_command="${GIT:-git}"
