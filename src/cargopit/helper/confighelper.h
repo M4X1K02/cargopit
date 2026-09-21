@@ -265,6 +265,9 @@ DeviceSettings;
 
 int strtogame(const char* game, CargopitSettings* ms);
 
+int strtoeffecttype(const char* effect, DeviceSettings* ds);
+int strtodevsubtype(const char* device_subtype, DeviceSettings* ds, int simdev);
+int strtodev(const char* device_type, const char* device_subtype, DeviceSettings* ds);
 int strtodevsubsubtype(const char* device_subsubtype, DeviceSettings* ds);
 
 int devsetup(const char* device_type, const char* device_subtype, const char* config_files, CargopitSettings* ms, DeviceSettings* ds, config_setting_t* device_settings);

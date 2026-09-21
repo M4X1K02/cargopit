@@ -25,6 +25,11 @@
 
 int strcicmp(char const *a, char const *b)
 {
+    if (a == NULL || b == NULL)
+    {
+        return (a == NULL) - (b == NULL);
+    }
+
     for (;; a++, b++) {
         int d = tolower((unsigned char)*a) - tolower((unsigned char)*b);
         if (d != 0 || !*a)
@@ -61,6 +66,11 @@ static uint32_t lookup_pipewire_stream_volume(const config_setting_t* device_set
 
 int strtoeffecttype(const char* effect, DeviceSettings* ds)
 {
+    if (effect == NULL || ds == NULL)
+    {
+        return CARGOPIT_ERROR_INVALID_DEV;
+    }
+
     ds->is_valid = false;
 
     if (strcicmp(effect, "Engine") == 0)
@@ -100,9 +110,9 @@ int strtoeffecttype(const char* effect, DeviceSettings* ds)
     if (ds->is_valid == false)
     {
         slogw("effect %s is not a valid effect", effect);
+        return CARGOPIT_ERROR_INVALID_DEV;
     }
 
-    ds->is_valid = true;
     return CARGOPIT_ERROR_NONE;
 }
 
@@ -189,6 +199,11 @@ int strtodevsubsubtype(const char* device_subsubtype, DeviceSettings* ds)
 
 int strtodevsubtype(const char* device_subtype, DeviceSettings* ds, int simdev)
 {
+    if (device_subtype == NULL || ds == NULL)
+    {
+        return CARGOPIT_ERROR_INVALID_DEV;
+    }
+
     ds->is_valid = false;
     ds->dev_subtype = SIMDEVTYPE_UNKNOWN;
 
@@ -209,6 +224,7 @@ int strtodevsubtype(const char* device_subtype, DeviceSettings* ds, int simdev)
                 ds->dev_subtype = SIMDEVTYPE_USBHAPTIC;
                 break;
             }
+            break;
         case SIMDEV_SERIAL:
             if (strcicmp(device_subtype, "ShiftLights") == 0)
             {
@@ -241,6 +257,7 @@ int strtodevsubtype(const char* device_subtype, DeviceSettings* ds, int simdev)
                 ds->dev_subtype = SIMDEVTYPE_SERIALWHEEL;
                 break;
             }
+            break;
         case SIMDEV_SOUND:
             ds->is_valid = true;
             break;
@@ -249,6 +266,14 @@ int strtodevsubtype(const char* device_subtype, DeviceSettings* ds, int simdev)
             slogw("%s does not appear to be a valid device sub type, but attempting to continue with other devices", device_subtype);
             return CARGOPIT_ERROR_INVALID_DEV;
     }
+
+    if (simdev != SIMDEV_SOUND && ds->dev_subtype == SIMDEVTYPE_UNKNOWN)
+    {
+        ds->is_valid = false;
+        slogw("%s does not appear to be a valid device sub type, but attempting to continue with other devices", device_subtype);
+        return CARGOPIT_ERROR_INVALID_DEV;
+    }
+
     ds->is_valid = true;
     return CARGOPIT_ERROR_NONE;
 }
@@ -259,19 +284,31 @@ int strtodev(const char* device_type, const char* device_subtype, DeviceSettings
     if (strcicmp(device_type, "USB") == 0)
     {
         ds->dev_type = SIMDEV_USB;
-        strtodevsubtype(device_subtype, ds, SIMDEV_USB);
+        int error = strtodevsubtype(device_subtype, ds, SIMDEV_USB);
+        if (error != CARGOPIT_ERROR_NONE)
+        {
+            return error;
+        }
     }
     else
         if (strcicmp(device_type, "Sound") == 0)
         {
             ds->dev_type = SIMDEV_SOUND;
-            strtodevsubtype(device_subtype, ds, SIMDEV_SOUND);
+            int error = strtodevsubtype(device_subtype, ds, SIMDEV_SOUND);
+            if (error != CARGOPIT_ERROR_NONE)
+            {
+                return error;
+            }
         }
         else
             if (strcicmp(device_type, "Serial") == 0)
             {
                 ds->dev_type = SIMDEV_SERIAL;
-                strtodevsubtype(device_subtype, ds, SIMDEV_SERIAL);
+                int error = strtodevsubtype(device_subtype, ds, SIMDEV_SERIAL);
+                if (error != CARGOPIT_ERROR_NONE)
+                {
+                    return error;
+                }
             }
             else
             {
@@ -1063,7 +1100,7 @@ int load_device_configs(const char* config_file_str, int confignum, int configur
         while (i<configureddevices)
         {
             error = CARGOPIT_ERROR_NONE;
-            DeviceSettings settings;
+            DeviceSettings settings = {0};
 
             config_setting_t* config_device = config_setting_get_elem(config_devices, i);
             const char* device_type = NULL;

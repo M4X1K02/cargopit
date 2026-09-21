@@ -358,7 +358,6 @@ static void slog_display_heap(const slog_context_t *pCtx, va_list args)
     char sLogInfo[SLOG_INFO_MAX];
 
     nBytes += vasprintf(&pMessage, pCtx->pFormat, args);
-    va_end(args);
 
     if (pMessage == NULL)
     {

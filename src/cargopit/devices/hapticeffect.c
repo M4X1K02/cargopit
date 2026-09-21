@@ -79,7 +79,7 @@ int loadtyreconfig(SimData* simdata, char* configfile, bool setDiameters)
         config_setting_t* config_car = config_setting_get_elem(config_cars, i);
         if(config_car != NULL)
         {
-            const char* car;
+            const char* car = NULL;
             const char* simstr;
             int sim = 0;
             double tyre0;
