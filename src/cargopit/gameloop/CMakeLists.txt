@@ -4,6 +4,8 @@ set(gameloop_source_files
   tester.c
   devicerunner.c
   devicerunner.h
+  control.c
+  control.h
   acr_udp.c
   acr_udp.h
   tachconfig.c

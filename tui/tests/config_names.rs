@@ -17,7 +17,9 @@ fn c_name_tables() -> HashMap<String, Vec<String>> {
     let mut current: Option<String> = None;
     for line in DEVICENAMES_H.lines().map(str::trim) {
         if let Some(rest) = line.strip_prefix(TABLE_PREFIX) {
-            current = rest.split_once(TABLE_SUFFIX).map(|(name, _)| name.to_string());
+            current = rest
+                .split_once(TABLE_SUFFIX)
+                .map(|(name, _)| name.to_string());
             continue;
         }
         let Some(table) = current.as_ref() else {
@@ -28,7 +30,10 @@ fn c_name_tables() -> HashMap<String, Vec<String>> {
             continue;
         };
         if let Some((name, _)) = rest.split_once(QUOTE) {
-            tables.entry(table.clone()).or_default().push(name.to_lowercase());
+            tables
+                .entry(table.clone())
+                .or_default()
+                .push(name.to_lowercase());
         }
     }
     tables

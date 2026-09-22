@@ -11,6 +11,7 @@ use crossterm::event::{
 
 use crate::config::{self, CargopitConfig, DeviceEntry, SimProfile};
 use crate::consts;
+use crate::control;
 use crate::diagnostics::{self, Diagnostics};
 use crate::form::DeviceForm;
 use crate::hardware::Discovery;
@@ -68,6 +69,7 @@ pub struct App {
     pub raw_on_disk: String,
     pub tui_state: TuiState,
     pub status: ProcessStatus,
+    pub play_status: Option<control::PlayStatus>,
     pub discovery: Discovery,
     pub logs: LogState,
     pub message: String,
@@ -128,6 +130,7 @@ impl App {
             raw_on_disk,
             tui_state,
             status: ProcessStatus::default(),
+            play_status: None,
             discovery: Discovery::default(),
             logs: LogState::new(),
             message: String::new(),
@@ -271,6 +274,7 @@ impl App {
     fn refresh_runtime(&mut self) {
         let listing = process::process_listing();
         self.status = process::check_processes_from(&listing);
+        self.play_status = self.status.cargopit_running.then(control::status).flatten();
         self.discovery = Discovery::live();
         self.logs.refresh_files();
         self.extra_games = simapi_shm::extras_from_listing(&self.simd, &listing);
@@ -634,6 +638,24 @@ impl App {
         self.spawn_play_session();
     }
 
+    /// Hot-reload devices when the running session plays this profile; restart otherwise.
+    fn apply_saved_profile(&mut self) {
+        if !self.play_is_live() {
+            return;
+        }
+        if self.live_session_uses_current_profile() && control::reload() {
+            self.message = consts::MSG_RELOADED_PLAY.into();
+            return;
+        }
+        self.restart_play();
+    }
+
+    fn live_session_uses_current_profile(&self) -> bool {
+        control::status().is_some_and(|status| {
+            usize::try_from(status.config_index).ok() == Some(self.profile_index)
+        })
+    }
+
     fn toggle_test(&mut self) {
         self.request_test(TestScope::default(), true);
     }
@@ -978,9 +1000,7 @@ impl App {
                 if self.form.error.is_some() {
                     return Ok(());
                 }
-                if self.play_is_live() {
-                    self.restart_play();
-                }
+                self.apply_saved_profile();
             }
             _ => {}
         }
@@ -1095,7 +1115,7 @@ impl App {
                 }
             }
             ConfirmKind::RestartAfterSave => {
-                self.restart_play();
+                self.apply_saved_profile();
             }
             ConfirmKind::ApplyTemplate(index) => {
                 if let Some(template) = templates::all().get(index) {

@@ -9,6 +9,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 
 use crate::consts;
+use crate::control;
 use crate::paths;
 use crate::tui_state::PlayFlags;
 
@@ -384,11 +385,26 @@ fn send_kill_signal(target: &str) {
 }
 
 pub fn stop_all() -> Vec<String> {
-    stop_named(&[consts::BINARY_SIMD, consts::BINARY_CARGOPIT])
+    let mut stopped = stop_play_via_control();
+    stopped.extend(stop_named(&[consts::BINARY_SIMD, consts::BINARY_CARGOPIT]));
+    stopped
 }
 
 pub fn stop_play() -> Vec<String> {
+    let stopped = stop_play_via_control();
+    if !stopped.is_empty() {
+        return stopped;
+    }
     stop_named(&[consts::BINARY_CARGOPIT])
+}
+
+/// Clean shutdown through the play session's control socket; devices are released before it exits.
+fn stop_play_via_control() -> Vec<String> {
+    if !control::stop() {
+        return Vec::new();
+    }
+    wait_until_stopped(consts::BINARY_CARGOPIT);
+    vec![consts::MSG_STOPPED_PLAY_CONTROL.to_string()]
 }
 
 fn stop_named(names: &[&str]) -> Vec<String> {

@@ -43,7 +43,7 @@ One profile is the hardware map for every game. Add, edit, duplicate, disable, r
 
 ### Tune
 
-Sound rows show the speaker mask and the effect sliders (volume, frequency, threshold). Save writes the config. Apply restarts play when it was already running.
+Sound rows show the speaker mask and the effect sliders (volume, frequency, threshold). Save writes the config. Apply reloads the devices of a running play session through its control socket when that session plays the same profile, and restarts play otherwise.
 
 ![Offline tune for an engine shaker, right channel](docs/tui/tune.png)
 

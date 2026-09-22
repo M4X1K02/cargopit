@@ -41,6 +41,17 @@ pub const ENV_XDG_STATE_HOME: &str = "XDG_STATE_HOME";
 pub const ENV_HOME: &str = "HOME";
 pub const ENV_PATH: &str = "PATH";
 pub const ENV_TERM: &str = "TERM";
+pub const ENV_XDG_RUNTIME_DIR: &str = "XDG_RUNTIME_DIR";
+
+// Control socket of a running `cargopit play` (src/cargopit/gameloop/control.h).
+pub const CONTROL_SOCKET_NAME: &str = "cargopit.sock";
+pub const CONTROL_SOCKET_FALLBACK_PREFIX: &str = "/tmp/cargopit-";
+pub const CONTROL_SOCKET_FALLBACK_SUFFIX: &str = ".sock";
+pub const CONTROL_CMD_STATUS: &str = "status";
+pub const CONTROL_CMD_RELOAD: &str = "reload";
+pub const CONTROL_CMD_STOP: &str = "stop";
+pub const CONTROL_TIMEOUT_MS: u64 = 500;
+pub const PROC_SELF: &str = "/proc/self";
 pub const TERM_DUMB: &str = "dumb";
 
 pub const LOCAL_BIN_DIRNAME: &str = ".local/bin";
@@ -415,6 +426,14 @@ pub const ACTION_HINTS: &[&str] = &[
 ];
 
 pub const MSG_STARTED_PLAY: &str = "Started cargopit play";
+pub const MSG_RELOADED_PLAY: &str = "Reloaded devices in the running play session";
+pub const MSG_STOPPED_PLAY_CONTROL: &str = "cargopit (control socket)";
+pub const LABEL_PLAY_SESSION: &str = "play";
+pub const LABEL_PLAY_DEVICES: &str = "devices";
+pub const LABEL_PLAY_OVERRUNS: &str = "overruns";
+pub const LABEL_PLAY_PAUSED: &str = "paused";
+pub const LABEL_PLAY_RELEASING: &str = "releasing";
+pub const PLAY_STATUS_SEP: &str = " · ";
 pub const MSG_STARTED_TEST: &str = "Started cargopit test";
 pub const MSG_STARTED_DEVICE_TEST: &str = "Started test for this device";
 pub const MSG_PLAY_ALREADY_RUNNING: &str = "cargopit play is already running";
@@ -437,7 +456,7 @@ const _: () =
 const _: () =
     assert!(TEST_PANEL_RUNNING.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize);
 pub const TUNING_OFFLINE_HINT: &str =
-    "Offline tune: save writes disk. Apply restarts play if it was running. Live IPC is not implemented.";
+    "Offline tune: save writes disk. Apply reloads devices in a running play session of this profile, or restarts play.";
 pub const RAW_VIEW_HINT: &str =
     "Read-only view of the last on-disk file (comments are lost on save).";
 pub const DIAGRAM_NO_PROFILE: &str = "No profile selected";

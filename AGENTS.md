@@ -90,7 +90,7 @@ Installer changes should keep `.github/workflows/installer.yml` green. Local con
 bash tools/distro/test-install-containers.sh detect|mocks|immutable|full <distro>
 ```
 
-Logs: `~/.cache/cargopit/*.log`. Valgrind: see README (`cd build && valgrind ... --suppressions=../.valgrindrc`).
+Logs: `~/.cache/cargopit/*.log`. A running `cargopit play` answers `status`, `reload` and `stop` on `$XDG_RUNTIME_DIR/cargopit.sock` (one line in, one JSON line out; e.g. `echo status | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/cargopit.sock`). Valgrind: see README (`cd build && valgrind ... --suppressions=../.valgrindrc`).
 
 ## Conventions
 

@@ -8,6 +8,7 @@
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../simulatorapi/simapi/simapi/simmapper.h"
 #include "devicerunner.h"
+#include "control.h"
 
 /* Ordered: each user quit request steps one state down. */
 typedef enum
@@ -37,6 +38,7 @@ typedef struct loop_data
     bool started_tyre_calc;
     bool signals_started;
     int numdevices;
+    int config_index;
     SimInfo siminfo;
     // cargopit settings is a pointer from cargopit.c and freed there
     CargopitSettings* ms;
@@ -55,6 +57,7 @@ typedef struct loop_data
     uv_signal_t sigterm;
     uv_signal_t sigint;
     uv_poll_t* stdin_poll;
+    ControlServer control;
 } loop_data;
 
 

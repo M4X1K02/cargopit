@@ -225,7 +225,7 @@ Templates only insert; they never wipe the profile without confirm.
 - TUI sends a single device replacement (`confignum`, `devicenum`, fields)
 - Loop applies on the next tick for that device only
 
-Until that socket exists, do not fake live tuning by killing and restarting on every keystroke.
+Status: `cargopit play` now owns a control socket (`$XDG_RUNTIME_DIR/cargopit.sock`, see `src/cargopit/gameloop/control.h` and `tui/src/control.rs`) with `status`, `reload` and `stop`. `reload` releases and recreates every device from the saved profile on the loop, so Apply no longer restarts the process; single-device replacement is still open. Do not fake live tuning by reloading on every keystroke.
 
 Per-device **test** from the old NAppGUI window (synthetic `SimData`, one device) is worth restoring as `t` on the editor. That needs a C CLI flag (e.g. `cargopit test --config-index N --device-index M`) rather than the TUI reimplementing the game loop.
 

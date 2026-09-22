@@ -37,6 +37,19 @@
 #define SIM_NOT_DETECTED                 "None Detected"
 #define SIMD_NOT_DETECTED                "Not Detected"
 #define SIMD_RUNNING                     "Running"
+#define CONTROL_REPLY_OK                 "{\"ok\":true}"
+#define CONTROL_REPLY_UNKNOWN            "{\"ok\":false,\"error\":\"unknown command\"}"
+#define CONTROL_STATUS_MAX               512
+#define CONTROL_NAME_MAX                 128
+#define JSON_TRUE                        "true"
+#define JSON_FALSE                       "false"
+
+static const char* const APP_STATE_NAMES[] =
+{
+    [APPSTATE_EXITING]   = "exiting",
+    [APPSTATE_SEARCHING] = "searching",
+    [APPSTATE_MAPPING]   = "mapping",
+};
 
 /* One play session per process; libuv callbacks reach it through their handle data. */
 static loop_data session;
@@ -139,6 +152,7 @@ static void session_request_exit(loop_data* f)
     {
         uv_close((uv_handle_t*) &f->stop_async, NULL);
     }
+    control_server_stop(&f->control);
     if (f->numdevices > 0 && !f->releasing)
     {
         releaseloop(f);
@@ -844,6 +858,7 @@ static int session_open(loop_data* f, CargopitSettings* ms, uv_loop_t* loop)
     f->ms = ms;
     f->siminfo.mapapi = -1;
     f->state = APPSTATE_SEARCHING;
+    f->config_index = resolve_config_index(ms->config_str, ms->config_index);
 
     simapi_set_log_info(simapilib_loginfo);
     simapi_set_log_debug(simapilib_logdebug);
@@ -877,8 +892,101 @@ static void session_close(loop_data* f)
     f->simmap = NULL;
 }
 
+static const char* session_sim_name(const loop_data* f)
+{
+    if (f->state == APPSTATE_EXITING || f->siminfo.simulatorexe <= 0)
+    {
+        return SIM_NOT_DETECTED;
+    }
+    return simapi_gametofullstr(f->siminfo.simulatorexe);
+}
+
+/* JSON-safe copy of a display name: drops quotes, backslashes and control characters. */
+static void json_safe_copy(char* out, size_t len, const char* in)
+{
+    size_t n = 0;
+    for (; in != NULL && *in != '\0' && n + 1 < len; in++)
+    {
+        if (*in == '"' || *in == '\\' || (unsigned char) *in < ' ')
+        {
+            continue;
+        }
+        out[n++] = *in;
+    }
+    out[n] = '\0';
+}
+
+static char* session_status_json(const loop_data* f)
+{
+    char sim[CONTROL_NAME_MAX];
+    unsigned long updates = 0;
+    unsigned long overruns = 0;
+    int active = 0;
+    char* out = malloc(CONTROL_STATUS_MAX);
+
+    if (out == NULL)
+    {
+        return NULL;
+    }
+    for (int x = 0; f->runners != NULL && x < f->numdevices; x++)
+    {
+        if (!f->runners[x].started)
+        {
+            continue;
+        }
+        active++;
+        updates += (unsigned long) atomic_load(&f->runners[x].updates);
+        overruns += (unsigned long) atomic_load(&f->runners[x].overruns);
+    }
+    json_safe_copy(sim, sizeof(sim), session_sim_name(f));
+    snprintf(out, CONTROL_STATUS_MAX,
+             "{\"ok\":true,\"state\":\"%s\",\"releasing\":%s,\"paused\":%s,\"config_index\":%d,"
+             "\"sim\":\"%s\",\"devices\":%d,\"updates\":%lu,\"overruns\":%lu}",
+             APP_STATE_NAMES[f->state], f->releasing ? JSON_TRUE : JSON_FALSE, f->user_stopped ? JSON_TRUE : JSON_FALSE,
+             f->config_index, sim, active, updates, overruns);
+    return out;
+}
+
+/* Re-read the device profile: release now, and the next detected frame loads devices from disk again. */
+static void session_reload(loop_data* f)
+{
+    f->user_stopped = false;
+    if (f->state == APPSTATE_MAPPING)
+    {
+        slogi("reload requested, releasing devices to load the saved profile");
+        releaseloop(f);
+        return;
+    }
+    if (f->state == APPSTATE_SEARCHING && !f->releasing && !uv_is_active((uv_handle_t*) &f->datachecktimer))
+    {
+        uv_timer_start(&f->datachecktimer, datacheckcallback, 0, SIM_CHECK_INTERVAL_MS);
+    }
+}
+
+static char* handle_control_command(void* ctx, const char* command)
+{
+    loop_data* f = ctx;
+
+    if (strcmp(command, CONTROL_CMD_STATUS) == 0)
+    {
+        return session_status_json(f);
+    }
+    if (strcmp(command, CONTROL_CMD_RELOAD) == 0)
+    {
+        session_reload(f);
+        return strdup(CONTROL_REPLY_OK);
+    }
+    if (strcmp(command, CONTROL_CMD_STOP) == 0)
+    {
+        session_request_exit(f);
+        return strdup(CONTROL_REPLY_OK);
+    }
+    return strdup(CONTROL_REPLY_UNKNOWN);
+}
+
 static void start_cli_controls(loop_data* f)
 {
+    control_server_start(&f->control, f->loop, handle_control_command, f);
     uv_signal_init(f->loop, &f->sigterm);
     uv_signal_init(f->loop, &f->sigint);
     f->sigterm.data = f;
@@ -943,11 +1051,7 @@ int cargopit_mainloop_stop(CargopitSettings* ms)
 
 const char* get_simexe_name(void)
 {
-    if (session.state == APPSTATE_EXITING || session.siminfo.simulatorexe <= 0)
-    {
-        return SIM_NOT_DETECTED;
-    }
-    return simapi_gametofullstr(session.siminfo.simulatorexe);
+    return session_sim_name(&session);
 }
 
 const char* get_simd_onoff(void)
