@@ -161,18 +161,18 @@ static void session_request_exit(loop_data* f)
 
 static void on_stop_requested(uv_async_t* handle)
 {
-    session_request_exit((loop_data*) handle->data);
+    session_request_exit((loop_data*) uv_handle_get_data((uv_handle_t*) handle));
 }
 
 static void stop_mainloop_from_signal(uv_signal_t* handle, int signum)
 {
     slogi("signal %i received, stopping", signum);
-    session_request_exit((loop_data*) handle->data);
+    session_request_exit((loop_data*) uv_handle_get_data((uv_handle_t*) handle));
 }
 
 static void on_stdin_key(uv_poll_t* handle, int status, int events)
 {
-    loop_data* f = (loop_data*) handle->data;
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
     char ch;
 
     (void) status;
@@ -244,7 +244,7 @@ static uv_poll_t* init_stdin_quit_poll(uv_loop_t* loop, struct termios* canonica
 
 void tyrediametercheckcallback(uv_timer_t* handle)
 {
-    loop_data* f = (loop_data*) handle->data;
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
     SimData* simdata = f->simdata;
 
     if (simdata->car[0] != '\0')
@@ -347,7 +347,7 @@ static void load_devices_if_pending(loop_data* f)
     int configureddevices;
     int confignum;
 
-    if (f->devices_pending == false)
+    if (f->devices_pending == false || f->simdevices != NULL)
     {
         return;
     }
@@ -533,7 +533,7 @@ static bool mapping_should_stop(const loop_data* f)
 
 void shmdatamapcallback(uv_timer_t* handle)
 {
-    loop_data* f = (loop_data*) handle->data;
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
 
     if (f->state == APPSTATE_MAPPING)
     {
@@ -567,7 +567,7 @@ static void map_udp_packet(loop_data* f, char* packet, ssize_t nread)
 
 static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf, const struct sockaddr* addr, unsigned flags)
 {
-    loop_data* f = (loop_data*) handle->data;
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
 
     (void) addr;
     (void) flags;
@@ -796,7 +796,7 @@ static void begin_live_mapping(uv_timer_t* handle, loop_data* f)
 
 void datacheckcallback(uv_timer_t* handle)
 {
-    loop_data* f = (loop_data*) handle->data;
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
     SimData* simdata = f->simdata;
     SimMap* simmap = f->simmap;
 
@@ -869,11 +869,11 @@ static int session_open(loop_data* f, CargopitSettings* ms, uv_loop_t* loop)
     uv_timer_init(loop, &f->datamaptimer);
     uv_timer_init(loop, &f->tyrediametertimer);
     uv_async_init(loop, &f->stop_async, on_stop_requested);
-    f->recv_socket.data = f;
-    f->datachecktimer.data = f;
-    f->datamaptimer.data = f;
-    f->tyrediametertimer.data = f;
-    f->stop_async.data = f;
+    uv_handle_set_data((uv_handle_t*) &f->recv_socket, f);
+    uv_handle_set_data((uv_handle_t*) &f->datachecktimer, f);
+    uv_handle_set_data((uv_handle_t*) &f->datamaptimer, f);
+    uv_handle_set_data((uv_handle_t*) &f->tyrediametertimer, f);
+    uv_handle_set_data((uv_handle_t*) &f->stop_async, f);
 
     uv_timer_start(&f->datachecktimer, datacheckcallback, SIM_CHECK_INTERVAL_MS, SIM_CHECK_INTERVAL_MS);
     return 0;
@@ -989,8 +989,8 @@ static void start_cli_controls(loop_data* f)
     control_server_start(&f->control, f->loop, handle_control_command, f);
     uv_signal_init(f->loop, &f->sigterm);
     uv_signal_init(f->loop, &f->sigint);
-    f->sigterm.data = f;
-    f->sigint.data = f;
+    uv_handle_set_data((uv_handle_t*) &f->sigterm, f);
+    uv_handle_set_data((uv_handle_t*) &f->sigint, f);
     uv_signal_start(&f->sigterm, stop_mainloop_from_signal, SIGTERM);
     uv_signal_start(&f->sigint, stop_mainloop_from_signal, SIGINT);
     f->signals_started = true;
@@ -998,7 +998,7 @@ static void start_cli_controls(loop_data* f)
     {
         return;
     }
-    f->stdin_poll->data = f;
+    uv_handle_set_data((uv_handle_t*) f->stdin_poll, f);
     if (uv_poll_start(f->stdin_poll, UV_READABLE, on_stdin_key) != 0)
     {
         slogw("could not start stdin poll; continuing without quit key");

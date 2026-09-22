@@ -53,7 +53,7 @@ static bool socket_has_listener(const char* path)
     }
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
     live = connect(fd, (struct sockaddr*) &addr, sizeof(addr)) == 0;
     close(fd);
     return live;
@@ -75,10 +75,14 @@ static void on_reply_written(uv_write_t* req, int status)
 
 static void send_reply(ControlClient* client, char* reply)
 {
-    size_t len = reply != NULL ? strlen(reply) : 0;
-    char* line = malloc(len + 2);
-
     uv_read_stop((uv_stream_t*) &client->pipe);
+    if (reply == NULL)
+    {
+        uv_close((uv_handle_t*) &client->pipe, free_client);
+        return;
+    }
+    size_t len = strlen(reply);
+    char* line = malloc(len + 2);
     if (line == NULL)
     {
         free(reply);
