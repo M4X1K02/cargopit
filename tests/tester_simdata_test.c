@@ -4,8 +4,6 @@
 #include "../src/cargopit/gameloop/gameloop.h"
 #include "../src/cargopit/simulatorapi/simapi/simapi/simdata.h"
 
-int appstate;
-
 #define TEST_PEDAL_MIN 0.2
 #define TEST_SLIP_SPIN_MAX (-0.2)
 #define TEST_SLIP_LOCK_MIN 0.2

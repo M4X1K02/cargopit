@@ -19,9 +19,9 @@ Follow these on every change:
 
 | Path | Role |
 | --- | --- |
-| `src/cargopit/` | Main C sources: CLI (`cargopit-cli.c`), library (`cargopit.c`) |
+| `src/cargopit/` | Main C sources: entry point (`cargopit.c`, built as the `cargopit` binary and library) |
 | `src/cargopit/devices/` | USB, serial, sound, haptic, wheel, tachometer backends |
-| `src/cargopit/gameloop/` | 60 fps update loop |
+| `src/cargopit/gameloop/` | Play session (`gameloop.c`) and hardware test sequence (`tester.c`) |
 | `src/cargopit/helper/` | Config, CLI parameters, paths, simd startup |
 | `src/arduino/` | Sample sketches (shift lights, simwind, simhaptic, custom Lua serial) |
 | `conf/` | Example `cargopit.config` |
