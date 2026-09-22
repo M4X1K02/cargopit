@@ -111,7 +111,7 @@ impl FieldId {
             FieldId::Type => "Device role: haptic, wheel, tachometer, lights, wind, or custom Lua.",
             FieldId::Subtype => "Hardware model used to pick the USB or serial protocol.",
             FieldId::Enabled => "When false, the device stays in the profile but is not started.",
-            FieldId::Fps => "Device update rate. Unset uses cargopit's 60 fps default.",
+            FieldId::Fps => "Device update rate, 1-1000. Unset uses cargopit's 60 fps default.",
             FieldId::Devid => "USB vendor:product id or PulseAudio sink name.",
             FieldId::Devpath => "Serial port (/dev/ttyACM*) or sysfs rumble path.",
             FieldId::ConfigPath => "Tachometer XML or Lua script path for this device.",
