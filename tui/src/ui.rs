@@ -1719,6 +1719,23 @@ mod tests {
     }
 
     #[test]
+    fn flags_fps_cycles_through_high_rates() {
+        with_app(|app| {
+            app.screen = Screen::SettingsSub(SettingsSub::Flags);
+            app.flags_field = consts::FLAG_FIELD_FPS;
+            let key =
+                |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+            for expected in consts::FPS_FLAG_CHOICES.iter().skip(1) {
+                app.handle_key(key(consts::KEY_RIGHT)).unwrap();
+                assert_eq!(app.tui_state.play_flags.fps, *expected);
+            }
+            assert_eq!(app.tui_state.play_flags.fps, Some(consts::FPS_FLAG_500));
+            app.handle_key(key(consts::KEY_RIGHT)).unwrap();
+            assert_eq!(app.tui_state.play_flags.fps, None);
+        });
+    }
+
+    #[test]
     fn simd_renders_game_table() {
         with_app(|app| {
             app.tab = consts::TAB_SETTINGS;

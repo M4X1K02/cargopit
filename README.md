@@ -71,7 +71,7 @@ Settings follow the sim that is playing. The device profile does not. Flags, `si
 
 ## Features
 
-- 60 fps update loop with a modular USB, serial, and sound backend.
+- Update loop at 60 fps by default, up to 1000 fps (`play --fps` for telemetry, per-device `fps` in `cargopit.config`), with a modular USB, serial, and sound backend.
 - Bass shakers over PulseAudio (including PipeWire's Pulse server): engine rumble, gear shifts, ABS, tyre slip/lock, and suspension. Per-device `enabled` and `streamVolume` keys in `cargopit.config`.
 - USB haptic shakers with engine rumble mapped across the shaker band, plus chassis/tyre gating so effects stay off when the car is not rolling.
 - Tachometers: Revburner only, including existing Revburner XML and `cargopit config tachometer` to write a calibration file.

@@ -118,9 +118,19 @@ pub const DEFAULT_TACH_MAX_REVS: i64 = 8000;
 pub const TACH_REVS_STEP: i64 = 500;
 pub const TACH_REVS_MIN: i64 = 1000;
 pub const FPS_FLAG_30: i64 = 30;
-pub const FPS_FLAG_CHOICE_COUNT: usize = 3;
-pub const FPS_FLAG_CHOICES: [Option<i64>; FPS_FLAG_CHOICE_COUNT] =
-    [None, Some(FPS_FLAG_30), Some(DEFAULT_FPS)];
+// Choices above 60 divide 1000 evenly so cargopit's millisecond mapping timer hits them exactly.
+pub const FPS_FLAG_125: i64 = 125;
+pub const FPS_FLAG_250: i64 = 250;
+pub const FPS_FLAG_500: i64 = 500;
+pub const FPS_FLAG_CHOICE_COUNT: usize = 6;
+pub const FPS_FLAG_CHOICES: [Option<i64>; FPS_FLAG_CHOICE_COUNT] = [
+    None,
+    Some(FPS_FLAG_30),
+    Some(DEFAULT_FPS),
+    Some(FPS_FLAG_125),
+    Some(FPS_FLAG_250),
+    Some(FPS_FLAG_500),
+];
 pub const VOLUME_MIN: i64 = 0;
 pub const VOLUME_MAX: i64 = 100;
 pub const GRANULARITY_ALLOWED: [i64; 3] = [1, 2, 4];
@@ -620,7 +630,7 @@ pub const GAUGE_FRACTION_COUNT: usize = 8;
 pub const GAUGE_FRACTION_GLYPHS: [char; GAUGE_FRACTION_COUNT] =
     [GAUGE_EMPTY, '▏', '▎', '▍', '▌', '▋', '▊', '▉'];
 pub const GAUGE_WIDTH: usize = (GAUGE_PERCENT_MAX as usize).div_ceil(GAUGE_FRACTION_COUNT);
-pub const GAUGE_FPS_MAX: f64 = 120.0;
+pub const GAUGE_FPS_MAX: f64 = FPS_FLAG_500 as f64;
 pub const GAUGE_FREQ_MAX: f64 = 80.0;
 pub const GAUGE_NOISE_MAX: f64 = 50.0;
 pub const GAUGE_CHANNELS_MAX: f64 = 16.0;
@@ -903,7 +913,7 @@ pub const FLAG_HELP: [&str; FLAG_FIELD_COUNT] = [
     "Play/test log verbosity for this sim. 0 is quiet, 1 is -v, 2 is -vv.",
     "Pass --disable_audio so play/test skip PulseAudio output.",
     "Pass --udp to force UDP telemetry when the sim supports it.",
-    "Pass --fps to override the refresh rate. Unset keeps the 60 fps CLI default.",
+    "Pass --fps to override the telemetry rate. Unset keeps the 60 fps default. Raise device fps too.",
     "Pass --log with a file path. Unset writes to the default cache log.",
 ];
 pub const TITLE_NO_PROFILES: &str = "No profiles";
