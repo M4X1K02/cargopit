@@ -279,7 +279,7 @@ static int sounddev_continuous_tone_update(SimDevice* this, SimData* simdata, do
     double play;
     double level;
 
-    play = slipeffect(simdata, &this->hapticeffect, this->hapticeffect.useconfig, this->hapticeffect.configcheck, this->hapticeffect.tyrediameterconfig);
+    play = slipeffect(simdata, &this->hapticeffect);
     if (play <= 0.0 || play_ref <= 0.0)
     {
         data->curr_frequency = 0.0;
@@ -315,7 +315,7 @@ int sounddev_absbrakes_update(SimDevice* this, SimData* simdata)
     double play;
     double level;
 
-    play = slipeffect(simdata, &this->hapticeffect, this->hapticeffect.useconfig, this->hapticeffect.configcheck, this->hapticeffect.tyrediameterconfig);
+    play = slipeffect(simdata, &this->hapticeffect);
     if (play <= 0.0 || HAPTIC_ABS_PLAY_REF <= 0.0)
     {
         data->curr_frequency = 0.0;
@@ -361,7 +361,7 @@ int sounddev_suspension_update(SimDevice* this, SimData* simdata)
         return 0;
     }
 
-    effect = slipeffect(simdata, &this->hapticeffect, this->hapticeffect.useconfig, this->hapticeffect.configcheck, this->hapticeffect.tyrediameterconfig);
+    effect = slipeffect(simdata, &this->hapticeffect);
     if (effect <= 0.0 || HAPTIC_SUSPENSION_PLAY_REF <= 0.0)
     {
         data->curr_frequency = 0.0;

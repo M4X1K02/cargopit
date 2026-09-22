@@ -44,6 +44,14 @@ target_include_directories(acr_udp_test PRIVATE
     ${LUA_INCLUDE_DIR})
 add_test(NAME acr_udp_test COMMAND acr_udp_test)
 
+add_executable(haptic_effect_test haptic_effect_test.c)
+target_link_libraries(haptic_effect_test
+    devices helper slog simulatorapi
+    m hidapi-hidraw pulse serialport xml2 config uv xdg-basedir
+    Lua::Lua ${PROC_LIBS})
+target_include_directories(haptic_effect_test PRIVATE ${LUA_INCLUDE_DIR})
+add_test(NAME haptic_effect_test COMMAND haptic_effect_test)
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME startup_play_missing_simd

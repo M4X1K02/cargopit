@@ -1733,12 +1733,9 @@ static void tester_log_slip_play(
         {
             continue;
         }
-        play = slipeffect(
-            simdata,
-            &devices[i].hapticeffect,
-            devices[i].hapticeffect.useconfig,
-            devices[i].hapticeffect.configcheck,
-            devices[i].hapticeffect.tyrediameterconfig);
+        /* Probe a copy so logging does not advance the device's own filter state. */
+        HapticEffect probe = devices[i].hapticeffect;
+        play = slipeffect(simdata, &probe);
         slogi(
             "%s%s play=%f threshold=%f brake=%f gas=%f yvel=%f slip=%f",
             TEST_STEP_PREFIX,
