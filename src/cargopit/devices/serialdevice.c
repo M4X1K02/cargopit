@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <math.h>
 
+#include "revlights.h"
 #include "simdevice.h"
 #include "serialdevice.h"
 #include "serialadapter.h"
@@ -84,23 +85,7 @@ int arduino_shiftlights_update(SimDevice* this, SimData* simdata)
     int num_avail_leds = serialdevice->numlights;
     int rpm = simdata->rpms;
     int maxrpm = simdata->maxrpm;
-    int litleds = 0;
-    if(rpm > 0 && maxrpm > 0)
-    {
-        int rpmmargin = ceil(.05*maxrpm);
-        int rpminterval = (maxrpm-rpmmargin) / (num_avail_leds);
-
-
-        for (int l = 1; l <= (num_avail_leds); l++)
-        {
-            if(rpm >= (rpminterval * l))
-            {
-                litleds = l;
-            }
-        }
-    }
-
-    serialdevice->u.shiftlightsdata.litleds = litleds;
+    serialdevice->u.shiftlightsdata.litleds = revlights_lit_count(rpm, maxrpm, num_avail_leds);
     //serialdevice->u.shiftlightsdata.rpm = simdata->rpms;
     slogt("Updating arduino device lights to %i", serialdevice->u.shiftlightsdata.litleds);
     // we can add configs to set all the colors

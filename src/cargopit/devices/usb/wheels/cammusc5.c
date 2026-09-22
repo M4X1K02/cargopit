@@ -3,6 +3,7 @@
 
 #include <hidapi/hidapi.h>
 
+#include "../../revlights.h"
 #include "cammusc5.h"
 #include "../../../slog/slog.h"
 
@@ -27,23 +28,7 @@ int cammusc5_update(USBDevice* usbdevice, int maxrpm, int rpm, int gear, int vel
     // byte 2 is number of lit leds, assuming 9 available leds,
     // if we send 10, all leds will blink singling a gear change
     // attempting to build in a margin before the maxrpm is achieved
-    int litleds = 0;
-
-    if(rpm > 0 && maxrpm > 0)
-    {
-        int rpmmargin = ceil(.05*maxrpm);
-        int rpminterval = (maxrpm-rpmmargin) / (num_avail_leds+1);
-
-
-        for (int l = 1; l <= (num_avail_leds+1); l++)
-        {
-            if(rpm >= (rpminterval * l))
-            {
-                litleds = l;
-            }
-        }
-    }
-    bytes[1] = litleds;
+    bytes[1] = revlights_lit_count(rpm, maxrpm, num_avail_leds + 1);
 
     // bytes 2 and 3 are a 16 bit velocity
     if ( velocity > 0 )

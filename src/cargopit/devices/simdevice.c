@@ -4,6 +4,7 @@
 #include "simdevice.h"
 #include "../helper/parameters.h"
 #include "../helper/confighelper.h"
+#include "../helper/devicenames.h"
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../slog/slog.h"
 
@@ -34,6 +35,45 @@ int devupdate(SimDevice* this, SimData* simdata)
     return 0;
 }
 
+static SimDevice* construct_device(DeviceSettings* ds, CargopitSettings* ms, SimInfo* siminfo)
+{
+    switch (ds->dev_type)
+    {
+        case SIMDEV_USB:
+        {
+            USBDevice* device = new_usb_device(ds, ms, siminfo);
+            return device != NULL ? &device->m : NULL;
+        }
+        case SIMDEV_SOUND:
+        {
+            SoundDevice* device = new_sound_device(ds, ms, siminfo);
+            return device != NULL ? &device->m : NULL;
+        }
+        case SIMDEV_SERIAL:
+        {
+            SerialDevice* device = new_serial_device(ds, ms, siminfo);
+            return device != NULL ? &device->m : NULL;
+        }
+        default:
+            return NULL;
+    }
+}
+
+static bool device_is_skipped(const DeviceSettings* ds, const CargopitSettings* ms, int index)
+{
+    if (ds->enabled == false)
+    {
+        slogi("skipping disabled device at index %i", index);
+        return true;
+    }
+    if (ds->dev_type == SIMDEV_SOUND && ms->disable_audio == true)
+    {
+        slogi("skipping configured sound device due to disable_audio being specified...");
+        return true;
+    }
+    return false;
+}
+
 int devinit(SimDevice* simdevices, SimInfo* siminfo, int numdevices, DeviceSettings* ds, CargopitSettings* ms)
 {
     slogi("initializing simdevices for simapi %i...", siminfo->simulatorapi);
@@ -42,70 +82,22 @@ int devinit(SimDevice* simdevices, SimInfo* siminfo, int numdevices, DeviceSetti
     for (int j = 0; j < numdevices; j++)
     {
         simdevices[j].initialized = false;
-
-        if (ds[j].enabled == false)
+        if (device_is_skipped(&ds[j], ms, j))
         {
-            slogi("skipping disabled device at index %i", j);
             continue;
         }
 
-        if (ds[j].dev_type == SIMDEV_USB) {
-            USBDevice* sim = new_usb_device(&ds[j], ms, siminfo);
-            if (sim != NULL)
-            {
-                simdevices[j] = sim->m;
-                simdevices[j].initialized = true;
-                simdevices[j].type = SIMDEV_USB;
-                simdevices[j].fps = ds[j].fps;
-                devices++;
-            }
-            else
-            {
-                slogw("Could not initialize USB Device");
-            }
+        SimDevice* device = construct_device(&ds[j], ms, siminfo);
+        if (device == NULL)
+        {
+            slogw("Could not initialize %s device", cargopit_name_for(&CARGOPIT_DEVICE_CLASSES, ds[j].dev_type));
+            continue;
         }
-
-        if (ds[j].dev_type == SIMDEV_SOUND) {
-            if(ms->disable_audio == true)
-            {
-                slogi("skipping configured sound device due to disable_audio being specified...");
-            }
-            else
-            {
-                SoundDevice* sim = new_sound_device(&ds[j], ms, siminfo);
-                if (sim != NULL)
-                {
-
-                    simdevices[j] = sim->m;
-                    simdevices[j].initialized = true;
-                    simdevices[j].type = SIMDEV_SOUND;
-                    simdevices[j].fps = ds[j].fps;
-                    devices++;
-                }
-                else
-                {
-                    slogw("Could not initialize Sound Device");
-                }
-            }
-        }
-
-        if (ds[j].dev_type == SIMDEV_SERIAL) {
-
-            SerialDevice* sim = new_serial_device(&ds[j], ms, siminfo);
-            if (sim != NULL)
-            {
-                simdevices[j] = sim->m;
-                simdevices[j].initialized = true;
-                simdevices[j].type = SIMDEV_SERIAL;
-                simdevices[j].fps = ds[j].fps;
-                devices++;
-
-            }
-            else
-            {
-                slogw("Could not initialize Serial Device");
-            }
-        }
+        simdevices[j] = *device;
+        simdevices[j].initialized = true;
+        simdevices[j].type = ds[j].dev_type;
+        simdevices[j].fps = ds[j].fps;
+        devices++;
     }
 
     return devices;

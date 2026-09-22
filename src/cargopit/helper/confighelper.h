@@ -36,9 +36,6 @@ typedef enum
 }
 DeviceSubType;
 
-#define SerialDevicesOffset 5
-#define USBDevicesOffset 2
-
 typedef enum
 {
     SIMDEVSUBTYPE_UNKNOWN                 = 0,

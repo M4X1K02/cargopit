@@ -95,7 +95,7 @@ Logs: `~/.cache/cargopit/*.log`. Valgrind: see README (`cd build && valgrind ...
 ## Conventions
 
 - Prefer existing enums (`DeviceType`, `DeviceSubType`, `ProgramAction`, `VibrationEffectType`, …) over new stringly-typed switches.
-- New USB/serial devices go under `src/cargopit/devices/` and are wired through `confighelper` type maps. Sample Arduino sketches stay in `src/arduino/`.
+- New USB/serial devices go under `src/cargopit/devices/`; their config names go in the tables in `src/cargopit/helper/devicenames.h` (parse and save both read them, and `tui/tests/config_names.rs` checks the TUI against them). Sample Arduino sketches stay in `src/arduino/`.
 - Keep `LICENSE.rst` intact (GPL-3.0-or-later). Packaging copyright inventory: `tools/distro/debian/dpkg/copyright`.
 - Do not commit build artifacts (`/build`, `*.flatpak`, `flatpak/repo/`).
 - Public usage documentation for sims, bridges, and devices lives at spacefreak18.github.io/simapi, not in this tree. Keep README / HOW-TO-USE pointers accurate; do not duplicate that site here.

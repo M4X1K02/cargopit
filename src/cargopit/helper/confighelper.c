@@ -20,6 +20,7 @@
 
 
 #include "../simulatorapi/simapi/simapi/simmapper.h"
+#include "devicenames.h"
 
 #include <pulse/pulseaudio.h>
 
@@ -81,258 +82,89 @@ static uint32_t lookup_pipewire_stream_volume(const config_setting_t* device_set
 
 int strtoeffecttype(const char* effect, DeviceSettings* ds)
 {
+    int value;
+
     if (effect == NULL || ds == NULL)
     {
         return CARGOPIT_ERROR_INVALID_DEV;
     }
-
-    ds->is_valid = false;
-
-    if (strcicmp(effect, "Engine") == 0)
-    {
-        ds->is_valid = true;
-        ds->hapticsettings.effect_type = EFFECT_ENGINERPM;
-    }
-    if (strcicmp(effect, "Gear") == 0)
-    {
-        ds->is_valid = true;
-        ds->hapticsettings.effect_type = EFFECT_GEARSHIFT;
-    }
-    if (strcicmp(effect, "Suspension") == 0)
-    {
-        ds->is_valid = true;
-        ds->hapticsettings.effect_type = EFFECT_SUSPENSION;
-    }
-    if (strcicmp(effect, "ABS") == 0)
-    {
-        ds->is_valid = true;
-        slogt("found abas effect set");
-        ds->hapticsettings.effect_type = EFFECT_ABSBRAKES;
-    }
-    if ((strcicmp(effect, "SLIP") == 0) || (strcicmp(effect, "TYRESLIP") == 0) || (strcicmp(effect, "TIRESLIP") == 0))
-    {
-        ds->is_valid = true;
-        slogt("found tyreslip effect set");
-        ds->hapticsettings.effect_type = EFFECT_TYRESLIP;
-    }
-    if ((strcicmp(effect, "LOCK") == 0) || (strcicmp(effect, "TYRELOCK") == 0) || (strcicmp(effect, "TIRELOCK") == 0))
-    {
-        ds->is_valid = true;
-        slogt("found tyreslock effect set");
-        ds->hapticsettings.effect_type = EFFECT_TYRELOCK;
-    }
-
+    ds->is_valid = cargopit_name_lookup(&CARGOPIT_EFFECTS, effect, &value) == 0;
     if (ds->is_valid == false)
     {
         slogw("effect %s is not a valid effect", effect);
         return CARGOPIT_ERROR_INVALID_DEV;
     }
-
+    ds->hapticsettings.effect_type = (VibrationEffectType) value;
     return CARGOPIT_ERROR_NONE;
 }
 
 int strtodevsubsubtype(const char* device_subsubtype, DeviceSettings* ds)
 {
+    int value;
+
     ds->dev_subsubtype = SIMDEVSUBTYPE_UNKNOWN;
-
-
-    bool devfound = false;
-    if (strcicmp(device_subsubtype, "CammusC5") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_CAMMUSC5;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "CammusC12") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_CAMMUSC12;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "MozaNew") == 0
-        || strcicmp(device_subsubtype, "MozaR9") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_MOZA_NEW;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "MozaR5") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_MOZAR5;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "LogitechG29") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_LOGITECH_G29;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "MozaR8") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_MOZAR5;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "MozaR3") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_MOZAR5;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "MozaKSProWheel") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_MOZA_KS_PRO_WHEEL;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "CSLELITEV3PEDALS") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_CSLELITEV3PEDALS;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "SIMNETPEDALS") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_SIMNETPEDALS;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "SIMAGICP1000PEDALS") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_SIMAGICP1000PEDALS;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "SIMAGICGTNEO") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_SIMAGICGTNEO;
-        devfound = true;
-    }
-    if (strcicmp(device_subsubtype, "REVBURNER") == 0)
-    {
-        ds->dev_subsubtype = SIMDEVSUBTYPE_REVBURNERTACHOMETER;
-        devfound = true;
-    }
-
-    if(devfound == false)
+    if (cargopit_name_lookup(&CARGOPIT_HARDWARE, device_subsubtype, &value) != 0)
     {
         slogw("%s does not appear to be a valid device sub sub type, but attempting to continue with other devices", device_subsubtype);
         return CARGOPIT_ERROR_INVALID_DEV;
     }
+    ds->dev_subsubtype = (DeviceSubSubType) value;
     return CARGOPIT_ERROR_NONE;
+}
+
+static const CargopitNameTable* device_type_names(DeviceType dev_type)
+{
+    switch (dev_type)
+    {
+        case SIMDEV_USB:
+            return &CARGOPIT_USB_TYPES;
+        case SIMDEV_SERIAL:
+            return &CARGOPIT_SERIAL_TYPES;
+        case SIMDEV_SOUND:
+            return &CARGOPIT_SOUND_TYPES;
+        default:
+            return NULL;
+    }
 }
 
 int strtodevsubtype(const char* device_subtype, DeviceSettings* ds, int simdev)
 {
+    int value;
+
     if (device_subtype == NULL || ds == NULL)
     {
         return CARGOPIT_ERROR_INVALID_DEV;
     }
-
     ds->is_valid = false;
     ds->dev_subtype = SIMDEVTYPE_UNKNOWN;
-
-    switch (simdev) {
-        case SIMDEV_USB:
-            if (strcicmp(device_subtype, "Tachometer") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_TACHOMETER;
-                break;
-            }
-            if (strcicmp(device_subtype, "Wheel") == 0 || strcicmp(device_subtype, "UsbWheel") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_USBWHEEL;
-                break;
-            }
-            if (strcicmp(device_subtype, "UsbHaptic") == 0 || strcicmp(device_subtype, "Haptic") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_USBHAPTIC;
-                break;
-            }
-            break;
-        case SIMDEV_SERIAL:
-            if (strcicmp(device_subtype, "ShiftLights") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_SHIFTLIGHTS;
-                break;
-            }
-            if (strcicmp(device_subtype, "Simleds") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_SIMLED;
-                break;
-            }
-            if (strcicmp(device_subtype, "ArduinoCustom") == 0 || strcicmp(device_subtype, "Custom") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_ARDUINOCUSTOM;
-                break;
-            }
-            if (strcicmp(device_subtype, "SimWind") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_SIMWIND;
-                break;
-            }
-            if (strcicmp(device_subtype, "SerialHaptic") == 0 || strcicmp(device_subtype, "Haptic") == 0)
-            {
-                slogt("found serial haptic device settings");
-                ds->dev_subtype = SIMDEVTYPE_SERIALHAPTIC;
-                break;
-            }
-            if (strcicmp(device_subtype, "Wheel") == 0)
-            {
-                ds->dev_subtype = SIMDEVTYPE_SERIALWHEEL;
-                break;
-            }
-            break;
-        case SIMDEV_SOUND:
-            ds->is_valid = true;
-            break;
-        default:
-            ds->is_valid = false;
-            slogw("%s does not appear to be a valid device sub type, but attempting to continue with other devices", device_subtype);
-            return CARGOPIT_ERROR_INVALID_DEV;
-    }
-
-    if (simdev != SIMDEV_SOUND && ds->dev_subtype == SIMDEVTYPE_UNKNOWN)
+    if (simdev == SIMDEV_SOUND)
     {
-        ds->is_valid = false;
+        ds->dev_subtype = SIMDEVTYPE_SOUNDHAPTIC;
+        ds->is_valid = true;
+        return CARGOPIT_ERROR_NONE;
+    }
+    if (cargopit_name_lookup(device_type_names((DeviceType) simdev), device_subtype, &value) != 0)
+    {
         slogw("%s does not appear to be a valid device sub type, but attempting to continue with other devices", device_subtype);
         return CARGOPIT_ERROR_INVALID_DEV;
     }
-
+    ds->dev_subtype = (DeviceSubType) value;
     ds->is_valid = true;
     return CARGOPIT_ERROR_NONE;
 }
 
 int strtodev(const char* device_type, const char* device_subtype, DeviceSettings* ds)
 {
+    int value;
+
     ds->is_valid = false;
-    if (strcicmp(device_type, "USB") == 0)
+    if (cargopit_name_lookup(&CARGOPIT_DEVICE_CLASSES, device_type, &value) != 0)
     {
-        ds->dev_type = SIMDEV_USB;
-        int error = strtodevsubtype(device_subtype, ds, SIMDEV_USB);
-        if (error != CARGOPIT_ERROR_NONE)
-        {
-            return error;
-        }
+        slogi("%s does not appear to be a valid device type, but attempting to continue with other devices", device_type);
+        return CARGOPIT_ERROR_INVALID_DEV;
     }
-    else
-        if (strcicmp(device_type, "Sound") == 0)
-        {
-            ds->dev_type = SIMDEV_SOUND;
-            int error = strtodevsubtype(device_subtype, ds, SIMDEV_SOUND);
-            if (error != CARGOPIT_ERROR_NONE)
-            {
-                return error;
-            }
-        }
-        else
-            if (strcicmp(device_type, "Serial") == 0)
-            {
-                ds->dev_type = SIMDEV_SERIAL;
-                int error = strtodevsubtype(device_subtype, ds, SIMDEV_SERIAL);
-                if (error != CARGOPIT_ERROR_NONE)
-                {
-                    return error;
-                }
-            }
-            else
-            {
-                ds->is_valid = false;
-                slogi("%s does not appear to be a valid device type, but attempting to continue with other devices", device_type);
-                return CARGOPIT_ERROR_INVALID_DEV;
-            }
-    ds->is_valid = true;
-    return CARGOPIT_ERROR_NONE;
+    ds->dev_type = (DeviceType) value;
+    return strtodevsubtype(device_subtype, ds, ds->dev_type);
 }
 
 int getsimfromconfig(config_setting_t* c)
@@ -711,35 +543,31 @@ int gettyre(config_setting_t* device_settings, DeviceSettings* ds) {
         return found;
     }
 
+    int value;
     ds->hapticsettings.tyre = ALLFOUR;
-
-    if (strcicmp(temp, "FRONTS") == 0)
+    if (cargopit_name_lookup(&CARGOPIT_TYRES, temp, &value) == 0)
     {
-        ds->hapticsettings.tyre = FRONTS;
+        ds->hapticsettings.tyre = (CargopitTyreIdentifier) value;
     }
-    if (strcicmp(temp, "REARS") == 0)
-    {
-        ds->hapticsettings.tyre = REARS;
-    }
-    if (strcicmp(temp, "FRONTLEFT") == 0)
-    {
-        ds->hapticsettings.tyre = FRONTLEFT;
-    }
-    if (strcicmp(temp, "FRONTRIGHT") == 0)
-    {
-        ds->hapticsettings.tyre = FRONTRIGHT;
-    }
-    if (strcicmp(temp, "REARLEFT") == 0)
-    {
-        ds->hapticsettings.tyre = REARLEFT;
-    }
-    if (strcicmp(temp, "REARRIGHT") == 0)
-    {
-        ds->hapticsettings.tyre = REARRIGHT;
-    }
-
     return found;
+}
 
+static EffectModulationType parse_modulation(const char* name, const HapticEffectSettings* hs)
+{
+    int value;
+
+    if (cargopit_name_lookup(&CARGOPIT_MODULATIONS, name, &value) != 0)
+    {
+        slogw("%s is not a valid modulation type, falling back to no effect modulation", name);
+        return EFFECT_MODULATION_NONE;
+    }
+    if (value == EFFECT_MODULATION_FREQUENCY && (hs->frequencyMax == 0 || hs->frequencyMax < hs->frequency))
+    {
+        slogw("Falling back to no frequency modulation since frequencyMax is either not set or set below target frequency");
+        return EFFECT_MODULATION_NONE;
+    }
+    slogi("Effect modulation found, set to %s", cargopit_name_for(&CARGOPIT_MODULATIONS, value));
+    return (EffectModulationType) value;
 }
 
 static int load_device_specific_config(const char* config_file, DeviceSettings* ds)
@@ -993,29 +821,7 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
             }
             else
             {
-                if(strcicmp(temp, "FREQUENCY") == 0)
-                {
-                    ds->hapticsettings.modulation = EFFECT_MODULATION_FREQUENCY;
-                    if(ds->hapticsettings.frequencyMax == 0 || ds->hapticsettings.frequencyMax < ds->hapticsettings.frequency)
-                    {
-                        ds->hapticsettings.modulation = EFFECT_MODULATION_NONE;
-                        slogw("Falling back to no frequency modulation since frequencyMax is either not set or set below target frequency");
-                    }
-                    else
-                    {
-                        slogi("Effect modulation found, set to FREQUENCY");
-                    }
-                }
-                else if(strcicmp(temp, "AMPLIFY") == 0)
-                {
-                    ds->hapticsettings.modulation = EFFECT_MODULATION_AMPLIFY;
-                    slogi("Effect modulation found, set to AMPLIFY");
-                }
-                else
-                {
-                    slogw("%s is not a valid modulation type, falling back to no effect modulation");
-                    ds->hapticsettings.modulation = EFFECT_MODULATION_NONE;
-                }
+                ds->hapticsettings.modulation = parse_modulation(temp, &ds->hapticsettings);
             }
 
             ds->hapticsettings.motorposition = 0;
@@ -1311,82 +1117,6 @@ int load_devices_for_test(
     return load_device_configs(config_file_str, confignum, *configureddevices, ms, *ds);
 }
 
-static const char *haptic_effect_type_to_string(VibrationEffectType effect)
-{
-    switch (effect)
-    {
-        case EFFECT_ENGINERPM:
-            return "EngineRPM";
-
-        case EFFECT_GEARSHIFT:
-            return "GearShift";
-
-        case EFFECT_ABSBRAKES:
-            return "ABS";
-
-        case EFFECT_TYRESLIP:
-            return "TyreSlip";
-
-        case EFFECT_TYRELOCK:
-            return "TyreLock";
-
-        case EFFECT_SUSPENSION:
-            return "Suspension";
-
-        default:
-            return NULL;
-    }
-}
-
-static const char *tyre_identifier_to_string(CargopitTyreIdentifier tyre)
-{
-    switch (tyre)
-    {
-        case FRONTLEFT:
-            return "FrontLeft";
-
-        case FRONTRIGHT:
-            return "FrontRight";
-
-        case REARLEFT:
-            return "RearLeft";
-
-        case REARRIGHT:
-            return "RearRight";
-
-        case FRONTS:
-            return "Front";
-
-        case REARS:
-            return "Rear";
-
-        case ALLFOUR:
-            return "ALL";
-
-        default:
-            return NULL;
-    }
-}
-
-static const char *modulation_type_to_string(EffectModulationType modulation)
-{
-    switch (modulation)
-    {
-        case EFFECT_MODULATION_NONE:
-            return "none";
-
-        case EFFECT_MODULATION_FREQUENCY:
-            return "frequency";
-
-        case EFFECT_MODULATION_AMPLIFY:
-            return "amplify";
-
-        default:
-            return NULL;
-    }
-}
-
-
 static int set_string(config_setting_t *parent, const char *name, const char *value)
 {
     config_setting_t *setting;
@@ -1480,112 +1210,6 @@ int delete_device_config(config_t *cfg, const char *configfile, int confignum, i
     return 0;
 }
 
-static const char *device_type_to_string(DeviceType device_type)
-{
-    switch (device_type)
-    {
-        case SIMDEV_USB:
-            return "USB";
-        case SIMDEV_SOUND:
-            return "Sound";
-        case SIMDEV_SERIAL:
-            return "Serial";
-        case SIMDEV_UNKNOWN:
-            return "Unknown";
-        default:
-            return "Unknown";
-    }
-}
-
-static const char *device_subtype_to_string(DeviceSubType device_subtype)
-{
-    switch (device_subtype)
-    {
-        case SIMDEVTYPE_SOUNDHAPTIC:
-            return "SoundHaptic";
-        case SIMDEVTYPE_TACHOMETER:
-            return "Tachometer";
-        case SIMDEVTYPE_USBHAPTIC:
-            return "UsbHaptic";
-        case SIMDEVTYPE_USBWHEEL:
-            return "UsbWheel";
-        case SIMDEVTYPE_SHIFTLIGHTS:
-            return "ShiftLights";
-        case SIMDEVTYPE_SIMWIND:
-            return "SimWind";
-        case SIMDEVTYPE_SERIALHAPTIC:
-            return "SerialHaptic";
-        case SIMDEVTYPE_SERIALWHEEL:
-            return "Wheel";
-        case SIMDEVTYPE_SIMLED:
-            return "Simleds";
-        case SIMDEVTYPE_ARDUINOCUSTOM:
-            return "ArduinoCustom";
-        case SIMDEVTYPE_UNKNOWN:
-        default:
-            return "Unknown";
-    }
-}
-
-static const char *haptic_effect_to_string(VibrationEffectType effect)
-{
-    switch (effect)
-    {
-        case EFFECT_ENGINERPM:
-            return "Engine";
-        case EFFECT_GEARSHIFT:
-            return "Gear";
-        case EFFECT_ABSBRAKES:
-            return "ABS";
-        case EFFECT_TYRESLIP:
-            return "TyreSlip";
-        case EFFECT_TYRELOCK:
-            return "TyreLock";
-        case EFFECT_SUSPENSION:
-            return "Suspension";
-        default:
-            return "Unknown";
-    }
-}
-
-static const char *modulation_to_string(EffectModulationType modulation)
-{
-    switch (modulation)
-    {
-        case EFFECT_MODULATION_NONE:
-            return "None";
-        case EFFECT_MODULATION_FREQUENCY:
-            return "Frequency";
-        case EFFECT_MODULATION_AMPLIFY:
-            return "Amplitude";
-        default:
-            return "Unknown";
-    }
-}
-
-static const char *tyre_to_string(CargopitTyreIdentifier tyre)
-{
-    switch (tyre)
-    {
-        case FRONTLEFT:
-            return "FrontLeft";
-        case FRONTRIGHT:
-            return "FrontRight";
-        case REARLEFT:
-            return "RearLeft";
-        case REARRIGHT:
-            return "RearRight";
-        case FRONTS:
-            return "Fronts";
-        case REARS:
-            return "Rears";
-        case ALLFOUR:
-            return "All";
-        default:
-            return "Unknown";
-    }
-}
-
 int save_device_config(config_t *cfg, const char* configfile, int confignum, int devicenum, const DeviceSettings *ds)
 {
     config_setting_t *configs;
@@ -1623,7 +1247,9 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
     if (device_entry == NULL)
         return 0;
 
-    set_string(device_entry, "device", device_type_to_string(ds->dev_type));
+    set_string(device_entry, "device", cargopit_name_for(&CARGOPIT_DEVICE_CLASSES, ds->dev_type));
+    set_string(device_entry, "type", cargopit_name_for(device_type_names(ds->dev_type), ds->dev_subtype));
+    set_string(device_entry, "subtype", cargopit_name_for(&CARGOPIT_HARDWARE, ds->dev_subsubtype));
 
     set_bool(device_entry, "enabled", ds->enabled ? 1 : 0);
     
@@ -1643,8 +1269,6 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
 
         case SIMDEV_SERIAL:
         {
-            set_string(device_entry, "type", device_subtype_to_string(ds->dev_type + SerialDevicesOffset));
-
             const SerialDeviceSettings *ss = &ds->serialdevsettings;
             
             set_int(device_entry, "baud", ss->baud);
@@ -1658,8 +1282,6 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
 
         case SIMDEV_SOUND:
         {
-            set_string(device_entry, "type", device_subtype_to_string(ds->dev_type));
-
             const SoundDeviceSettings *ss = &ds->sounddevsettings;
 
             set_int(device_entry, "streamVolume", ss->volume);
@@ -1673,8 +1295,6 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
 
         case SIMDEV_USB:
         {
-            set_string(device_entry, "type", device_subtype_to_string(ds->dev_type + USBDevicesOffset));
-
             const USBDeviceSettings *us = &ds->usbdevsettings;
 
             break;
@@ -1701,11 +1321,11 @@ int save_device_config(config_t *cfg, const char* configfile, int confignum, int
 
         set_float(device_entry, "duration", hs->duration);
 
-        set_string(device_entry, "effect", haptic_effect_to_string(hs->effect_type));
+        set_string(device_entry, "effect", cargopit_name_for(&CARGOPIT_EFFECTS, hs->effect_type));
          
-        set_string(device_entry, "tyre", tyre_to_string(hs->tyre));
+        set_string(device_entry, "tyre", cargopit_name_for(&CARGOPIT_TYRES, hs->tyre));
          
-        set_string(device_entry, "modulation", modulation_to_string(hs->modulation));
+        set_string(device_entry, "modulation", cargopit_name_for(&CARGOPIT_MODULATIONS, hs->modulation));
     }
 
     if(ds->has_led_effects == true)

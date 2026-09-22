@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include "../src/cargopit/helper/confighelper.h"
+#include "../src/cargopit/helper/devicenames.h"
 
 static int failures = 0;
 
@@ -128,6 +129,107 @@ static void check_sound_channel_helpers(void)
     check_int("first channel of empty", sound_first_channel(0), 0);
 }
 
+/* Every name cargopit writes must parse back to the same value. */
+static void check_name_table_round_trips(const char* label, const CargopitNameTable* table)
+{
+    for (size_t i = 0; i < table->count; i++)
+    {
+        int value = -1;
+        const char* written = cargopit_name_for(table, table->names[i].value);
+        if (written == NULL || cargopit_name_lookup(table, written, &value) != 0 || value != table->names[i].value)
+        {
+            fprintf(stderr, "FAIL: %s name %s does not round-trip\n", label, table->names[i].name);
+            failures++;
+        }
+    }
+}
+
+static void check_name_tables(void)
+{
+    int value = -1;
+
+    check_name_table_round_trips("class", &CARGOPIT_DEVICE_CLASSES);
+    check_name_table_round_trips("usb type", &CARGOPIT_USB_TYPES);
+    check_name_table_round_trips("serial type", &CARGOPIT_SERIAL_TYPES);
+    check_name_table_round_trips("sound type", &CARGOPIT_SOUND_TYPES);
+    check_name_table_round_trips("hardware", &CARGOPIT_HARDWARE);
+    check_name_table_round_trips("effect", &CARGOPIT_EFFECTS);
+    check_name_table_round_trips("tyre", &CARGOPIT_TYRES);
+    check_name_table_round_trips("modulation", &CARGOPIT_MODULATIONS);
+
+    cargopit_name_lookup(&CARGOPIT_MODULATIONS, "Amplitude", &value);
+    check_int("TUI modulation Amplitude", value, EFFECT_MODULATION_AMPLIFY);
+    cargopit_name_lookup(&CARGOPIT_MODULATIONS, "AMPLIFY", &value);
+    check_int("legacy modulation AMPLIFY", value, EFFECT_MODULATION_AMPLIFY);
+    cargopit_name_lookup(&CARGOPIT_TYRES, "fronts", &value);
+    check_int("tyre names are case-insensitive", value, FRONTS);
+    check_int("unknown name", cargopit_name_lookup(&CARGOPIT_EFFECTS, "Warp", &value), -1);
+}
+
+static char* write_temp_file(const char* body)
+{
+    char tmpl[] = "/tmp/cargopit-config-test-XXXXXX";
+    int fd = mkstemp(tmpl);
+    if (fd < 0)
+    {
+        perror("mkstemp");
+        return NULL;
+    }
+    if (write(fd, body, strlen(body)) < 0)
+    {
+        perror("write");
+        close(fd);
+        return NULL;
+    }
+    close(fd);
+    return strdup(tmpl);
+}
+
+static void check_setting(config_t* cfg, const char* path, const char* expected)
+{
+    const char* got = NULL;
+    if (!config_lookup_string(cfg, path, &got) || strcmp(got, expected) != 0)
+    {
+        fprintf(stderr, "FAIL: %s = %s, expected %s\n", path, got ? got : "(missing)", expected);
+        failures++;
+    }
+}
+
+/* save_device_config used to write the class offset instead of the device's own type. */
+static void check_save_writes_device_names(void)
+{
+    char* path = write_temp_file("configs = ( { sim = \"default\"; car = \"default\"; devices = (); } );\n");
+    DeviceSettings ds = {0};
+    config_t* cfg;
+
+    if (path == NULL)
+    {
+        failures++;
+        return;
+    }
+    ds.dev_type = SIMDEV_SERIAL;
+    ds.dev_subtype = SIMDEVTYPE_SHIFTLIGHTS;
+    ds.dev_subsubtype = SIMDEVSUBTYPE_MOZA_NEW;
+    ds.has_haptic_effects = true;
+    ds.hapticsettings.effect_type = EFFECT_TYRESLIP;
+    ds.hapticsettings.tyre = FRONTS;
+    ds.hapticsettings.modulation = EFFECT_MODULATION_AMPLIFY;
+    cfg = open_cargopit_config(path);
+    save_device_config(cfg, path, 0, 0, &ds);
+    close_cargopit_config(cfg);
+
+    cfg = open_cargopit_config(path);
+    check_setting(cfg, "configs.[0].devices.[0].device", "Serial");
+    check_setting(cfg, "configs.[0].devices.[0].type", "ShiftLights");
+    check_setting(cfg, "configs.[0].devices.[0].subtype", "MozaNew");
+    check_setting(cfg, "configs.[0].devices.[0].effect", "TyreSlip");
+    check_setting(cfg, "configs.[0].devices.[0].tyre", "Fronts");
+    check_setting(cfg, "configs.[0].devices.[0].modulation", "Amplitude");
+    close_cargopit_config(cfg);
+    unlink(path);
+    free(path);
+}
+
 static char* write_two_profiles(void)
 {
     char tmpl[] = "/tmp/cargopit-config-index-XXXXXX";
@@ -183,6 +285,8 @@ int main(void)
     free(path);
 
     check_sound_channel_helpers();
+    check_name_tables();
+    check_save_writes_device_names();
 
     check_int("fps zero clamps to min", cargopit_clamp_fps(0), CARGOPIT_FPS_MIN);
     check_int("fps negative clamps to min", cargopit_clamp_fps(-5), CARGOPIT_FPS_MIN);

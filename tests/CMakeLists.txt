@@ -60,6 +60,10 @@ target_link_libraries(device_runner_test
 target_include_directories(device_runner_test PRIVATE ${LUA_INCLUDE_DIR})
 add_test(NAME device_runner_test COMMAND device_runner_test)
 
+add_executable(revlights_test revlights_test.c)
+target_link_libraries(revlights_test devices m)
+add_test(NAME revlights_test COMMAND revlights_test)
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME startup_play_missing_simd

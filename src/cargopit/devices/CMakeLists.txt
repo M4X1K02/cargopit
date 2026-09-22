@@ -15,6 +15,8 @@ set(devices_source_files
   wheeldevice.c
   hapticeffect.h
   hapticeffect.c
+  revlights.h
+  revlights.c
   sound.h
   sound.c
   usb/revburner.h
