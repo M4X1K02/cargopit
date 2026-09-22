@@ -23,6 +23,21 @@
 
 #include <pulse/pulseaudio.h>
 
+int cargopit_clamp_fps(int fps)
+{
+    if (fps < CARGOPIT_FPS_MIN)
+    {
+        slogw("fps %i is below %i, using %i", fps, CARGOPIT_FPS_MIN, CARGOPIT_FPS_MIN);
+        return CARGOPIT_FPS_MIN;
+    }
+    if (fps > CARGOPIT_FPS_MAX)
+    {
+        slogw("fps %i is above %i, using %i", fps, CARGOPIT_FPS_MAX, CARGOPIT_FPS_MAX);
+        return CARGOPIT_FPS_MAX;
+    }
+    return fps;
+}
+
 int strcicmp(char const *a, char const *b)
 {
     if (a == NULL || b == NULL)
@@ -847,8 +862,9 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
     }
 
 
-    ds->fps = 60;
+    ds->fps = CARGOPIT_FPS_DEFAULT;
     config_setting_lookup_int(device_settings, "fps", &ds->fps);
+    ds->fps = cargopit_clamp_fps(ds->fps);
     config_get_device(device_settings, ds);
     device_settings_read_enabled(device_settings, ds);
 

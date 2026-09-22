@@ -6,7 +6,6 @@
 #include <math.h>
 #include <time.h>
 
-#include "usbhapticdevice.h"
 #include "simdevice.h"
 #include "../../helper/confighelper.h"
 #include "../../simulatorapi/simapi/simapi/simdata.h"

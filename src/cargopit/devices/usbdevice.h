@@ -3,6 +3,5 @@
 
 #include "tachdevice.h"
 #include "wheeldevice.h"
-#include "usbhapticdevice.h"
 
 #endif

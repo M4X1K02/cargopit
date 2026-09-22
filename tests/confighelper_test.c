@@ -184,6 +184,11 @@ int main(void)
 
     check_sound_channel_helpers();
 
+    check_int("fps zero clamps to min", cargopit_clamp_fps(0), CARGOPIT_FPS_MIN);
+    check_int("fps negative clamps to min", cargopit_clamp_fps(-5), CARGOPIT_FPS_MIN);
+    check_int("fps default is kept", cargopit_clamp_fps(CARGOPIT_FPS_DEFAULT), CARGOPIT_FPS_DEFAULT);
+    check_int("fps above max clamps to max", cargopit_clamp_fps(CARGOPIT_FPS_MAX + 1), CARGOPIT_FPS_MAX);
+
     if (failures > 0)
     {
         fprintf(stderr, "%d check(s) failed\n", failures);

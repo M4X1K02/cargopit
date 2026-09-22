@@ -384,6 +384,13 @@ static void slog_display_stack(const slog_context_t *pCtx, va_list args)
 
 void slog_display(slog_flag_t eFlag, uint8_t nNewLine, char *pFormat, ...)
 {
+    /* Unlocked fast path so disabled levels on hot paths skip the mutex; rechecked under the lock. */
+    uint16_t nFlags = __atomic_load_n(&g_slog.config.nFlags, __ATOMIC_RELAXED);
+    if (!SLOG_FLAGS_CHECK(nFlags, eFlag))
+    {
+        return;
+    }
+
     slog_lock(&g_slog);
     slog_config_t *pCfg = &g_slog.config;
 
