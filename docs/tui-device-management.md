@@ -225,7 +225,7 @@ Templates only insert; they never wipe the profile without confirm.
 - TUI sends a single device replacement (`confignum`, `devicenum`, fields)
 - Loop applies on the next tick for that device only
 
-Until that socket exists, do not fake live tuning by killing and restarting on every keystroke.
+Status: `cargopit play` now owns a control socket (`$XDG_RUNTIME_DIR/cargopit.sock`, see `src/cargopit/gameloop/control.h` and `tui/src/control.rs`) with `status`, `reload` and `stop`. `reload` releases and recreates every device from the saved profile on the loop, so Apply no longer restarts the process; single-device replacement is still open. Do not fake live tuning by reloading on every keystroke.
 
 Per-device **test** from the old NAppGUI window (synthetic `SimData`, one device) is worth restoring as `t` on the editor. That needs a C CLI flag (e.g. `cargopit test --config-index N --device-index M`) rather than the TUI reimplementing the game loop.
 
@@ -297,7 +297,7 @@ Slice 1 is the minimum that makes “I can configure every device key without na
 | Screens | `tui/src/app.rs`, `tui/src/ui.rs` (split by tab) |
 | Config IO | `tui/src/config.rs`, `tui/src/libconfig.rs`, `tui/src/paths.rs` |
 | Spawn flags | `tui/src/process.rs` |
-| Single-device test / reload | `src/cargopit/helper/parameters.c`, `src/cargopit/cargopit-cli.c`, `src/cargopit/gameloop/` |
+| Single-device test / reload | `src/cargopit/helper/parameters.c`, `src/cargopit/cargopit.c`, `src/cargopit/gameloop/` |
 | Docs | `HOW-TO-USE.md` (TUI can edit config; stop implying hand-edits are required) |
 
 C `save_device_config()` is **not** the TUI write path today (the TUI writes the whole file itself). If live reload needs a shared writer, extract one C library or keep Rust as the writer and teach C only to *read*. Do not maintain two incomplete writers (`save_device_config` currently skips subtype for USB, motors, lua path, granularity, `numlights`, `devpath` vs `devid` correctly in all cases). Prefer fixing or deleting the C writer if nothing else calls it after NAppGUI removal.

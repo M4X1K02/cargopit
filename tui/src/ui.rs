@@ -258,6 +258,26 @@ fn render_selectable_list_block(
     frame.render_stateful_widget(list, area, &mut state);
 }
 
+/// State reported by the running play session over its control socket.
+fn play_session_line(app: &App) -> Option<Line<'static>> {
+    let status = app.play_status.as_ref()?;
+    let mut parts = vec![
+        format!("{} {}", consts::LABEL_PLAY_SESSION, status.state),
+        format!("{} {}", status.devices, consts::LABEL_PLAY_DEVICES),
+        format!("{} {}", status.overruns, consts::LABEL_PLAY_OVERRUNS),
+    ];
+    if status.releasing {
+        parts.push(consts::LABEL_PLAY_RELEASING.to_string());
+    }
+    if status.paused {
+        parts.push(consts::LABEL_PLAY_PAUSED.to_string());
+    }
+    Some(Line::from(Span::styled(
+        parts.join(consts::PLAY_STATUS_SEP),
+        theme::style_muted(),
+    )))
+}
+
 fn draw_dashboard(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -285,6 +305,9 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, app: &App, diag: &Diagnostics) 
         ),
         theme::style_muted(),
     )));
+    if let Some(session) = play_session_line(app) {
+        pipeline.push(session);
+    }
     if let Some(rpm) = telemetry_rpm_line(app) {
         pipeline.push(rpm);
     }
@@ -1544,6 +1567,27 @@ mod tests {
             assert!(dump.contains(consts::DIAGRAM_TITLE_PIPELINE));
             assert!(dump.contains(consts::TAB_ACTIVE_LEFT));
             assert!(dump.contains(consts::LABEL_PROFILE), "{dump}");
+        });
+    }
+
+    #[test]
+    fn dashboard_shows_live_play_session_state() {
+        with_app(|app| {
+            let session_label = format!("{} ", consts::LABEL_PLAY_SESSION);
+            assert!(!render_dump(app).contains(consts::LABEL_PLAY_OVERRUNS));
+            app.play_status = Some(crate::control::PlayStatus {
+                ok: true,
+                state: "mapping".into(),
+                devices: 2,
+                overruns: 1,
+                paused: true,
+                ..Default::default()
+            });
+            let dump = render_dump(app);
+            assert!(dump.contains(&format!("{session_label}mapping")), "{dump}");
+            assert!(dump.contains(&format!("2 {}", consts::LABEL_PLAY_DEVICES)), "{dump}");
+            assert!(dump.contains(&format!("1 {}", consts::LABEL_PLAY_OVERRUNS)), "{dump}");
+            assert!(dump.contains(consts::LABEL_PLAY_PAUSED), "{dump}");
         });
     }
 

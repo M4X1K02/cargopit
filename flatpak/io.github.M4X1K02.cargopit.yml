@@ -19,7 +19,7 @@ finish-args:
   # successful build.
   - --device=all
   # cargopit builds its paths from $HOME directly (e.g.
-  # "%s/.config/cargopit/diameters.config" in cargopit-cli.c), not from
+  # "%s/.config/cargopit/diameters.config" in cargopit.c), not from
   # XDG_CONFIG_HOME, so it reads and writes the host's real directories.
   # Without these grants a real launch failed with
   #   Failed to read config file '/home/david/.config/cargopit/cargopit.config'

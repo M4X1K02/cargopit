@@ -1,6 +1,7 @@
 pub mod app;
 pub mod config;
 pub mod consts;
+pub mod control;
 pub mod diagnostics;
 pub mod diagrams;
 pub mod form;

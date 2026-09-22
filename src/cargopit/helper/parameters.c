@@ -1,4 +1,5 @@
 #include "parameters.h"
+#include "confighelper.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +61,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
     p->program_action      = 0;
     p->max_revs            = 0;
     p->verbosity_count     = 0;
-    p->fps                 = 60;
+    p->fps                 = CARGOPIT_FPS_DEFAULT;
 
     p->disable_audio       = false;
     p->udp                 = false;
@@ -173,7 +174,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         }
         if(arg_fps->count > 0)
         {
-            p->fps = arg_fps->ival[0];
+            p->fps = cargopit_clamp_fps(arg_fps->ival[0]);
         }
         if (arg_config_index_play->count > 0)
         {

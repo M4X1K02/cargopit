@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <limits.h>
 
+#include "../revlights.h"
 #include "arduino.h"
 #include "arduinoledlua.h"
 #include "../serialadapter.h"
@@ -262,17 +263,7 @@ int arduino_simled_update(SerialDevice* serialdevice, SimData* simdata)
     int litleds = 0;
     if(rpm > 0 && maxrpm > 0)
     {
-        int rpmmargin = ceil(.05*maxrpm);
-        int rpminterval = (maxrpm-rpmmargin) / (num_avail_leds);
-
-
-        for (int l = 1; l <= (num_avail_leds); l++)
-        {
-            if(rpm >= (rpminterval * l))
-            {
-                litleds = l;
-            }
-        }
+        litleds = revlights_lit_count(rpm, maxrpm, num_avail_leds);
 
 
 

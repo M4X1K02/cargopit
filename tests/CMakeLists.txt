@@ -44,6 +44,26 @@ target_include_directories(acr_udp_test PRIVATE
     ${LUA_INCLUDE_DIR})
 add_test(NAME acr_udp_test COMMAND acr_udp_test)
 
+add_executable(haptic_effect_test haptic_effect_test.c)
+target_link_libraries(haptic_effect_test
+    devices helper slog simulatorapi
+    m hidapi-hidraw pulse serialport xml2 config uv xdg-basedir
+    Lua::Lua ${PROC_LIBS})
+target_include_directories(haptic_effect_test PRIVATE ${LUA_INCLUDE_DIR})
+add_test(NAME haptic_effect_test COMMAND haptic_effect_test)
+
+add_executable(device_runner_test device_runner_test.c)
+target_link_libraries(device_runner_test
+    gameloop helper devices slog simulatorapi
+    m hidapi-hidraw pulse serialport xml2 config uv xdg-basedir
+    Lua::Lua ${PROC_LIBS})
+target_include_directories(device_runner_test PRIVATE ${LUA_INCLUDE_DIR})
+add_test(NAME device_runner_test COMMAND device_runner_test)
+
+add_executable(revlights_test revlights_test.c)
+target_link_libraries(revlights_test devices m)
+add_test(NAME revlights_test COMMAND revlights_test)
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME startup_play_missing_simd

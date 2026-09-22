@@ -13,6 +13,15 @@
 #define SERIAL_DEVICE_CAPACITY 20
 
 static cargopit_serial_device cargopit_serial_devices[SERIAL_DEVICE_CAPACITY];
+static pthread_once_t serial_locks_once = PTHREAD_ONCE_INIT;
+
+static void init_serial_locks(void)
+{
+    for (int i = 0; i < SERIAL_DEVICE_CAPACITY; i++)
+    {
+        pthread_mutex_init(&cargopit_serial_devices[i].lock, NULL);
+    }
+}
 
 static int msastrcicmp(char const *a, char const *b)
 {
@@ -48,6 +57,18 @@ static int check(enum sp_return result)
     }
 }
 
+static void close_serial_slot(cargopit_serial_device* dev)
+{
+    slogd("freeing physical device %s", dev->portname);
+    sp_close(dev->port);
+    sp_free_port(dev->port);
+    free(dev->portname);
+    dev->port = NULL;
+    dev->portname = NULL;
+    dev->open = false;
+    dev->openfail = false;
+}
+
 int cargopit_serial_free(SerialDevice* serialdevice)
 {
     if (serialdevice == NULL || serialdevice->id < 0 ||
@@ -56,39 +77,18 @@ int cargopit_serial_free(SerialDevice* serialdevice)
         return -1;
     }
 
-    cargopit_serial_device cargopit_serial_dev = cargopit_serial_devices[serialdevice->id];
-
-    if(cargopit_serial_dev.open == true)
+    pthread_once(&serial_locks_once, init_serial_locks);
+    cargopit_serial_device* dev = &cargopit_serial_devices[serialdevice->id];
+    pthread_mutex_lock(&dev->lock);
+    if (dev->open == true)
     {
-        while(cargopit_serial_dev.busy == true)
+        dev->refs--;
+        if (dev->refs == 0)
         {
-            slogt("hopefully this doesn't happen long");
-            continue;
+            close_serial_slot(dev);
         }
-
-        cargopit_serial_devices[serialdevice->id].busy = true;
-        cargopit_serial_devices[serialdevice->id].refs--;
-
-        if(cargopit_serial_devices[serialdevice->id].refs == 0)
-        {
-            slogd("freeing physical device %s", cargopit_serial_devices[serialdevice->id].portname);
-            sp_close(cargopit_serial_devices[serialdevice->id].port);
-            sp_free_port(cargopit_serial_devices[serialdevice->id].port);
-            free(cargopit_serial_devices[serialdevice->id].portname);
-
-            cargopit_serial_devices[serialdevice->id].port = NULL;
-            cargopit_serial_devices[serialdevice->id].portname = NULL;
-            cargopit_serial_devices[serialdevice->id].busy = false;
-            cargopit_serial_devices[serialdevice->id].open = false;
-            cargopit_serial_devices[serialdevice->id].openfail = false;
-        }
-        else
-        {
-            cargopit_serial_devices[serialdevice->id].busy = false;
-        }
-
     }
-
+    pthread_mutex_unlock(&dev->lock);
     return 0;
 }
 
@@ -100,7 +100,7 @@ int cargopit_wait_for_event(uint8_t serialdevicenum, int event)
     }
 
     slogt("serial device id %i", serialdevicenum);
-    cargopit_serial_device cargopit_serial_dev = cargopit_serial_devices[serialdevicenum];
+    const cargopit_serial_device* cargopit_serial_dev = &cargopit_serial_devices[serialdevicenum];
 
     int retval;
     struct sp_event_set* eventSet = NULL;
@@ -108,7 +108,7 @@ int cargopit_wait_for_event(uint8_t serialdevicenum, int event)
     retval = sp_new_event_set(&eventSet);
     if (retval == SP_OK)
     {
-        retval = sp_add_port_events(eventSet, cargopit_serial_dev.port, event);
+        retval = sp_add_port_events(eventSet, cargopit_serial_dev->port, event);
         if (retval == SP_OK)
         {
             slogd("set event on port");
@@ -137,8 +137,7 @@ int cargopit_input_wait(uint8_t serialdevicenum)
         return -1;
     }
 
-    cargopit_serial_device cargopit_serial_dev = cargopit_serial_devices[serialdevicenum];
-    return sp_input_waiting(cargopit_serial_dev.port);
+    return sp_input_waiting(cargopit_serial_devices[serialdevicenum].port);
 }
 
 // Helper function to get and validate device
@@ -148,10 +147,11 @@ static cargopit_serial_device* cargopit_get_serial_device(uint8_t serialdevicenu
     {
         return NULL;
     }
+    pthread_once(&serial_locks_once, init_serial_locks);
 
     cargopit_serial_device* dev = &cargopit_serial_devices[serialdevicenum];
     slogt("serial device id %i", serialdevicenum);
-    slogt("port name: %s, busy %i, open %i, openfail %i", dev->portname, dev->busy, dev->open, dev->openfail);
+    slogt("port name: %s, open %i, openfail %i", dev->portname, dev->open, dev->openfail);
     
     if(dev->port == NULL)
     {
@@ -161,83 +161,65 @@ static cargopit_serial_device* cargopit_get_serial_device(uint8_t serialdevicenu
     return dev;
 }
 
-int cargopit_serial_write(uint8_t serialdevicenum, void* data, size_t size, int timeout)
+typedef enum
+{
+    SERIAL_IO_WRITE,
+    SERIAL_IO_READ
+}
+SerialIoDirection;
+
+/* Caller holds dev->lock. */
+static int serial_io_locked(cargopit_serial_device* dev, SerialIoDirection direction, void* data, size_t size, unsigned int timeout_ms)
+{
+    if (dev->open == false)
+    {
+        return -1;
+    }
+    if (direction == SERIAL_IO_READ)
+    {
+        return sp_blocking_read(dev->port, data, size, timeout_ms);
+    }
+    return sp_blocking_write(dev->port, data, size, timeout_ms);
+}
+
+static int serial_io(uint8_t serialdevicenum, SerialIoDirection direction, void* data, size_t size, int timeout, bool wait_for_port)
 {
     cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
+    int result;
+
     if (dev == NULL || timeout < 0)
     {
         return -1;
     }
-
-    unsigned int serial_timeout = (unsigned int)timeout;
-    int result = -1;
-    if(dev->busy == false && dev->open == true)
+    if (wait_for_port)
     {
-        dev->busy = true;
-        result = sp_blocking_write(dev->port, data, size, serial_timeout);
+        pthread_mutex_lock(&dev->lock);
     }
-    else
+    else if (pthread_mutex_trylock(&dev->lock) != 0)
     {
-        slogw("serial device data update ignored due to busy or lost device");
-        result = -1;
+        slogw("serial device data update ignored due to busy port");
+        return -1;
     }
-    slogt("write result is %i", result);
-    dev->busy = false;
+    result = serial_io_locked(dev, direction, data, size, (unsigned int) timeout);
+    pthread_mutex_unlock(&dev->lock);
+    slogt("serial io result is %i", result);
     return result;
+}
+
+/* Drops the frame if another device on the same port is mid-transfer. */
+int cargopit_serial_write(uint8_t serialdevicenum, void* data, size_t size, int timeout)
+{
+    return serial_io(serialdevicenum, SERIAL_IO_WRITE, data, size, timeout, false);
 }
 
 int cargopit_serial_write_block(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
-    cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
-    if (dev == NULL || timeout < 0)
-    {
-        return -1;
-    }
-
-    unsigned int serial_timeout = (unsigned int)timeout;
-    int result = -1;
-    if(dev->open == true)
-    {
-        while(dev->busy == true)
-        {
-            slogt("hopefully this doesn't happen long");
-            continue;
-        }
-
-        dev->busy = true;
-        result = sp_blocking_write(dev->port, data, size, serial_timeout);
-        slogi("actually performed write");
-    }
-
-    dev->busy = false;
-    return result;
+    return serial_io(serialdevicenum, SERIAL_IO_WRITE, data, size, timeout, true);
 }
 
 int cargopit_serial_read_block(uint8_t serialdevicenum, void* data, size_t size, int timeout)
 {
-    cargopit_serial_device* dev = cargopit_get_serial_device(serialdevicenum);
-    if (dev == NULL || timeout < 0)
-    {
-        return -1;
-    }
-
-    unsigned int serial_timeout = (unsigned int)timeout;
-    int result = -1;
-    if(dev->open == true)
-    {
-        while(dev->busy == true)
-        {
-            slogt("hopefully this doesn't happen long");
-            continue;
-        }
-
-        dev->busy = true;
-        result = sp_blocking_read(dev->port, data, size, serial_timeout);
-        slogi("actually performed read");
-    }
-
-    dev->busy = false;
-    return result;
+    return serial_io(serialdevicenum, SERIAL_IO_READ, data, size, timeout, true);
 }
 
 #ifndef TIOCNXCL
@@ -367,7 +349,6 @@ int cargopit_serial_open(SerialDevice* serialdevice, const char* portdev)
 
         cargopit_serial_devices[i].open = true;
         cargopit_serial_devices[i].openfail = false;
-        cargopit_serial_devices[i].busy = false;
         cargopit_serial_devices[i].refs++;
 
         serial_device_num = i;

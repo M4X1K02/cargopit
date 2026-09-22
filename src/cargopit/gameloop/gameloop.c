@@ -3,9 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
-#include <poll.h>
 #include <termios.h>
 #include <signal.h>
 #include <uv.h>
@@ -24,107 +24,42 @@
 #include "../simulatorapi/simapi/simapi/dirt2.h"
 #include "../slog/slog.h"
 
-#define DEFAULT_UPDATE_RATE      240.0
-#define SIM_CHECK_RATE           1.0
-#define SIMAPI_DAEMON_PROBE_US   50000
+#define SIMAPI_DAEMON_PROBE_US           50000
 #define SIM_UDP_PORT_DIRT_RALLY_2_NATIVE 20777
-#define TEST_TICK_US                 16000
-#define TEST_PHASE_HOLD_US           3000000
-#define TEST_IDLE_HOLD_US            1000000
-#define TEST_WHEEL_COUNT             4
-#define TEST_RPM_IDLE                1000
-#define TEST_RPM_MID_LOW             2000
-#define TEST_RPM_MID                 4000
-#define TEST_RPM_HIGH                7000
-#define TEST_RPM_MAX                 8000
-#define TEST_RPM_SWEEP_STEP          50
-#define TEST_VELOCITY_IDLE           16
-#define TEST_VELOCITY_SLOW           100
-#define TEST_VELOCITY_CRUISE         160
-#define TEST_VELOCITY_FAST           200
-#define TEST_VELOCITY_TOP            300
-#define TEST_VELOCITY_SPIN           15
-#define TEST_VELOCITY_LOCK           150
-#define TEST_YVELOCITY               100
-#define TEST_PEDAL_APPLIED           0.85
-#define TEST_GAS_CRUISE              0.40
-#define TEST_SLIP_SPIN               (-0.45)
-#define TEST_SLIP_LOCK               0.85
-#define TEST_GEAR_PULSE_TICKS        8
-#define TEST_SLIP_ABS_A              0.40
-#define TEST_SLIP_ABS_B              0.72
-#define TEST_ABS_OFF                 0.0
-#define TEST_ABS_ACTIVE              1.0
-#define TEST_ABS_PULSE_TICKS         2
-#define TEST_BRAKE_TEMP_HOT          0.90
-#define TEST_SUSP_VEL_A              2.0
-#define TEST_SUSP_VEL_B              18.0
-#define TEST_TYRE_DIAMETER_UNSET     (-1.0)
-#define TEST_TYRE_DIAMETER_FL        0.638636385206394
-#define TEST_TYRE_DIAMETER_FR        0.633384434597093
-#define TEST_TYRE_DIAMETER_RL        0.710475735564615
-#define TEST_TYRE_DIAMETER_RR        0.710475735564615
-#define TEST_TYRE_RPS_SPIN           50.0
-#define TEST_TYRE_RPS_LOCK           25.0
-#define TEST_CAR_NAME                "CAR"
-#define TEST_GEAR_CHAR_NEUTRAL       'N'
-#define TEST_GEAR_CHAR_FIRST         '1'
-#define TEST_GEAR_CHAR_SECOND        '2'
-#define TEST_GEAR_CHAR_THIRD         '3'
-#define TEST_GEAR_CHAR_FOURTH        '4'
-#define TEST_MSG_REV                 "Revving rpm from idle to redline and back"
-#define TEST_MSG_RPM_IDLE            "Setting rpms to idle"
-#define TEST_MSG_GREEN               "Green Flag!"
-#define TEST_MSG_FIRST               "Shifting into first gear"
-#define TEST_MSG_SPEED_SLOW          "Setting speed to 100"
-#define TEST_MSG_SPIN                "Testing wheel spin"
-#define TEST_MSG_BUTTONS             "Lighting brake button LEDs"
-#define TEST_MSG_LOCK                "Testing wheel lock"
-#define TEST_MSG_SECOND              "Shifting into second gear"
-#define TEST_MSG_ABS                 "Testing ABS"
-#define TEST_MSG_SPEED_FAST          "Setting speed to 200"
-#define TEST_MSG_YELLOW              "Yellow Flag!"
-#define TEST_MSG_THIRD               "Shifting into third gear"
-#define TEST_MSG_RPM_MID_LOW         "Setting rpms to 2000"
-#define TEST_MSG_BLUE                "Blue Flag!"
-#define TEST_MSG_RPM_MID             "Setting rpms to 4000"
-#define TEST_MSG_FOURTH              "Shifting into fourth gear"
-#define TEST_MSG_SPEED_TOP           "Setting speed to 300"
-#define TEST_MSG_RPM_HIGH            "Setting rpms to 7000"
-#define TEST_MSG_RED                 "Red Flag!"
-#define TEST_MSG_RPM_MAX             "Setting rpms to redline"
-#define TEST_MSG_SUSPENSION          "Testing suspension"
-#define TEST_MSG_COAST               "Returning to idle"
-#define TEST_MSG_PREPARING           "preparing test with %i devices..."
-#define TEST_STEP_PREFIX             "test step: "
-#define TEST_MSG_STARTING            "Starting"
-#define TEST_MSG_FINISHED            "Finished"
-#define TEST_MSG_STOPPED             "Stopped"
-#define TEST_LABEL_SERIAL_LIGHTS     "serial lights"
-#define TEST_LABEL_USB_LIGHTS        "USB lights"
-#define TEST_LABEL_DEVICE            "device"
-#define TEST_KEY_QUIT                'q'
-#define TEST_KEY_QUIT_UPPER          'Q'
-#define TEST_KEY_ESC                 '\033'
-#define TEST_STDIN_POLL_MS           0
-#define TEST_STDIN_POLL_FDS          1
-#define TEST_STDIN_READ_BYTES        1
+#define SIM_CHECK_INTERVAL_MS            1000
+#define SIM_MAPPING_START_DELAY_MS       2000
+#define TYRE_DIAMETER_CHECK_INTERVAL_MS  1000
+#define TYRE_DIAMETER_UNSET              (-1)
+#define DEVICE_SPINDOWN_SECONDS          1
+#define MS_PER_SECOND                    1000.0
+#define UDP_BIND_ADDRESS                 "0.0.0.0"
+#define QUIT_KEY                         'q'
+#define SIM_NOT_DETECTED                 "None Detected"
+#define SIMD_NOT_DETECTED                "Not Detected"
+#define SIMD_RUNNING                     "Running"
+#define CONTROL_REPLY_OK                 "{\"ok\":true}"
+#define CONTROL_REPLY_UNKNOWN            "{\"ok\":false,\"error\":\"unknown command\"}"
+#define CONTROL_STATUS_MAX               512
+#define CONTROL_NAME_MAX                 128
+#define JSON_TRUE                        "true"
+#define JSON_FALSE                       "false"
 
-bool go = false;
-bool go2 = false;
-struct sigaction act;
+static const char* const APP_STATE_NAMES[] =
+{
+    [APPSTATE_EXITING]   = "exiting",
+    [APPSTATE_SEARCHING] = "searching",
+    [APPSTATE_MAPPING]   = "mapping",
+};
+
+/* One play session per process; libuv callbacks reach it through their handle data. */
+static loop_data session;
 static pthread_t loop_thread;
-static uv_loop_t *loop = NULL;
 
-SimData* simdata;
-SimMap* simmap;
-loop_data* baton;
-
-device_loop_data* test_baton;
-SimDevice* test_simdevice;
-SimInfo* test_siminfo;
-static volatile sig_atomic_t tester_abort;
-static int tester_stdin_raw;
+void datacheckcallback(uv_timer_t* handle);
+void shmdatamapcallback(uv_timer_t* handle);
+void tyrediametercheckcallback(uv_timer_t* handle);
+static void releaseloop(loop_data* f);
+int startudp(int port);
 
 static int require_simd(void)
 {
@@ -153,7 +88,116 @@ static void map_live_simdata(SimData* simdata, SimMap* simmap,
     simapi_datamap(simdata, simmap, api, udp, packet);
 }
 
-static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin_was_raw)
+static int interval_ms_for_fps(int fps)
+{
+    int interval = (int) (MS_PER_SECOND / cargopit_clamp_fps(fps) + 0.5);
+    return interval > 0 ? interval : 1;
+}
+
+void simapilib_loginfo(char* message)
+{
+    slogi(message);
+}
+
+void simapilib_logdebug(char* message)
+{
+    slogd(message);
+}
+
+void simapilib_logtrace(char* message)
+{
+    slog_display(SLOG_TRACE, 1, message);
+}
+
+static void close_walk_cb(uv_handle_t* handle, void* arg)
+{
+    (void) arg;
+    if (!uv_is_closing(handle))
+    {
+        uv_close(handle, NULL);
+    }
+}
+
+static void stop_udp(loop_data* f)
+{
+    if (uv_is_active((uv_handle_t*) &f->recv_socket))
+    {
+        uv_udp_recv_stop(&f->recv_socket);
+    }
+}
+
+/* Runs on the loop thread; the loop returns once devices are released and every handle is idle. */
+static void session_request_exit(loop_data* f)
+{
+    if (f->state == APPSTATE_EXITING)
+    {
+        return;
+    }
+    slogi("Cargopit is exiting...");
+    f->state = APPSTATE_EXITING;
+    uv_timer_stop(&f->datachecktimer);
+    uv_timer_stop(&f->datamaptimer);
+    uv_timer_stop(&f->tyrediametertimer);
+    stop_udp(f);
+    if (f->stdin_poll != NULL)
+    {
+        uv_poll_stop(f->stdin_poll);
+    }
+    if (f->signals_started)
+    {
+        uv_signal_stop(&f->sigterm);
+        uv_signal_stop(&f->sigint);
+    }
+    if (!uv_is_closing((uv_handle_t*) &f->stop_async))
+    {
+        uv_close((uv_handle_t*) &f->stop_async, NULL);
+    }
+    control_server_stop(&f->control);
+    if (f->numdevices > 0 && !f->releasing)
+    {
+        releaseloop(f);
+    }
+}
+
+static void on_stop_requested(uv_async_t* handle)
+{
+    session_request_exit((loop_data*) uv_handle_get_data((uv_handle_t*) handle));
+}
+
+static void stop_mainloop_from_signal(uv_signal_t* handle, int signum)
+{
+    slogi("signal %i received, stopping", signum);
+    session_request_exit((loop_data*) uv_handle_get_data((uv_handle_t*) handle));
+}
+
+static void on_stdin_key(uv_poll_t* handle, int status, int events)
+{
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
+    char ch;
+
+    (void) status;
+    (void) events;
+    if (read(STDIN_FILENO, &ch, sizeof(ch)) != sizeof(ch) || ch != QUIT_KEY)
+    {
+        return;
+    }
+    if (f->releasing)
+    {
+        return;
+    }
+    if (f->state == APPSTATE_MAPPING)
+    {
+        fprintf(stdout, "\nUser requested stop, releasing devices\n");
+        fflush(stdout);
+        slogi("User requested stop, releasing devices");
+        f->user_stopped = true;
+        releaseloop(f);
+        return;
+    }
+    session_request_exit(f);
+}
+
+static uv_poll_t* init_stdin_quit_poll(uv_loop_t* loop, struct termios* canonicalmode, int* stdin_was_raw)
 {
     *stdin_was_raw = 0;
     if (!isatty(STDIN_FILENO))
@@ -187,7 +231,7 @@ static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin
         *stdin_was_raw = 0;
         return NULL;
     }
-    if (uv_poll_init(uv_default_loop(), poll, STDIN_FILENO) != 0)
+    if (uv_poll_init(loop, poll, STDIN_FILENO) != 0)
     {
         slogw("could not poll stdin; continuing without quit key");
         free(poll);
@@ -198,223 +242,9 @@ static uv_poll_t* init_stdin_quit_poll(struct termios* canonicalmode, int* stdin
     return poll;
 }
 
-static void stop_mainloop_from_signal(uv_signal_t* handle, int signum)
-{
-    (void)signum;
-    uv_signal_stop(handle);
-    appstate = 0;
-    slogi("signal stop, appstate is now %i", appstate);
-    uv_stop(uv_default_loop());
-}
-
-
-uv_idle_t idler;
-uv_timer_t datachecktimer;
-uv_timer_t showstatstimer;
-uv_timer_t datamaptimer;
-uv_timer_t tyrediametertimer;
-uv_timer_t testdevicetimer;
-uv_udp_t recv_socket;
-
-bool doui = false;
-
-
-void shmdatamapcallback(uv_timer_t* handle);
-void showstatscallback(uv_timer_t* handle);
-void datacheckcallback(uv_timer_t* handle);
-void tyrediametercheckcallback(uv_timer_t* handle);
-void startdatalogger(CargopitSettings* ms, loop_data* l);
-
-static void close_walk_cb(uv_handle_t* handle, void* arg)
-{
-    if (!uv_is_closing(handle))
-    {
-        uv_close(handle, NULL);
-    }
-}
-#define ASSERT(expr) expr
-
-static void showstats(SimData* simdata)
-{
-    printf("\r");
-    for (int i=0; i<4; i++)
-    {
-        if (i==0)
-        {
-            fputc('s', stdout);
-            fputc('p', stdout);
-            fputc('e', stdout);
-            fputc('e', stdout);
-            fputc('d', stdout);
-            fputc(':', stdout);
-            fputc(' ', stdout);
-
-            int speed = simdata->velocity;
-            int digits = 0;
-            if (speed > 0)
-            {
-                while (speed > 0)
-                {
-                    speed = speed / 10;
-                    digits++;
-                }
-                speed = simdata->velocity;
-                int s[digits];
-                int digit = 0;
-                while (speed > 0)
-                {
-                    int mod = speed % 10;
-                    s[digit] = mod;
-                    speed = speed / 10;
-                    digit++;
-                }
-                speed = simdata->velocity;
-                digit = digits;
-                while (digit > 0)
-                {
-                    fputc(s[digit-1]+'0', stdout);
-                    digit--;
-                }
-            }
-            else
-            {
-                fputc('0', stdout);
-            }
-            fputc(' ', stdout);
-        }
-        if (i==1)
-        {
-            fputc('r', stdout);
-            fputc('p', stdout);
-            fputc('m', stdout);
-            fputc('s', stdout);
-            fputc(':', stdout);
-            fputc(' ', stdout);
-
-            int rpms = simdata->rpms;
-            int digits = 0;
-            if (rpms > 0)
-            {
-                while (rpms > 0)
-                {
-                    rpms = rpms / 10;
-                    digits++;
-                }
-                rpms = simdata->rpms;
-                int s[digits];
-                int digit = 0;
-                while (rpms > 0)
-                {
-                    int mod = rpms % 10;
-                    s[digit] = mod;
-                    rpms = rpms / 10;
-                    digit++;
-                }
-                rpms = simdata->rpms;
-                digit = digits;
-                while (digit > 0)
-                {
-                    fputc(s[digit-1]+'0', stdout);
-                    digit--;
-                }
-            }
-            else
-            {
-                fputc('0', stdout);
-            }
-            fputc(' ', stdout);
-        }
-        if (i==2)
-        {
-            fputc('g', stdout);
-            fputc('e', stdout);
-            fputc('a', stdout);
-            fputc('r', stdout);
-            fputc(':', stdout);
-            fputc(' ', stdout);
-            fputc(simdata->gear+'0', stdout);
-            fputc(' ', stdout);
-        }
-        if (i==3)
-        {
-            fputc('a', stdout);
-            fputc('l', stdout);
-            fputc('t', stdout);
-            fputc(':', stdout);
-            fputc(' ', stdout);
-
-            int alt = simdata->altitude;
-            int digits = 0;
-            if (alt > 0)
-            {
-                while (alt > 0)
-                {
-                    alt = alt / 10;
-                    digits++;
-                }
-                alt = simdata->altitude;
-                int s[digits];
-                int digit = 0;
-                while (alt > 0)
-                {
-                    int mod = alt % 10;
-                    s[digit] = mod;
-                    alt = alt / 10;
-                    digit++;
-                }
-                alt = simdata->altitude;
-                digit = digits;
-                while (digit > 0)
-                {
-                    fputc(s[digit-1]+'0', stdout);
-                    digit--;
-                }
-            }
-            else
-            {
-                fputc('0', stdout);
-            }
-            fputc(' ', stdout);
-        }
-    }
-    fflush(stdout);
-}
-
-void simapilib_loginfo(char* message)
-{
-    slogi(message);
-}
-
-void simapilib_logdebug(char* message)
-{
-    slogd(message);
-}
-
-void simapilib_logtrace(char* message)
-{
-    slog_display(SLOG_TRACE, 1, message);
-}
-
-void on_timer_close_complete(uv_handle_t* handle)
-{
-    free(handle);
-}
-
-
-void devicetimercallback(uv_timer_t* handle)
-{
-    void* b = uv_handle_get_data((uv_handle_t*) handle);
-    device_loop_data* f = (device_loop_data*) b;
-    SimData* simdata = f->simdata;
-    SimDevice* device = f->simdevice;
-    device->update(device, simdata);
-}
-
-
 void tyrediametercheckcallback(uv_timer_t* handle)
 {
-    void* b = uv_handle_get_data((uv_handle_t*) handle);
-    device_loop_data* f = (device_loop_data*) b;
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
     SimData* simdata = f->simdata;
 
     if (simdata->car[0] != '\0')
@@ -447,264 +277,318 @@ void tyrediametercheckcallback(uv_timer_t* handle)
         int a = loadtyreconfig(simdata, f->ms->tyre_diameter_config, false);
         if(a < 0)
         {
-            slogi("saving new tyre diameter config for car %s");
+            slogi("saving new tyre diameter config for car %s", simdata->car);
             savetyreconfig(simdata, f->ms->tyre_diameter_config);
         }
         uv_timer_stop(handle);
     }
-
 }
 
-void looprun(CargopitSettings* ms, loop_data* f, SimData* simdata)
+static bool device_needs_tyre_diameter(const SimDevice* device)
 {
-    if (doui == true)
+    VibrationEffectType effect = device->hapticeffect.effecttype;
+    return effect == EFFECT_TYRELOCK || effect == EFFECT_TYRESLIP || effect == EFFECT_ABSBRAKES;
+}
+
+static bool sim_needs_tyre_diameter(const loop_data* f)
+{
+    const SimInfo* siminfo = &f->siminfo;
+    return siminfo->SimCalculatesTyreDiameter == false
+        && siminfo->SimSupportsHapticEffects == true
+        && siminfo->SimCalculatesSlipRatio == false
+        && f->ms->useconfig == 1
+        && f->ms->tyre_diameter_config != NULL;
+}
+
+static void maybe_start_tyre_diameter_calc(loop_data* f, const SimDevice* device)
+{
+    if (f->started_tyre_calc || !device_needs_tyre_diameter(device) || !sim_needs_tyre_diameter(f))
     {
-        slogi("loading device profile from %s (config-index %i)", ms->config_str, ms->config_index);
-        int confignum = resolve_config_index(ms->config_str, ms->config_index);
-        if (confignum < 0)
+        return;
+    }
+    slogi("Starting timer to calculate tyre diameters and save to config file");
+    f->started_tyre_calc = true;
+    uv_timer_start(&f->tyrediametertimer, tyrediametercheckcallback, 0, TYRE_DIAMETER_CHECK_INTERVAL_MS);
+}
+
+static void start_device_runners(loop_data* f)
+{
+    f->runners = calloc(f->numdevices, sizeof(DeviceRunner));
+    if (f->runners == NULL)
+    {
+        sloge("could not allocate device runners");
+        return;
+    }
+    for (int x = 0; x < f->numdevices; x++)
+    {
+        SimDevice* device = &f->simdevices[x];
+        if (device->initialized == false)
         {
-            sloge("no device profile to load (config-index %i)", ms->config_index);
-            doui = false;
-            return;
+            continue;
         }
-
-        int configureddevices;
-        configcheck(ms->config_str, confignum, &configureddevices);
-        DeviceSettings* ds = malloc(configureddevices * sizeof(DeviceSettings));
-        slogd("loading confignum %i, with %i devices.", confignum, configureddevices);
-        f->numdevices = load_device_configs(ms->config_str, confignum, configureddevices, ms, ds);
-
-        if(ms->useconfig == 1)
+        if (device_runner_start(&f->runners[x], device, &f->snapshot, device->fps) != 0)
         {
-            ms->configcheck = 0;
+            sloge("could not start thread for device %i", x);
+            continue;
         }
-
-        f->simdevices = malloc(f->numdevices * sizeof(SimDevice));
-        int initdevices = devinit(f->simdevices, &f->siminfo, configureddevices, ds, ms);
-        slogi("initialized %i devices", initdevices);
-
-        for( int i = 0; i < configureddevices; i++)
-        {
-            settingsfree(ds[i]);
-        }
-        free(ds);
-
-        int numdevices = f->numdevices;
-        SimDevice* devices = f->simdevices;
-        f->device_timers = (uv_timer_t*) (malloc(uv_handle_size(UV_TIMER) * numdevices));
-        f->device_batons = (device_loop_data*) (malloc(sizeof(device_loop_data) * numdevices));
-        f->started_tyre_calc_thread = false;
-
-        for (int x = 0; x < numdevices; x++)
-        {
-            if (devices[x].initialized == true)
-            {
-                device_loop_data* dld = &f->device_batons[x];
-                dld->simdevice = &devices[x];
-                dld->simdata = simdata;
-                uv_timer_t* dt = &f->device_timers[x];
-                uv_timer_init(uv_default_loop(), dt);
-                uv_handle_set_data((uv_handle_t*) dt, (void*) dld);
-                int interval = 1000/devices[x].fps;
-                uv_timer_start(dt, devicetimercallback, 0, interval);
-                slogi("starting device type %i at id at %i fps: %i (%i ms ticks)", devices[x].type, x, devices[x].fps, interval);
-               
-                SimInfo siminfo = f->siminfo;
-                if(f->started_tyre_calc_thread == false)
-                {
-                        if(devices[x].hapticeffect.effecttype == EFFECT_TYRELOCK || devices[x].hapticeffect.effecttype == EFFECT_TYRESLIP || devices[x].hapticeffect.effecttype == EFFECT_ABSBRAKES)
-                        {
-                            if(siminfo.SimCalculatesTyreDiameter == false && siminfo.SimSupportsHapticEffects == true && siminfo.SimCalculatesSlipRatio == false && f->ms->useconfig == 1 && f->ms->tyre_diameter_config != NULL)
-                            {
-                                slogi("Starting thread to calculate tyre diameters and save to config file");
-                                f->started_tyre_calc_thread = true;
-
-                                f->tyrebaton = (device_loop_data*) malloc(sizeof(device_loop_data));
-                                f->tyrebaton->simdata = simdata;
-                                f->tyrebaton->ms = f->ms;
-
-                                uv_handle_set_data((uv_handle_t*) &tyrediametertimer, (void*) f->tyrebaton);
-                                uv_timer_start(&tyrediametertimer, tyrediametercheckcallback, 0, 1000);
-                            }
-                        }
-                }
-            }
-        }
-
-
-        //uv_timer_start(&showstatstimer, showstatscallback, 0, 100);
-        doui = false;
+        slogi("starting device type %i at id %i on its own thread at %i fps", device->type, x, cargopit_clamp_fps(device->fps));
+        maybe_start_tyre_diameter_calc(f, device);
     }
 }
 
-void showstatscallback(uv_timer_t* handle)
+static void publish_frame(loop_data* f)
 {
-    void* b = uv_handle_get_data((uv_handle_t*) handle);
-    loop_data* f = (loop_data*) b;
-    SimData* simdata = f->simdata;
-    if(appstate == 2)
+    telemetry_snapshot_publish(&f->snapshot, f->simdata);
+}
+
+static void load_devices_if_pending(loop_data* f)
+{
+    CargopitSettings* ms = f->ms;
+    int configureddevices;
+    int confignum;
+
+    if (f->devices_pending == false || f->simdevices != NULL)
     {
-        showstats(simdata);
+        return;
+    }
+    f->devices_pending = false;
+    slogi("loading device profile from %s (config-index %i)", ms->config_str, ms->config_index);
+    confignum = resolve_config_index(ms->config_str, ms->config_index);
+    if (confignum < 0)
+    {
+        sloge("no device profile to load (config-index %i)", ms->config_index);
+        return;
+    }
+
+    configcheck(ms->config_str, confignum, &configureddevices);
+    DeviceSettings* ds = malloc(configureddevices * sizeof(DeviceSettings));
+    slogd("loading confignum %i, with %i devices.", confignum, configureddevices);
+    f->numdevices = load_device_configs(ms->config_str, confignum, configureddevices, ms, ds);
+
+    if(ms->useconfig == 1)
+    {
+        ms->configcheck = 0;
+    }
+
+    f->simdevices = malloc(f->numdevices * sizeof(SimDevice));
+    int initdevices = devinit(f->simdevices, &f->siminfo, configureddevices, ds, ms);
+    slogi("initialized %i devices", initdevices);
+
+    for( int i = 0; i < configureddevices; i++)
+    {
+        settingsfree(ds[i]);
+    }
+    free(ds);
+
+    f->started_tyre_calc = false;
+    start_device_runners(f);
+}
+
+/* Owns a session's devices while they are stopped and freed on the libuv threadpool. */
+typedef struct
+{
+    uv_work_t req;
+    loop_data* session;
+    SimDevice* devices;
+    DeviceRunner* runners;
+    int numdevices;
+    SimData spindown;
+}
+ReleaseJob;
+
+static void stop_device_runners(ReleaseJob* job)
+{
+    if (job->runners == NULL)
+    {
+        return;
+    }
+    for (int x = 0; x < job->numdevices; x++)
+    {
+        device_runner_stop(&job->runners[x]);
+        slogi("device %i: %lu updates, %lu overruns", x,
+              (unsigned long) atomic_load(&job->runners[x].updates),
+              (unsigned long) atomic_load(&job->runners[x].overruns));
     }
 }
 
-void releaseloop(loop_data* f, SimData* simdata, SimMap* simmap)
+/* Threadpool: joining runners and spin-down may block on device I/O, so it stays off the loop thread. */
+static void release_devices_work(uv_work_t* req)
 {
-        slogi("release loop");
-        if(f->releasing == false)
+    ReleaseJob* job = req->data;
+    SimDevice* devices = job->devices;
+
+    stop_device_runners(job);
+    for (int x = 0; x < job->numdevices; x++)
+    {
+        if (devices[x].initialized == true)
         {
-            f->releasing = true;
-            uv_timer_stop(&datamaptimer);
-            uv_timer_stop(&showstatstimer);
-            if (uv_is_active((uv_handle_t*)&recv_socket))
-            {
-                uv_udp_recv_stop(&recv_socket);
-            }
-            // Close the socket handle so it can be reinitialized with a different port
-            //if (!uv_is_closing((uv_handle_t*)&recv_socket))
-            //{
-            //    uv_close((uv_handle_t*)&recv_socket, NULL);
-            //}
-            slogi("releasing devices, please wait");
-
-            //attempt tyre diameter saving
-            uv_timer_stop(&tyrediametertimer);
-            if(f->started_tyre_calc_thread == true)
-            {
-                free(f->tyrebaton);
-            }
-
-            f->uion = false;
-            SimDevice* devices = f->simdevices;
-            int numdevices = f->numdevices;
-
-            // help things spin down
-            simdata->simstatus = 0;
-            simdata->rpms = 0;
-            simdata->velocity = 0;
-
-            for (int x = 0; x < numdevices; x++)
-            {
-                if (devices[x].initialized == true)
-                {
-                    uv_timer_t* dt = &f->device_timers[x];
-                    slogt("attempting device timer stop and release");
-                    slogt("timer active status %i", uv_is_active((uv_handle_t*) dt));
-                    uv_timer_stop(dt);
-                    //uv_close((uv_handle_t*) dt, on_timer_close_complete);
-                }
-            }
-            free(f->device_batons);
-            free(f->device_timers);
-            slogt("stopped device timers");
-            for (int x = 0; x < numdevices; x++)
-            {
-                if (devices[x].initialized == true)
-                {
-                    devices[x].update(&devices[x], simdata);
-                }
-            }
-            sleep(1);
-            for (int x = 0; x < numdevices; x++)
-            {
-                if (devices[x].initialized == true)
-                {
-                    devices[x].free(&devices[x]);
-                }
-            }
-            free(devices);
-
-            int r = simapi_sim_clear(simdata, simmap, false);
-            slogd("simfree returned %i", r);
-            f->numdevices = 0;
-            slogi("stopped mapping data, press q again to quit");
-            //stopui(ms->ui_type, f);
-            // free loop data
-
-            if(appstate > 0)
-            {
-                slogi("restarting checking for data...");
-                uv_timer_start(&datachecktimer, datacheckcallback, 0, 1000);
-            }
-            f->releasing = false;
-            if(appstate > 1)
-            {
-                appstate = 1;
-            }
+            devices[x].update(&devices[x], &job->spindown);
         }
+    }
+    sleep(DEVICE_SPINDOWN_SECONDS);
+    for (int x = 0; x < job->numdevices; x++)
+    {
+        if (devices[x].initialized == true)
+        {
+            devices[x].free(&devices[x]);
+        }
+    }
+}
+
+static void finish_release(loop_data* f);
+
+static void release_devices_done(uv_work_t* req, int status)
+{
+    ReleaseJob* job = req->data;
+
+    (void) status;
+    free(job->runners);
+    free(job->devices);
+    finish_release(job->session);
+    free(job);
+}
+
+static ReleaseJob* take_devices_for_release(loop_data* f)
+{
+    ReleaseJob* job = calloc(1, sizeof(ReleaseJob));
+    if (job == NULL)
+    {
+        return NULL;
+    }
+    job->req.data = job;
+    job->session = f;
+    job->devices = f->simdevices;
+    job->runners = f->runners;
+    job->numdevices = f->numdevices;
+    // help things spin down
+    job->spindown = *f->simdata;
+    job->spindown.simstatus = SIMAPI_STATUS_OFF;
+    job->spindown.rpms = 0;
+    job->spindown.velocity = 0;
+    f->simdevices = NULL;
+    f->runners = NULL;
+    f->numdevices = 0;
+    return job;
+}
+
+static void finish_release(loop_data* f)
+{
+    int r = simapi_sim_clear(f->simdata, f->simmap, false);
+    slogd("simfree returned %i", r);
+    f->releasing = false;
+    if (f->state == APPSTATE_EXITING)
+    {
+        return;
+    }
+    f->state = APPSTATE_SEARCHING;
+    if (f->user_stopped)
+    {
+        slogi("stopped mapping data, press q again to quit");
+        return;
+    }
+    slogi("restarting checking for data...");
+    uv_timer_start(&f->datachecktimer, datacheckcallback, 0, SIM_CHECK_INTERVAL_MS);
+}
+
+static void releaseloop(loop_data* f)
+{
+    if (f->releasing)
+    {
+        return;
+    }
+    slogi("release loop");
+    f->releasing = true;
+    f->devices_pending = false;
+    uv_timer_stop(&f->datamaptimer);
+    uv_timer_stop(&f->datachecktimer);
+    uv_timer_stop(&f->tyrediametertimer);
+    stop_udp(f);
+    slogi("releasing devices, please wait");
+    if (f->simdevices == NULL)
+    {
+        finish_release(f);
+        return;
+    }
+    ReleaseJob* job = take_devices_for_release(f);
+    if (job == NULL)
+    {
+        sloge("could not allocate device release job");
+        finish_release(f);
+        return;
+    }
+    if (uv_queue_work(f->loop, &job->req, release_devices_work, release_devices_done) != 0)
+    {
+        slogw("could not schedule device release; releasing on the loop thread");
+        release_devices_work(&job->req);
+        release_devices_done(&job->req, 0);
+    }
+}
+
+static bool mapping_should_stop(const loop_data* f)
+{
+    return f->siminfo.isSimOn == false
+        || f->simdata->simstatus <= SIMAPI_STATUS_MENU
+        || f->state != APPSTATE_MAPPING;
 }
 
 void shmdatamapcallback(uv_timer_t* handle)
 {
-    void* b = uv_handle_get_data((uv_handle_t*) handle);
-    loop_data* f = (loop_data*) b;
-    SimData* simdata = f->simdata;
-    SimMap* simmap = f->simmap;
-    CargopitSettings* ms = f->ms;
-    //appstate = 2;
-    if (appstate == 2)
-    {
-        map_live_simdata(simdata, simmap, f->siminfo.mapapi, false, NULL);
-        looprun(ms, f, simdata);
-    }
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
 
-    if (f->siminfo.isSimOn == false || simdata->simstatus <= 1 || appstate <= 1)
+    if (f->state == APPSTATE_MAPPING)
     {
-        releaseloop(f, simdata, simmap);
+        map_live_simdata(f->simdata, f->simmap, f->siminfo.mapapi, false, NULL);
+        publish_frame(f);
+        load_devices_if_pending(f);
+    }
+    if (mapping_should_stop(f))
+    {
+        releaseloop(f);
     }
 }
 
-void on_alloc(uv_handle_t* client, size_t suggested_size, uv_buf_t* buf) {
-    buf->base = malloc(suggested_size);
-    buf->len = suggested_size;
-    bzero(buf->base, suggested_size);
-    slogt("udp malloc:%lu %p\n",buf->len,buf->base);
+static void on_alloc(uv_handle_t* client, size_t suggested_size, uv_buf_t* buf)
+{
+    (void) client;
+    buf->base = calloc(1, suggested_size);
+    buf->len = buf->base != NULL ? suggested_size : 0;
 }
 
-static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf, const struct sockaddr* addr, unsigned flags) {
-    if (nread > 0) {
-        slogt("udp data received");
+static void map_udp_packet(loop_data* f, char* packet, ssize_t nread)
+{
+    if (acr_udp_packet_ok(packet, (size_t) nread))
+    {
+        acr_udp_apply(f->simdata, packet);
+        acr_udp_publish(f->simmap, f->simdata);
+        return;
     }
-    if (nread <= 0) {
+    map_live_simdata(f->simdata, f->simmap, f->siminfo.mapapi, true, packet);
+}
+
+static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf, const struct sockaddr* addr, unsigned flags)
+{
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
+
+    (void) addr;
+    (void) flags;
+    if (nread <= 0)
+    {
         free(rcvbuf->base);
         return;
     }
-
-    char* a;
-    a = rcvbuf->base;
-
-    void* b = uv_handle_get_data((uv_handle_t*) handle);
-    loop_data* f = (loop_data*) b;
-    SimData* simdata = f->simdata;
-    SimMap* simmap = f->simmap;
-    CargopitSettings* ms = f->ms;
-
-    if (appstate == 2 && acr_udp_packet_ok(a, (size_t)nread))
+    slogt("udp data received");
+    if (f->state == APPSTATE_MAPPING)
     {
-        acr_udp_apply(simdata, a);
-        acr_udp_publish(simmap, simdata);
-        looprun(ms, f, simdata);
-        slogt("udp free  :%lu %p\n",rcvbuf->len,rcvbuf->base);
-        free(rcvbuf->base);
-        return;
+        map_udp_packet(f, rcvbuf->base, nread);
+        publish_frame(f);
+        load_devices_if_pending(f);
     }
-
-    if (appstate == 2)
+    if (mapping_should_stop(f))
     {
-        map_live_simdata(simdata, simmap, f->siminfo.mapapi, true, a);
-        looprun(ms, f, simdata);
+        releaseloop(f);
     }
-
-    if (f->siminfo.isSimOn == false || simdata->simstatus <= 1 || appstate <= 1)
-    {
-        releaseloop(f, simdata, simmap);
-    }
-
-    slogt("udp free  :%lu %p\n",rcvbuf->len,rcvbuf->base);
     free(rcvbuf->base);
 }
-
-int startudp(int port);
 
 static void close_simapi_map(SimMap* simmap)
 {
@@ -864,10 +748,11 @@ static int bind_udp_port(int port)
 {
     struct sockaddr_in recv_addr;
 
-    uv_ip4_addr("0.0.0.0", port, &recv_addr);
-    return uv_udp_bind(&recv_socket, (const struct sockaddr*) &recv_addr, UV_UDP_REUSEADDR);
+    uv_ip4_addr(UDP_BIND_ADDRESS, port, &recv_addr);
+    return uv_udp_bind(&session.recv_socket, (const struct sockaddr*) &recv_addr, UV_UDP_REUSEADDR);
 }
 
+/* Passed to simapi as its bind callback, which carries no context pointer. */
 int startudp(int port)
 {
     int bind_port = port;
@@ -882,58 +767,51 @@ int startudp(int port)
     return err;
 }
 
-void udpstart(CargopitSettings* sms, loop_data* f, SimData* simdata, SimMap* simmap)
-{
-    if (appstate == 2)
-    {
-        map_live_simdata(simdata, simmap, f->siminfo.simulatorapi, true, NULL);
-        if (doui == true)
-        {
-            looprun(sms, f, simdata);
-        }
-    }
-}
-
-static void begin_live_mapping(uv_timer_t* handle, loop_data* f, SimData* simdata, SimMap* simmap)
+static void begin_live_mapping(uv_timer_t* handle, loop_data* f)
 {
     int interval;
 
-    appstate++;
-    doui = true;
-    simdata->tyrediameter[0] = -1;
-    simdata->tyrediameter[1] = -1;
-    simdata->tyrediameter[2] = -1;
-    simdata->tyrediameter[3] = -1;
-    ensure_play_publishes_simapi(simmap, simdata, f->siminfo.mapapi);
+    f->state = APPSTATE_MAPPING;
+    f->devices_pending = true;
+    for (int i = 0; i < HAPTIC_WHEEL_COUNT; i++)
+    {
+        f->simdata->tyrediameter[i] = TYRE_DIAMETER_UNSET;
+    }
+    ensure_play_publishes_simapi(f->simmap, f->simdata, f->siminfo.mapapi);
     if (f->use_udp == true || f->siminfo.SimUsesUDP == true)
     {
         slogt("starting udp receive loop");
-        udpstart(f->ms, f, simdata, simmap);
-        uv_udp_recv_start(&recv_socket, on_alloc, on_udp_recv);
+        map_live_simdata(f->simdata, f->simmap, f->siminfo.simulatorapi, true, NULL);
+        publish_frame(f);
+        load_devices_if_pending(f);
+        uv_udp_recv_start(&f->recv_socket, on_alloc, on_udp_recv);
         slogt("udp receive loop started");
         uv_timer_stop(handle);
         return;
     }
-    interval = 1000 / f->ms->fps;
+    interval = interval_ms_for_fps(f->ms->fps);
     slogd("starting telemetry mapping at %i fps (%i ms ticks)", f->ms->fps, interval);
-    uv_timer_start(&datamaptimer, shmdatamapcallback, 2000, interval);
+    uv_timer_start(&f->datamaptimer, shmdatamapcallback, SIM_MAPPING_START_DELAY_MS, interval);
 }
 
 void datacheckcallback(uv_timer_t* handle)
 {
-    void* b = uv_handle_get_data((uv_handle_t*) handle);
-    loop_data* f = (loop_data*) b;
+    loop_data* f = (loop_data*) uv_handle_get_data((uv_handle_t*) handle);
     SimData* simdata = f->simdata;
     SimMap* simmap = f->simmap;
 
-    if (appstate == 0)
+    if (f->state == APPSTATE_EXITING)
     {
         slogi("stopped checking for data");
         uv_timer_stop(handle);
         return;
     }
+    if (f->releasing)
+    {
+        return;
+    }
 
-    if (appstate == 1)
+    if (f->state == APPSTATE_SEARCHING)
     {
         discover_sim(f, simdata, simmap);
         if (f->ms->force_udp_mode == true)
@@ -947,9 +825,9 @@ void datacheckcallback(uv_timer_t* handle)
         return;
     }
 
-    if (appstate == 1)
+    if (f->state == APPSTATE_SEARCHING)
     {
-        begin_live_mapping(handle, f, simdata, simmap);
+        begin_live_mapping(handle, f);
         return;
     }
 
@@ -961,201 +839,183 @@ void datacheckcallback(uv_timer_t* handle)
     f->siminfo = simapi_get_sim(simdata, simmap, f->ms->force_udp_mode, NULL, false);
     if (f->siminfo.isSimOn == false)
     {
-        appstate = 1;
-        releaseloop(f, simdata, simmap);
+        releaseloop(f);
     }
 }
 
-void cb(uv_poll_t* handle, int status, int events)
+static int session_open(loop_data* f, CargopitSettings* ms, uv_loop_t* loop)
 {
-    void* b = uv_handle_get_data((uv_handle_t*) handle);
-    loop_data* f = (loop_data*) b;
-    char ch;
-    ssize_t bytes_read = read(STDIN_FILENO, &ch, sizeof(ch));
-    if (bytes_read != sizeof(ch))
+    memset(f, 0, sizeof(*f));
+    f->simdata = calloc(1, sizeof(SimData));
+    f->simmap = simapi_simmap_create();
+    if (f->simdata == NULL || f->simmap == NULL || telemetry_snapshot_init(&f->snapshot) != 0)
     {
-        return;
+        free(f->simdata);
+        free(f->simmap);
+        return CARGOPIT_ERROR_UNKNOWN;
     }
-
-    if (ch == 'q')
-    {
-        if(f->releasing == false && doui == false)
-        {
-            appstate--;
-            fprintf(stdout, "\nUser requested stop appstate is now %i\n", appstate);
-            fflush(stdout);
-            slogi("User requested stop appstate is now %i", appstate);
-        }
-    }
-
-    if (appstate == 0)
-    {
-        slogi("Cargopit is exiting...");
-        uv_udp_recv_stop(&recv_socket);
-        uv_timer_stop(&datamaptimer);
-        uv_timer_stop(&showstatstimer);
-        // at this point these below should be the only active threads
-        uv_timer_stop(&datachecktimer);
-        uv_poll_stop(handle);
-    }
-}
-
-
-
-void* cargopit_mainloop_start(void* arg)
-{
-    CargopitSettings* ms = arg;
-    simdata = malloc(sizeof(SimData));
-    simmap = simapi_simmap_create();
-    slogd("setting initial app state");
-    appstate = 1;
-
-    //struct pollfd mypoll = { STDIN_FILENO, POLLIN|POLLPRI };
-    //uv_poll_t* poll = (uv_poll_t*) malloc(uv_handle_size(UV_POLL));
-
-    baton = (loop_data*) malloc(sizeof(loop_data));
-    baton->siminfo.mapapi = -1;
-    baton->simmap = simmap;
-    baton->simdata = simdata;
-    baton->ms = ms;
-    baton->uion = false;
-    baton->releasing = false;
-    baton->use_udp = false;
-    baton->req.data = (void*) baton;
-
+    f->loop = loop;
+    f->ms = ms;
+    f->siminfo.mapapi = -1;
+    f->state = APPSTATE_SEARCHING;
+    f->config_index = resolve_config_index(ms->config_str, ms->config_index);
 
     simapi_set_log_info(simapilib_loginfo);
     simapi_set_log_debug(simapilib_logdebug);
     simapi_set_log_trace(simapilib_logtrace);
 
-    //if (0 != uv_poll_init(uv_default_loop(), poll, 0))
-    //{
-    //    return NULL;
-    //};
-   
-    uv_udp_init(loop, &recv_socket);
-    uv_timer_init(loop, &datachecktimer);
-    uv_timer_init(loop, &datamaptimer);
-    uv_timer_init(loop, &tyrediametertimer);
+    uv_udp_init(loop, &f->recv_socket);
+    uv_timer_init(loop, &f->datachecktimer);
+    uv_timer_init(loop, &f->datamaptimer);
+    uv_timer_init(loop, &f->tyrediametertimer);
+    uv_async_init(loop, &f->stop_async, on_stop_requested);
+    uv_handle_set_data((uv_handle_t*) &f->recv_socket, f);
+    uv_handle_set_data((uv_handle_t*) &f->datachecktimer, f);
+    uv_handle_set_data((uv_handle_t*) &f->datamaptimer, f);
+    uv_handle_set_data((uv_handle_t*) &f->tyrediametertimer, f);
+    uv_handle_set_data((uv_handle_t*) &f->stop_async, f);
 
-
-
-    uv_handle_set_data((uv_handle_t*) &datachecktimer, (void*) baton);
-    uv_handle_set_data((uv_handle_t*) &datamaptimer, (void*) baton);
-    //uv_handle_set_data((uv_handle_t*) &showstatstimer, (void*) baton);
-    uv_handle_set_data((uv_handle_t*) &recv_socket, (void*) baton);
-    //}
-    //uv_handle_set_data((uv_handle_t*) poll, (void*) baton);
-
-    //if (0 != uv_poll_start(poll, UV_READABLE, cb))
-    //{
-    //    return NULL;
-    //};
-
-    uv_timer_start(&datachecktimer, datacheckcallback, 1000, 1000);
-
-    //fprintf(stdout, "Searching for sim data... Press q to quit...\n");
-    uv_run(loop, UV_RUN_DEFAULT);
-
-    return NULL;
+    uv_timer_start(&f->datachecktimer, datacheckcallback, SIM_CHECK_INTERVAL_MS, SIM_CHECK_INTERVAL_MS);
+    return 0;
 }
 
-SimData* get_test_simdata(void)
+static void session_close(loop_data* f)
 {
-    if(test_baton == NULL)
+    uv_walk(f->loop, close_walk_cb, NULL);
+    uv_run(f->loop, UV_RUN_DEFAULT);
+    uv_loop_close(f->loop);
+    slogi("All threads stopped...");
+    telemetry_snapshot_destroy(&f->snapshot);
+    free(f->simdata);
+    free(f->simmap);
+    f->simdata = NULL;
+    f->simmap = NULL;
+}
+
+static const char* session_sim_name(const loop_data* f)
+{
+    if (f->state == APPSTATE_EXITING || f->siminfo.simulatorexe <= 0)
+    {
+        return SIM_NOT_DETECTED;
+    }
+    return simapi_gametofullstr(f->siminfo.simulatorexe);
+}
+
+/* JSON-safe copy of a display name: drops quotes, backslashes and control characters. */
+static void json_safe_copy(char* out, size_t len, const char* in)
+{
+    size_t n = 0;
+    for (; in != NULL && *in != '\0' && n + 1 < len; in++)
+    {
+        if (*in == '"' || *in == '\\' || (unsigned char) *in < ' ')
+        {
+            continue;
+        }
+        out[n++] = *in;
+    }
+    out[n] = '\0';
+}
+
+static char* session_status_json(const loop_data* f)
+{
+    char sim[CONTROL_NAME_MAX];
+    unsigned long updates = 0;
+    unsigned long overruns = 0;
+    int active = 0;
+    char* out = malloc(CONTROL_STATUS_MAX);
+
+    if (out == NULL)
     {
         return NULL;
     }
-    return test_baton->simdata;
+    for (int x = 0; f->runners != NULL && x < f->numdevices; x++)
+    {
+        if (!f->runners[x].started)
+        {
+            continue;
+        }
+        active++;
+        updates += (unsigned long) atomic_load(&f->runners[x].updates);
+        overruns += (unsigned long) atomic_load(&f->runners[x].overruns);
+    }
+    json_safe_copy(sim, sizeof(sim), session_sim_name(f));
+    snprintf(out, CONTROL_STATUS_MAX,
+             "{\"ok\":true,\"state\":\"%s\",\"releasing\":%s,\"paused\":%s,\"config_index\":%d,"
+             "\"sim\":\"%s\",\"devices\":%d,\"updates\":%lu,\"overruns\":%lu}",
+             APP_STATE_NAMES[f->state], f->releasing ? JSON_TRUE : JSON_FALSE, f->user_stopped ? JSON_TRUE : JSON_FALSE,
+             f->config_index, sim, active, updates, overruns);
+    return out;
 }
 
-void* cargopit_testloop_start(void* arg)
+/* Re-read the device profile: release now, and the next detected frame loads devices from disk again. */
+static void session_reload(loop_data* f)
 {
-    test_loop_args* args = arg;
-    simmap = simapi_simmap_create();
+    f->user_stopped = false;
+    if (f->state == APPSTATE_MAPPING)
+    {
+        slogi("reload requested, releasing devices to load the saved profile");
+        releaseloop(f);
+        return;
+    }
+    if (f->state == APPSTATE_SEARCHING && !f->releasing && !uv_is_active((uv_handle_t*) &f->datachecktimer))
+    {
+        uv_timer_start(&f->datachecktimer, datacheckcallback, 0, SIM_CHECK_INTERVAL_MS);
+    }
+}
 
+static char* handle_control_command(void* ctx, const char* command)
+{
+    loop_data* f = ctx;
 
-    simapi_set_log_info(simapilib_loginfo);
-    simapi_set_log_debug(simapilib_logdebug);
-    simapi_set_log_trace(simapilib_logtrace);
+    if (strcmp(command, CONTROL_CMD_STATUS) == 0)
+    {
+        return session_status_json(f);
+    }
+    if (strcmp(command, CONTROL_CMD_RELOAD) == 0)
+    {
+        session_reload(f);
+        return strdup(CONTROL_REPLY_OK);
+    }
+    if (strcmp(command, CONTROL_CMD_STOP) == 0)
+    {
+        session_request_exit(f);
+        return strdup(CONTROL_REPLY_OK);
+    }
+    return strdup(CONTROL_REPLY_UNKNOWN);
+}
 
+static void start_cli_controls(loop_data* f)
+{
+    control_server_start(&f->control, f->loop, handle_control_command, f);
+    uv_signal_init(f->loop, &f->sigterm);
+    uv_signal_init(f->loop, &f->sigint);
+    uv_handle_set_data((uv_handle_t*) &f->sigterm, f);
+    uv_handle_set_data((uv_handle_t*) &f->sigint, f);
+    uv_signal_start(&f->sigterm, stop_mainloop_from_signal, SIGTERM);
+    uv_signal_start(&f->sigint, stop_mainloop_from_signal, SIGINT);
+    f->signals_started = true;
+    if (f->stdin_poll == NULL)
+    {
+        return;
+    }
+    uv_handle_set_data((uv_handle_t*) f->stdin_poll, f);
+    if (uv_poll_start(f->stdin_poll, UV_READABLE, on_stdin_key) != 0)
+    {
+        slogw("could not start stdin poll; continuing without quit key");
+    }
+}
 
-    DeviceSettings ds;
-    //int numdevices = getsingledevice(args->ms->config_str, args->confignum, args->devicenum, args->ms, &ds);
-    test_simdevice = malloc(1 * sizeof(SimDevice));
-    test_siminfo = malloc(sizeof(SimInfo));
-    simapi_set_faux_siminfo(test_siminfo);
-    int initdevices = devinit(test_simdevice, test_siminfo, 1, args->ds, args->ms);
-    //settingsfree(ds);
+AppState gameloop_app_state(void)
+{
+    return session.state;
+}
 
-
-
-    test_baton->siminfo.mapapi = -1;
-    test_baton->simdevice = test_simdevice;
-
-    test_baton->ms = args->ms;
-    test_baton->req.data = (void*) test_baton;
-
-
-    uv_timer_init(loop, &testdevicetimer);
-    uv_handle_set_data((uv_handle_t*) &testdevicetimer, (void*) test_baton);
-    uv_timer_start(&testdevicetimer, devicetimercallback, 1000, 16);
-
-    uv_run(loop, UV_RUN_DEFAULT);
-
-
+static void* run_background_loop(void* arg)
+{
+    loop_data* f = arg;
+    uv_run(f->loop, UV_RUN_DEFAULT);
     return NULL;
 }
-
-int cargopit_testloop_stop(void)
-{
-    uv_timer_stop(&testdevicetimer);
-
-    uv_stop(loop);
-    pthread_join(loop_thread, NULL);
-
-    uv_run(loop, UV_RUN_NOWAIT);
-    uv_walk(loop, close_walk_cb, NULL);
-    uv_loop_close(loop);
-    uv_library_shutdown();
-
-    slogi("All threads stopped...");
-
-    test_simdevice->free(test_simdevice);
-    free(loop);
-    free(test_baton);
-    //free(simdata);
-    free(simmap);
-
-    return 0;
-}
-
-int cargopit_mainloop_stop(CargopitSettings* ms)
-{
-
-    uv_udp_recv_stop(&recv_socket);
-    uv_timer_stop(&datamaptimer);
-    uv_timer_stop(&datachecktimer);
-
-    uv_stop(loop);
-    pthread_join(loop_thread, NULL);
-
-    uv_run(loop, UV_RUN_NOWAIT);
-    uv_walk(loop, close_walk_cb, NULL);
-    uv_loop_close(loop);
-    uv_library_shutdown();
-
-    slogi("All threads stopped...");
-
-    free(loop);
-    free(baton);
-    free(simdata);
-    free(simmap);
-
-    appstate = 0;
-    return 0;
-}
-
 
 int start_loop(CargopitSettings* ms)
 {
@@ -1165,982 +1025,72 @@ int start_loop(CargopitSettings* ms)
         return simd_error;
     }
 
-    loop = malloc(sizeof(uv_loop_t));
-
+    uv_loop_t* loop = malloc(sizeof(uv_loop_t));
     if (loop == NULL)
     {
-        return -1;
+        return CARGOPIT_ERROR_UNKNOWN;
     }
-
-    if (uv_loop_init(loop) != 0)
+    if (uv_loop_init(loop) != 0 || session_open(&session, ms, loop) != 0)
     {
         free(loop);
-        loop = NULL;
-        return -1;
+        return CARGOPIT_ERROR_UNKNOWN;
     }
-    return pthread_create(&loop_thread, NULL, cargopit_mainloop_start, ms);
+    return pthread_create(&loop_thread, NULL, run_background_loop, &session);
 }
 
-int start_test(test_loop_args* test_data)
+int cargopit_mainloop_stop(CargopitSettings* ms)
 {
-
-    test_baton = (device_loop_data*) malloc(sizeof(device_loop_data));
-    test_baton->simdata = test_data->simdata;
-
-    loop = malloc(sizeof(uv_loop_t));
-
-    if (loop == NULL)
-    {
-        return -1;
-    }
-
-    if (uv_loop_init(loop) != 0)
-    {
-        free(loop);
-        loop = NULL;
-        return -1;
-    }
-    return pthread_create(&loop_thread, NULL, cargopit_testloop_start, test_data);
+    (void) ms;
+    uv_async_send(&session.stop_async);
+    pthread_join(loop_thread, NULL);
+    session_close(&session);
+    free(session.loop);
+    session.loop = NULL;
+    return 0;
 }
 
 const char* get_simexe_name(void)
 {
-    if(appstate <= 0)
-    {
-        return "None Detected";
-    }
-    if(baton == NULL)
-    {
-        return "None Detected";
-    }
-    if(baton->siminfo.simulatorexe <= 0)
-    {
-        return "None Detected";
-    }
-    return simapi_gametofullstr(baton->siminfo.simulatorexe);
+    return session_sim_name(&session);
 }
 
 const char* get_simd_onoff(void)
 {
-    if(appstate <= 0)
+    if (session.state == APPSTATE_EXITING || session.siminfo.mapapi != 0)
     {
-        return "Not Detected";
+        return SIMD_NOT_DETECTED;
     }
-    if(baton == NULL)
-    {
-        return "Not Detected";
-    }
-    if(baton->siminfo.mapapi == 0)
-    {
-        return "Running";
-    }
-    return "Not Detected";
+    return SIMD_RUNNING;
 }
 
 int cargopit_mainloop(CargopitSettings* ms)
 {
+    struct termios canonicalmode;
+    int stdin_was_raw = 0;
+    uv_loop_t* loop = uv_default_loop();
     int simd_error = require_simd();
+
     if (simd_error != 0)
     {
         return simd_error;
     }
-
-    simdata = malloc(sizeof(SimData));
-    simmap = simapi_simmap_create();
-
-    struct termios canonicalmode;
-    memset(&canonicalmode, 0, sizeof(canonicalmode));
-    int stdin_was_raw = 0;
-    uv_poll_t* poll = init_stdin_quit_poll(&canonicalmode, &stdin_was_raw);
-
-    baton = (loop_data*) malloc(sizeof(loop_data));
-    baton->simmap = simmap;
-    baton->simdata = simdata;
-    baton->ms = ms;
-    baton->uion = false;
-    baton->releasing = false;
-    baton->use_udp = false;
-    baton->req.data = (void*) baton;
-
-    simapi_set_log_info(simapilib_loginfo);
-    simapi_set_log_debug(simapilib_logdebug);
-    simapi_set_log_trace(simapilib_logtrace);
-
-    uv_udp_init(uv_default_loop(), &recv_socket);
-    uv_timer_init(uv_default_loop(), &datachecktimer);
-    uv_timer_init(uv_default_loop(), &showstatstimer);
-    uv_timer_init(uv_default_loop(), &datamaptimer);
-    uv_timer_init(uv_default_loop(), &tyrediametertimer);
-    slogd("setting initial app state");
-    appstate = 1;
-
-    uv_handle_set_data((uv_handle_t*) &datachecktimer, (void*) baton);
-    uv_handle_set_data((uv_handle_t*) &datamaptimer, (void*) baton);
-    uv_handle_set_data((uv_handle_t*) &showstatstimer, (void*) baton);
-    uv_handle_set_data((uv_handle_t*) &recv_socket, (void*) baton);
-    if (poll != NULL)
+    if (session_open(&session, ms, loop) != 0)
     {
-        uv_handle_set_data((uv_handle_t*) poll, (void*) baton);
-        if (uv_poll_start(poll, UV_READABLE, cb) != 0)
-        {
-            slogw("could not start stdin poll; continuing without quit key");
-        }
+        return CARGOPIT_ERROR_UNKNOWN;
     }
-
-    uv_signal_t sigterm;
-    uv_signal_t sigint;
-    uv_signal_init(uv_default_loop(), &sigterm);
-    uv_signal_init(uv_default_loop(), &sigint);
-    uv_signal_start(&sigterm, stop_mainloop_from_signal, SIGTERM);
-    uv_signal_start(&sigint, stop_mainloop_from_signal, SIGINT);
-
-    uv_timer_start(&datachecktimer, datacheckcallback, 1000, 1000);
+    memset(&canonicalmode, 0, sizeof(canonicalmode));
+    session.stdin_poll = init_stdin_quit_poll(loop, &canonicalmode, &stdin_was_raw);
+    start_cli_controls(&session);
 
     fprintf(stdout, "Searching for sim data... Press q to quit...\n");
-    uv_run(uv_default_loop(), UV_RUN_DEFAULT);
-
-    uv_signal_stop(&sigterm);
-    uv_signal_stop(&sigint);
-    uv_stop(uv_default_loop());
-    uv_run(uv_default_loop(), UV_RUN_DEFAULT);
-    uv_loop_close(uv_default_loop());
+    uv_run(loop, UV_RUN_DEFAULT);
+    session_close(&session);
     uv_library_shutdown();
-    slogi("All threads stopped...");
 
     fprintf(stdout, "\n");
     fflush(stdout);
     restore_stdin_terminal(&canonicalmode, stdin_was_raw);
-    free(poll);
-
-    free(baton);
-    free(simdata);
-    free(simmap);
-
+    free(session.stdin_poll);
+    session.stdin_poll = NULL;
     return 0;
-}
-
-static void tester_fill_corners(double* dest, double value)
-{
-    int i;
-    for (i = 0; i < TEST_WHEEL_COUNT; i++)
-    {
-        dest[i] = value;
-    }
-}
-
-static void tester_set_gear(SimData* simdata, uint32_t gear, char gear_char)
-{
-    simdata->gear = gear;
-    simdata->gearc[0] = gear_char;
-    simdata->gearc[1] = '\0';
-}
-
-static void tester_set_tyre_fallback(SimData* simdata, double rps)
-{
-    tester_fill_corners(simdata->tyreRPS, rps);
-    simdata->tyrediameter[0] = TEST_TYRE_DIAMETER_FL;
-    simdata->tyrediameter[1] = TEST_TYRE_DIAMETER_FR;
-    simdata->tyrediameter[2] = TEST_TYRE_DIAMETER_RL;
-    simdata->tyrediameter[3] = TEST_TYRE_DIAMETER_RR;
-}
-
-static void tester_clear_effects(SimData* simdata)
-{
-    simdata->gas = 0.0;
-    simdata->brake = 0.0;
-    simdata->abs = TEST_ABS_OFF;
-    tester_fill_corners(simdata->tyreslipratio, 0.0);
-    tester_fill_corners(simdata->braketemp, 0.0);
-    tester_fill_corners(simdata->suspvelocity, 0.0);
-    tester_fill_corners(simdata->tyreRPS, 0.0);
-    tester_fill_corners(simdata->tyrediameter, TEST_TYRE_DIAMETER_UNSET);
-}
-
-void set_basic_simdata(SimData* simdata)
-{
-    snprintf(simdata->car, sizeof(simdata->car), "%s", TEST_CAR_NAME);
-    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
-    simdata->velocity = TEST_VELOCITY_CRUISE;
-    simdata->rpms = TEST_RPM_IDLE;
-    simdata->maxrpm = TEST_RPM_MAX;
-    simdata->idlerpm = TEST_RPM_IDLE;
-    tester_clear_effects(simdata);
-    simdata->Xvelocity = 0.0;
-    simdata->Yvelocity = TEST_YVELOCITY;
-    simdata->Zvelocity = 0.0;
-}
-
-static void tester_set_rolling(SimData* simdata)
-{
-    simdata->Yvelocity = TEST_YVELOCITY;
-    simdata->Zvelocity = 0.0;
-}
-
-void set_wheel_spin_simdata(SimData* simdata)
-{
-    tester_set_rolling(simdata);
-    simdata->velocity = TEST_VELOCITY_SPIN;
-    simdata->gas = TEST_PEDAL_APPLIED;
-    simdata->brake = 0.0;
-    simdata->abs = TEST_ABS_OFF;
-    tester_fill_corners(simdata->tyreslipratio, TEST_SLIP_SPIN);
-    tester_fill_corners(simdata->braketemp, 0.0);
-    tester_set_tyre_fallback(simdata, TEST_TYRE_RPS_SPIN);
-}
-
-void set_wheel_lock_simdata(SimData* simdata)
-{
-    tester_set_rolling(simdata);
-    simdata->velocity = TEST_VELOCITY_LOCK;
-    simdata->gas = 0.0;
-    simdata->brake = TEST_PEDAL_APPLIED;
-    simdata->abs = TEST_ABS_OFF;
-    tester_fill_corners(simdata->tyreslipratio, TEST_SLIP_LOCK);
-    tester_fill_corners(simdata->braketemp, TEST_BRAKE_TEMP_HOT);
-    tester_set_tyre_fallback(simdata, TEST_TYRE_RPS_LOCK);
-}
-
-static void tester_set_brake_heat(SimData* simdata)
-{
-    tester_set_rolling(simdata);
-    simdata->velocity = TEST_VELOCITY_LOCK;
-    simdata->gas = 0.0;
-    simdata->brake = TEST_PEDAL_APPLIED;
-    simdata->abs = TEST_ABS_OFF;
-    tester_fill_corners(simdata->tyreslipratio, 0.0);
-    tester_fill_corners(simdata->braketemp, TEST_BRAKE_TEMP_HOT);
-    tester_fill_corners(simdata->tyreRPS, 0.0);
-    tester_fill_corners(simdata->tyrediameter, TEST_TYRE_DIAMETER_UNSET);
-}
-
-static void tester_set_abs(SimData* simdata)
-{
-    tester_set_rolling(simdata);
-    simdata->velocity = TEST_VELOCITY_LOCK;
-    simdata->gas = 0.0;
-    simdata->brake = TEST_PEDAL_APPLIED;
-    simdata->abs = TEST_ABS_ACTIVE;
-    tester_fill_corners(simdata->tyreslipratio, TEST_SLIP_ABS_A);
-    tester_fill_corners(simdata->braketemp, TEST_BRAKE_TEMP_HOT);
-    tester_set_tyre_fallback(simdata, TEST_TYRE_RPS_LOCK);
-}
-
-// Drives every initialized device with the current test simdata, then
-// mirrors that same simdata into the SIMAPI.DAT shared memory segment (if
-// available) so external tools - dashboards, telemetry viewers, anything
-// that reads SIMAPI.DAT the same way a real running sim would populate it -
-// can follow cargopit's own test sequence instead of seeing nothing.
-static void update_devices(SimDevice* devices, int numdevices, SimData* simdata, SimMap* testsimmap)
-{
-    for (int x = 0; x < numdevices; x++)
-    {
-        if (devices[x].initialized == true)
-        {
-            devices[x].update(&devices[x], simdata);
-        }
-    }
-    if (testsimmap != NULL && testsimmap->addr != NULL)
-    {
-        simdata->mtick++;
-        memcpy(testsimmap->addr, simdata, sizeof(SimData));
-    }
-}
-
-static int tester_enter_raw_stdin(struct termios* saved)
-{
-    struct termios raw;
-    if (!isatty(STDIN_FILENO))
-    {
-        return 0;
-    }
-    tcgetattr(STDIN_FILENO, saved);
-    raw = *saved;
-    raw.c_lflag &= (~ICANON & ~ECHO);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-    return 1;
-}
-
-static void tester_restore_stdin(int raw_applied, const struct termios* saved)
-{
-    if (!raw_applied)
-    {
-        return;
-    }
-    tcsetattr(STDIN_FILENO, TCSANOW, saved);
-}
-
-static void tester_set_identity(SimData* simdata)
-{
-    simdata->simon = true;
-    simdata->simstatus = SIMAPI_STATUS_ACTIVEPLAY;
-    simdata->simapi = SIMULATORAPI_SIMAPI_TEST;
-    simdata->simexe = SIMULATOREXE_SIMAPI_TEST_NONE;
-    simdata->simapiversion = SIMAPI_VERSION;
-}
-
-static void tester_enable_log_flush(void)
-{
-    slog_config_t cfg;
-    slog_config_get(&cfg);
-    cfg.nFlush = 1;
-    slog_config_set(&cfg);
-    setvbuf(stdout, NULL, _IONBF, 0);
-    setvbuf(stderr, NULL, _IONBF, 0);
-    fflush(stdout);
-    fflush(stderr);
-}
-
-static void tester_announce(const char* msg)
-{
-    slogi("%s%s", TEST_STEP_PREFIX, msg);
-    fflush(stdout);
-}
-
-static void tester_announce_named(const char* action, const char* name)
-{
-    slogi("%s%s %s", TEST_STEP_PREFIX, action, name);
-    fflush(stdout);
-}
-
-static int tester_hold_ticks(unsigned int hold_us)
-{
-    return (int)(hold_us / TEST_TICK_US);
-}
-
-static void tester_on_signal(int signum)
-{
-    (void)signum;
-    tester_abort = 1;
-}
-
-static void tester_install_signals(void)
-{
-    struct sigaction action;
-
-    memset(&action, 0, sizeof(action));
-    action.sa_handler = tester_on_signal;
-    sigemptyset(&action.sa_mask);
-    sigaction(SIGINT, &action, NULL);
-    sigaction(SIGTERM, &action, NULL);
-}
-
-static int tester_is_quit_key(char ch)
-{
-    return ch == TEST_KEY_QUIT || ch == TEST_KEY_QUIT_UPPER || ch == TEST_KEY_ESC;
-}
-
-static int tester_poll_quit_key(void)
-{
-    struct pollfd pfd;
-    char ch;
-    ssize_t nread;
-
-    if (tester_stdin_raw == 0)
-    {
-        return 0;
-    }
-    pfd.fd = STDIN_FILENO;
-    pfd.events = POLLIN;
-    pfd.revents = 0;
-    if (poll(&pfd, TEST_STDIN_POLL_FDS, TEST_STDIN_POLL_MS) <= 0)
-    {
-        return 0;
-    }
-    nread = read(STDIN_FILENO, &ch, TEST_STDIN_READ_BYTES);
-    if (nread != TEST_STDIN_READ_BYTES)
-    {
-        return 0;
-    }
-    if (!tester_is_quit_key(ch))
-    {
-        return 0;
-    }
-    tester_abort = 1;
-    return 1;
-}
-
-static int tester_should_stop(void)
-{
-    if (tester_abort != 0)
-    {
-        return 1;
-    }
-    return tester_poll_quit_key();
-}
-
-typedef void (*tester_mod_fn)(SimData* simdata, int tick);
-
-static void tester_drive(
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata,
-    SimMap* testsimmap,
-    int ticks,
-    tester_mod_fn modify)
-{
-    int tick;
-    for (tick = 0; tick < ticks; tick++)
-    {
-        if (tester_should_stop())
-        {
-            return;
-        }
-        if (modify != NULL)
-        {
-            modify(simdata, tick);
-        }
-        update_devices(devices, numdevices, simdata, testsimmap);
-        usleep(TEST_TICK_US);
-    }
-}
-
-static void tester_mod_abs(SimData* simdata, int tick)
-{
-    double slip = TEST_SLIP_ABS_A;
-    if ((tick / TEST_ABS_PULSE_TICKS) % 2 == 1)
-    {
-        slip = TEST_SLIP_ABS_B;
-    }
-    tester_fill_corners(simdata->tyreslipratio, slip);
-}
-
-static void tester_mod_suspension(SimData* simdata, int tick)
-{
-    double vel = TEST_SUSP_VEL_A;
-    if ((tick % 2) == 1)
-    {
-        vel = TEST_SUSP_VEL_B;
-    }
-    tester_fill_corners(simdata->suspvelocity, vel);
-}
-
-static uint32_t tester_pulse_gear;
-static char tester_pulse_gear_char;
-
-static void tester_mod_gear(SimData* simdata, int tick)
-{
-    if ((tick / TEST_GEAR_PULSE_TICKS) % 2 == 0)
-    {
-        tester_set_gear(simdata, tester_pulse_gear, tester_pulse_gear_char);
-        return;
-    }
-    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
-}
-
-static const char* tester_effect_name(VibrationEffectType effect)
-{
-    switch (effect)
-    {
-        case EFFECT_GEARSHIFT:
-            return "gear";
-        case EFFECT_TYRELOCK:
-            return "tyre lock";
-        case EFFECT_ABSBRAKES:
-            return "ABS";
-        case EFFECT_TYRESLIP:
-            return "tyre slip";
-        case EFFECT_SUSPENSION:
-            return "suspension";
-        default:
-            return "effect";
-    }
-}
-
-static int tester_has_effect(SimDevice* devices, int numdevices, VibrationEffectType effect)
-{
-    int i;
-    for (i = 0; i < numdevices; i++)
-    {
-        if (devices[i].initialized == false)
-        {
-            continue;
-        }
-        if (devices[i].hapticeffect.effecttype != effect)
-        {
-            continue;
-        }
-        return 1;
-    }
-    return 0;
-}
-
-static int tester_is_haptic_effect_device(const SimDevice* device)
-{
-    if (device->initialized == false)
-    {
-        return 0;
-    }
-    if (device->type == SIMDEV_SOUND)
-    {
-        return 1;
-    }
-    switch (device->hapticeffect.effecttype)
-    {
-        case EFFECT_GEARSHIFT:
-        case EFFECT_TYRELOCK:
-        case EFFECT_TYRESLIP:
-        case EFFECT_ABSBRAKES:
-        case EFFECT_SUSPENSION:
-            return 1;
-        default:
-            return 0;
-    }
-}
-
-static const char* tester_device_label(const SimDevice* device)
-{
-    if (tester_is_haptic_effect_device(device))
-    {
-        return tester_effect_name(device->hapticeffect.effecttype);
-    }
-    if (device->type == SIMDEV_SERIAL)
-    {
-        return TEST_LABEL_SERIAL_LIGHTS;
-    }
-    if (device->type == SIMDEV_USB)
-    {
-        return TEST_LABEL_USB_LIGHTS;
-    }
-    return TEST_LABEL_DEVICE;
-}
-
-static void tester_warn_if_missing(SimDevice* devices, int numdevices, VibrationEffectType effect)
-{
-    if (tester_has_effect(devices, numdevices, effect))
-    {
-        return;
-    }
-    slogw("No enabled %s device in this config; that test step will not shake", tester_effect_name(effect));
-}
-
-static void tester_log_slip_play(
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata,
-    VibrationEffectType effect)
-{
-    int i;
-    for (i = 0; i < numdevices; i++)
-    {
-        double play;
-        if (devices[i].initialized == false)
-        {
-            continue;
-        }
-        if (devices[i].hapticeffect.effecttype != effect)
-        {
-            continue;
-        }
-        play = slipeffect(
-            simdata,
-            &devices[i].hapticeffect,
-            devices[i].hapticeffect.useconfig,
-            devices[i].hapticeffect.configcheck,
-            devices[i].hapticeffect.tyrediameterconfig);
-        slogi(
-            "%s%s play=%f threshold=%f brake=%f gas=%f yvel=%f slip=%f",
-            TEST_STEP_PREFIX,
-            tester_effect_name(effect),
-            play,
-            devices[i].hapticeffect.threshold,
-            simdata->brake,
-            simdata->gas,
-            simdata->Yvelocity,
-            simdata->tyreslipratio[0]);
-        return;
-    }
-    tester_warn_if_missing(devices, numdevices, effect);
-}
-
-static uint32_t tester_next_rpm(uint32_t rpm, uint32_t to, int signed_step)
-{
-    int next = (int)rpm + signed_step;
-    if (signed_step > 0 && next >= (int)to)
-    {
-        return to;
-    }
-    if (signed_step < 0 && next <= (int)to)
-    {
-        return to;
-    }
-    return (uint32_t)next;
-}
-
-static void tester_sweep_rpm(
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata,
-    SimMap* testsimmap,
-    uint32_t from,
-    uint32_t to,
-    int step)
-{
-    int signed_step = step;
-    uint32_t rpm = from;
-    if (to < from)
-    {
-        signed_step = -step;
-    }
-    while (1)
-    {
-        if (tester_should_stop())
-        {
-            return;
-        }
-        simdata->rpms = rpm;
-        update_devices(devices, numdevices, simdata, testsimmap);
-        usleep(TEST_TICK_US);
-        if (rpm == to)
-        {
-            return;
-        }
-        rpm = tester_next_rpm(rpm, to, signed_step);
-    }
-}
-
-static SimMap* tester_open_map(SimData* simdata)
-{
-    if (simdata == NULL)
-    {
-        return NULL;
-    }
-
-    SimMap* testsimmap = calloc(1, sizeof(*testsimmap));
-    if (testsimmap == NULL)
-    {
-        return NULL;
-    }
-
-    int shmerr;
-    shmerr = simapi_universalmap_open(testsimmap, simdata);
-    if (shmerr == SIMAPI_ERROR_NONE)
-    {
-        return testsimmap;
-    }
-    slog_warn("Could not open shared telemetry memory for test mode (error %i) - test sequence will still drive local devices, but external tools won't see it", shmerr);
-    free(testsimmap);
-    return NULL;
-}
-
-static void tester_close_map(
-    SimMap* testsimmap,
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata)
-{
-    if (simdata == NULL)
-    {
-        return;
-    }
-
-    simdata->simon = false;
-    simdata->simstatus = SIMAPI_STATUS_OFF;
-    update_devices(devices, numdevices, simdata, testsimmap);
-    if (testsimmap != NULL)
-    {
-        if (testsimmap->addr != NULL)
-        {
-            munmap(testsimmap->addr, sizeof(SimData));
-        }
-        if (testsimmap->fd >= 0)
-        {
-            close(testsimmap->fd);
-        }
-        free(testsimmap);
-    }
-}
-
-static void tester_phase(
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata,
-    SimMap* testsimmap,
-    const char* msg,
-    unsigned int hold_us,
-    tester_mod_fn modify)
-{
-    if (tester_should_stop())
-    {
-        return;
-    }
-    tester_announce(msg);
-    tester_drive(devices, numdevices, simdata, testsimmap, tester_hold_ticks(hold_us), modify);
-}
-
-static void tester_phase_gear(
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata,
-    SimMap* testsimmap,
-    const char* msg,
-    uint32_t gear,
-    char gear_char)
-{
-    tester_pulse_gear = gear;
-    tester_pulse_gear_char = gear_char;
-    tester_set_gear(simdata, gear, gear_char);
-    tester_phase(devices, numdevices, simdata, testsimmap, msg, TEST_PHASE_HOLD_US, tester_mod_gear);
-}
-
-static void tester_reset_idle(SimData* simdata)
-{
-    tester_clear_effects(simdata);
-    simdata->velocity = 0;
-    simdata->rpms = TEST_RPM_IDLE;
-    simdata->playerflag = SIMAPI_FLAG_GREEN;
-    tester_set_gear(simdata, SIMAPI_GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL);
-}
-
-static void tester_run_engine(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    simdata->gas = TEST_GAS_CRUISE;
-    tester_announce(TEST_MSG_REV);
-    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_IDLE, TEST_RPM_MAX, TEST_RPM_SWEEP_STEP);
-    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_MAX, TEST_RPM_IDLE, TEST_RPM_SWEEP_STEP);
-    simdata->rpms = TEST_RPM_IDLE;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_RPM_IDLE, TEST_PHASE_HOLD_US, NULL);
-}
-
-static void tester_run_gear(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_FIRST, SIMAPI_GEAR_FIRST, TEST_GEAR_CHAR_FIRST);
-    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_SECOND, SIMAPI_GEAR_SECOND, TEST_GEAR_CHAR_SECOND);
-    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_THIRD, SIMAPI_GEAR_THIRD, TEST_GEAR_CHAR_THIRD);
-    tester_phase_gear(device, 1, simdata, testsimmap, TEST_MSG_FOURTH, SIMAPI_GEAR_FOURTH, TEST_GEAR_CHAR_FOURTH);
-}
-
-static void tester_run_spin(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    set_wheel_spin_simdata(simdata);
-    tester_log_slip_play(device, 1, simdata, EFFECT_TYRESLIP);
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPIN, TEST_PHASE_HOLD_US, NULL);
-}
-
-static void tester_run_lock(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    set_wheel_lock_simdata(simdata);
-    tester_log_slip_play(device, 1, simdata, EFFECT_TYRELOCK);
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_LOCK, TEST_PHASE_HOLD_US, NULL);
-}
-
-static void tester_run_abs(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    tester_set_abs(simdata);
-    tester_log_slip_play(device, 1, simdata, EFFECT_ABSBRAKES);
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_ABS, TEST_PHASE_HOLD_US, tester_mod_abs);
-}
-
-static void tester_run_suspension(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    simdata->gas = TEST_GAS_CRUISE;
-    tester_fill_corners(simdata->suspvelocity, TEST_SUSP_VEL_A);
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SUSPENSION, TEST_PHASE_HOLD_US, tester_mod_suspension);
-}
-
-static void tester_run_haptic(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    switch (device->hapticeffect.effecttype)
-    {
-        case EFFECT_ENGINERPM:
-            tester_run_engine(device, simdata, testsimmap);
-            return;
-        case EFFECT_GEARSHIFT:
-            tester_run_gear(device, simdata, testsimmap);
-            return;
-        case EFFECT_TYRESLIP:
-            tester_run_spin(device, simdata, testsimmap);
-            return;
-        case EFFECT_TYRELOCK:
-            tester_run_lock(device, simdata, testsimmap);
-            return;
-        case EFFECT_ABSBRAKES:
-            tester_run_abs(device, simdata, testsimmap);
-            return;
-        case EFFECT_SUSPENSION:
-            tester_run_suspension(device, simdata, testsimmap);
-            return;
-        default:
-            return;
-    }
-}
-
-static void tester_run_lights(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    simdata->gas = TEST_GAS_CRUISE;
-    tester_announce(TEST_MSG_REV);
-    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_IDLE, TEST_RPM_MAX, TEST_RPM_SWEEP_STEP);
-    tester_sweep_rpm(device, 1, simdata, testsimmap, TEST_RPM_MAX, TEST_RPM_IDLE, TEST_RPM_SWEEP_STEP);
-    simdata->rpms = TEST_RPM_IDLE;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_RPM_IDLE, TEST_PHASE_HOLD_US, NULL);
-
-    simdata->playerflag = SIMAPI_FLAG_GREEN;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_GREEN, TEST_PHASE_HOLD_US, NULL);
-    simdata->playerflag = SIMAPI_FLAG_YELLOW;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_YELLOW, TEST_PHASE_HOLD_US, NULL);
-    simdata->playerflag = SIMAPI_FLAG_BLUE;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_BLUE, TEST_PHASE_HOLD_US, NULL);
-    simdata->playerflag = SIMAPI_FLAG_RED;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_RED, TEST_PHASE_HOLD_US, NULL);
-
-    tester_set_brake_heat(simdata);
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_BUTTONS, TEST_PHASE_HOLD_US, NULL);
-
-    simdata->velocity = TEST_VELOCITY_SLOW;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPEED_SLOW, TEST_PHASE_HOLD_US, NULL);
-    simdata->velocity = TEST_VELOCITY_FAST;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPEED_FAST, TEST_PHASE_HOLD_US, NULL);
-    simdata->velocity = TEST_VELOCITY_TOP;
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_SPEED_TOP, TEST_PHASE_HOLD_US, NULL);
-}
-
-static void tester_idle_all(
-    SimDevice* devices,
-    int numdevices,
-    SimData* simdata,
-    SimMap* testsimmap)
-{
-    tester_reset_idle(simdata);
-    update_devices(devices, numdevices, simdata, testsimmap);
-}
-
-static void tester_run_one_device(SimDevice* device, SimData* simdata, SimMap* testsimmap)
-{
-    if (device->initialized == false)
-    {
-        return;
-    }
-    if (tester_should_stop())
-    {
-        return;
-    }
-
-    tester_announce_named(TEST_MSG_STARTING, tester_device_label(device));
-    set_basic_simdata(simdata);
-    if (tester_is_haptic_effect_device(device))
-    {
-        tester_run_haptic(device, simdata, testsimmap);
-    }
-    else
-    {
-        tester_run_lights(device, simdata, testsimmap);
-    }
-    if (tester_should_stop())
-    {
-        return;
-    }
-    tester_reset_idle(simdata);
-    tester_phase(device, 1, simdata, testsimmap, TEST_MSG_COAST, TEST_IDLE_HOLD_US, NULL);
-    tester_announce_named(TEST_MSG_FINISHED, tester_device_label(device));
-}
-
-int tester(SimDevice* devices, int numdevices)
-{
-    SimData* simdata;
-    SimMap* testsimmap;
-    struct termios canonicalmode;
-    int raw_applied;
-    int i;
-
-    tester_abort = 0;
-    tester_stdin_raw = 0;
-    tester_install_signals();
-    tester_enable_log_flush();
-    slogi(TEST_STEP_PREFIX TEST_MSG_PREPARING, numdevices);
-
-    simdata = calloc(1, sizeof(*simdata));
-    if (simdata == NULL)
-    {
-        sloge("Could not allocate test telemetry state");
-        return 1;
-    }
-    tester_set_identity(simdata);
-    testsimmap = tester_open_map(simdata);
-    raw_applied = tester_enter_raw_stdin(&canonicalmode);
-    tester_stdin_raw = raw_applied;
-
-    for (i = 0; i < numdevices; i++)
-    {
-        if (tester_should_stop())
-        {
-            break;
-        }
-        tester_run_one_device(&devices[i], simdata, testsimmap);
-    }
-
-    if (tester_should_stop())
-    {
-        tester_announce(TEST_MSG_STOPPED);
-        tester_idle_all(devices, numdevices, simdata, testsimmap);
-    }
-
-    tester_restore_stdin(raw_applied, &canonicalmode);
-    tester_close_map(testsimmap, devices, numdevices, simdata);
-    free(simdata);
-    return 0;
-}
-
-static void free_loaded_device_settings(DeviceSettings* ds, int configureddevices)
-{
-    int i;
-    if (ds == NULL)
-    {
-        return;
-    }
-    for (i = 0; i < configureddevices; i++)
-    {
-        settingsfree(ds[i]);
-    }
-    free(ds);
-}
-
-int run_hardware_test(CargopitSettings* ms, int config_index, int device_index)
-{
-    int confignum;
-    DeviceSettings* ds;
-    int configureddevices;
-    int numdevices;
-    SimDevice* simdevices;
-    SimInfo* siminfo;
-    int error;
-    int i;
-
-    tester_enable_log_flush();
-    confignum = resolve_config_index(ms->config_str, config_index);
-    if (confignum < 0)
-    {
-        sloge("Could not resolve config index for test");
-        return CARGOPIT_ERROR_INVALID_DEV;
-    }
-
-    ds = NULL;
-    configureddevices = 0;
-    numdevices = load_devices_for_test(
-        ms->config_str, confignum, device_index, ms, &ds, &configureddevices);
-    slogd("loading confignum %i, with %i devices.", confignum, configureddevices);
-    if (numdevices <= 0)
-    {
-        sloge("No devices loaded for test");
-        free_loaded_device_settings(ds, configureddevices);
-        return CARGOPIT_ERROR_INVALID_DEV;
-    }
-
-    simdevices = malloc(numdevices * sizeof(SimDevice));
-    siminfo = malloc(sizeof(SimInfo));
-    simapi_set_faux_siminfo(siminfo);
-    (void)devinit(simdevices, siminfo, numdevices, ds, ms);
-    free_loaded_device_settings(ds, configureddevices);
-
-    error = tester(simdevices, numdevices);
-    for (i = 0; i < numdevices; i++)
-    {
-        if (simdevices[i].initialized == true)
-        {
-            simdevices[i].free(&simdevices[i]);
-        }
-    }
-    free(simdevices);
-    free(siminfo);
-    return error;
 }

@@ -5,6 +5,8 @@ set(helper_source_files
   dirhelper.h
   confighelper.c
   confighelper.h
+  devicenames.c
+  devicenames.h
   ensure_simd.c
   ensure_simd.h
   simd_telemetry.c

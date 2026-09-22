@@ -7,7 +7,6 @@ else()
 endif()
 
 
-SET_SOURCE_FILES_PROPERTIES( src/cargopit.c PROPERTIES LANGUAGE C)
 #set(CMAKE_BUILD_TYPE Debug)
 
 option(BUILD_SHARED "Build cargopit shared library" OFF)
@@ -67,7 +66,7 @@ if(BUILD_SHARED)
 else()
     add_library(cargopit STATIC src/cargopit/cargopit.c)
 endif()
-add_executable(cargopit-cli src/cargopit/cargopit-cli.c)
+add_executable(cargopit-cli src/cargopit/cargopit.c)
 set_target_properties(cargopit-cli PROPERTIES OUTPUT_NAME cargopit)
 
 find_package(PkgConfig REQUIRED)

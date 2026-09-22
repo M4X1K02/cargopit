@@ -19,9 +19,9 @@ Follow these on every change:
 
 | Path | Role |
 | --- | --- |
-| `src/cargopit/` | Main C sources: CLI (`cargopit-cli.c`), library (`cargopit.c`) |
+| `src/cargopit/` | Main C sources: entry point (`cargopit.c`, built as the `cargopit` binary and library) |
 | `src/cargopit/devices/` | USB, serial, sound, haptic, wheel, tachometer backends |
-| `src/cargopit/gameloop/` | 60 fps update loop |
+| `src/cargopit/gameloop/` | Play session (`gameloop.c`) and hardware test sequence (`tester.c`) |
 | `src/cargopit/helper/` | Config, CLI parameters, paths, simd startup |
 | `src/arduino/` | Sample sketches (shift lights, simwind, simhaptic, custom Lua serial) |
 | `conf/` | Example `cargopit.config` |
@@ -90,12 +90,12 @@ Installer changes should keep `.github/workflows/installer.yml` green. Local con
 bash tools/distro/test-install-containers.sh detect|mocks|immutable|full <distro>
 ```
 
-Logs: `~/.cache/cargopit/*.log`. Valgrind: see README (`cd build && valgrind ... --suppressions=../.valgrindrc`).
+Logs: `~/.cache/cargopit/*.log`. A running `cargopit play` answers `status`, `reload` and `stop` on `$XDG_RUNTIME_DIR/cargopit.sock` (one line in, one JSON line out; e.g. `echo status | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/cargopit.sock`). Valgrind: see README (`cd build && valgrind ... --suppressions=../.valgrindrc`).
 
 ## Conventions
 
 - Prefer existing enums (`DeviceType`, `DeviceSubType`, `ProgramAction`, `VibrationEffectType`, …) over new stringly-typed switches.
-- New USB/serial devices go under `src/cargopit/devices/` and are wired through `confighelper` type maps. Sample Arduino sketches stay in `src/arduino/`.
+- New USB/serial devices go under `src/cargopit/devices/`; their config names go in the tables in `src/cargopit/helper/devicenames.h` (parse and save both read them, and `tui/tests/config_names.rs` checks the TUI against them). Sample Arduino sketches stay in `src/arduino/`.
 - Keep `LICENSE.rst` intact (GPL-3.0-or-later). Packaging copyright inventory: `tools/distro/debian/dpkg/copyright`.
 - Do not commit build artifacts (`/build`, `*.flatpak`, `flatpak/repo/`).
 - Public usage documentation for sims, bridges, and devices lives at spacefreak18.github.io/simapi, not in this tree. Keep README / HOW-TO-USE pointers accurate; do not duplicate that site here.

@@ -1,6 +1,7 @@
 #ifndef _SERIALADAPTER_H
 #define _SERIALADAPTER_H
 
+#include <pthread.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <libserialport.h>
@@ -14,7 +15,8 @@ typedef struct
     uint8_t refs;
     bool open;
     bool openfail;
-    bool busy;
+    /* Serialises I/O from device threads that share this port. */
+    pthread_mutex_t lock;
 }
 cargopit_serial_device;
 

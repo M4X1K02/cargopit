@@ -36,9 +36,6 @@ typedef enum
 }
 DeviceSubType;
 
-#define SerialDevicesOffset 5
-#define USBDevicesOffset 2
-
 typedef enum
 {
     SIMDEVSUBTYPE_UNKNOWN                 = 0,
@@ -211,6 +208,13 @@ SoundDeviceSettings;
 uint32_t sound_channel_mask_all(int channels);
 uint32_t sound_resolve_channel_mask(int have_pan, int pan, int have_mask, int mask, int channels);
 int sound_first_channel(uint32_t mask);
+
+#define CARGOPIT_FPS_DEFAULT 60
+#define CARGOPIT_FPS_MIN 1
+#define CARGOPIT_FPS_MAX 1000
+
+/* Clamp an update rate to [CARGOPIT_FPS_MIN, CARGOPIT_FPS_MAX]; zero and negative rates would divide by zero or spin. */
+int cargopit_clamp_fps(int fps);
 
 #define SOUND_STREAM_VOLUME_MIN 0
 #define SOUND_STREAM_VOLUME_UNITY 100
