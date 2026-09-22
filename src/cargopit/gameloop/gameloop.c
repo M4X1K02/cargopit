@@ -176,6 +176,7 @@ static void on_stdin_key(uv_poll_t* handle, int status, int events)
         fprintf(stdout, "\nUser requested stop, releasing devices\n");
         fflush(stdout);
         slogi("User requested stop, releasing devices");
+        f->user_stopped = true;
         releaseloop(f);
         return;
     }
@@ -296,21 +297,14 @@ static void maybe_start_tyre_diameter_calc(loop_data* f, const SimDevice* device
     uv_timer_start(&f->tyrediametertimer, tyrediametercheckcallback, 0, TYRE_DIAMETER_CHECK_INTERVAL_MS);
 }
 
-void devicetimercallback(uv_timer_t* handle)
+static void start_device_runners(loop_data* f)
 {
-    device_loop_data* d = (device_loop_data*) handle->data;
-    d->simdevice->update(d->simdevice, d->simdata);
-}
-
-static void free_closed_handle(uv_handle_t* handle)
-{
-    free(handle);
-}
-
-static void start_device_timers(loop_data* f)
-{
-    f->device_timers = calloc(f->numdevices, sizeof(uv_timer_t*));
-    f->device_batons = calloc(f->numdevices, sizeof(device_loop_data));
+    f->runners = calloc(f->numdevices, sizeof(DeviceRunner));
+    if (f->runners == NULL)
+    {
+        sloge("could not allocate device runners");
+        return;
+    }
     for (int x = 0; x < f->numdevices; x++)
     {
         SimDevice* device = &f->simdevices[x];
@@ -318,16 +312,19 @@ static void start_device_timers(loop_data* f)
         {
             continue;
         }
-        int interval = interval_ms_for_fps(device->fps);
-        f->device_batons[x].simdevice = device;
-        f->device_batons[x].simdata = f->simdata;
-        f->device_timers[x] = malloc(sizeof(uv_timer_t));
-        uv_timer_init(f->loop, f->device_timers[x]);
-        f->device_timers[x]->data = &f->device_batons[x];
-        uv_timer_start(f->device_timers[x], devicetimercallback, 0, interval);
-        slogi("starting device type %i at id at %i fps: %i (%i ms ticks)", device->type, x, device->fps, interval);
+        if (device_runner_start(&f->runners[x], device, &f->snapshot, device->fps) != 0)
+        {
+            sloge("could not start thread for device %i", x);
+            continue;
+        }
+        slogi("starting device type %i at id %i on its own thread at %i fps", device->type, x, cargopit_clamp_fps(device->fps));
         maybe_start_tyre_diameter_calc(f, device);
     }
+}
+
+static void publish_frame(loop_data* f)
+{
+    telemetry_snapshot_publish(&f->snapshot, f->simdata);
 }
 
 static void load_devices_if_pending(loop_data* f)
@@ -370,52 +367,94 @@ static void load_devices_if_pending(loop_data* f)
     free(ds);
 
     f->started_tyre_calc = false;
-    start_device_timers(f);
+    start_device_runners(f);
 }
 
-static void stop_device_timers(loop_data* f)
+/* Owns a session's devices while they are stopped and freed on the libuv threadpool. */
+typedef struct
 {
-    for (int x = 0; x < f->numdevices; x++)
+    uv_work_t req;
+    loop_data* session;
+    SimDevice* devices;
+    DeviceRunner* runners;
+    int numdevices;
+    SimData spindown;
+}
+ReleaseJob;
+
+static void stop_device_runners(ReleaseJob* job)
+{
+    if (job->runners == NULL)
     {
-        if (f->device_timers[x] != NULL)
-        {
-            uv_close((uv_handle_t*) f->device_timers[x], free_closed_handle);
-        }
+        return;
     }
-    free(f->device_batons);
-    free(f->device_timers);
-    f->device_batons = NULL;
-    f->device_timers = NULL;
+    for (int x = 0; x < job->numdevices; x++)
+    {
+        device_runner_stop(&job->runners[x]);
+        slogi("device %i: %lu updates, %lu overruns", x,
+              (unsigned long) atomic_load(&job->runners[x].updates),
+              (unsigned long) atomic_load(&job->runners[x].overruns));
+    }
 }
 
-static void release_devices(loop_data* f)
+/* Threadpool: joining runners and spin-down may block on device I/O, so it stays off the loop thread. */
+static void release_devices_work(uv_work_t* req)
 {
-    SimDevice* devices = f->simdevices;
-    int numdevices = f->numdevices;
+    ReleaseJob* job = req->data;
+    SimDevice* devices = job->devices;
 
-    // help things spin down
-    f->simdata->simstatus = 0;
-    f->simdata->rpms = 0;
-    f->simdata->velocity = 0;
-
-    for (int x = 0; x < numdevices; x++)
+    stop_device_runners(job);
+    for (int x = 0; x < job->numdevices; x++)
     {
         if (devices[x].initialized == true)
         {
-            devices[x].update(&devices[x], f->simdata);
+            devices[x].update(&devices[x], &job->spindown);
         }
     }
     sleep(DEVICE_SPINDOWN_SECONDS);
-    for (int x = 0; x < numdevices; x++)
+    for (int x = 0; x < job->numdevices; x++)
     {
         if (devices[x].initialized == true)
         {
             devices[x].free(&devices[x]);
         }
     }
-    free(devices);
+}
+
+static void finish_release(loop_data* f);
+
+static void release_devices_done(uv_work_t* req, int status)
+{
+    ReleaseJob* job = req->data;
+
+    (void) status;
+    free(job->runners);
+    free(job->devices);
+    finish_release(job->session);
+    free(job);
+}
+
+static ReleaseJob* take_devices_for_release(loop_data* f)
+{
+    ReleaseJob* job = calloc(1, sizeof(ReleaseJob));
+    if (job == NULL)
+    {
+        return NULL;
+    }
+    job->req.data = job;
+    job->session = f;
+    job->devices = f->simdevices;
+    job->runners = f->runners;
+    job->numdevices = f->numdevices;
+    // help things spin down
+    job->spindown = *f->simdata;
+    job->spindown.simstatus = SIMAPI_STATUS_OFF;
+    job->spindown.rpms = 0;
+    job->spindown.velocity = 0;
     f->simdevices = NULL;
+    f->runners = NULL;
     f->numdevices = 0;
+    return job;
 }
 
 static void finish_release(loop_data* f)
@@ -428,7 +467,11 @@ static void finish_release(loop_data* f)
         return;
     }
     f->state = APPSTATE_SEARCHING;
-    slogi("stopped mapping data, press q again to quit");
+    if (f->user_stopped)
+    {
+        slogi("stopped mapping data, press q again to quit");
+        return;
+    }
     slogi("restarting checking for data...");
     uv_timer_start(&f->datachecktimer, datacheckcallback, 0, SIM_CHECK_INTERVAL_MS);
 }
@@ -447,12 +490,24 @@ static void releaseloop(loop_data* f)
     uv_timer_stop(&f->tyrediametertimer);
     stop_udp(f);
     slogi("releasing devices, please wait");
-    if (f->simdevices != NULL)
+    if (f->simdevices == NULL)
     {
-        stop_device_timers(f);
-        release_devices(f);
+        finish_release(f);
+        return;
     }
-    finish_release(f);
+    ReleaseJob* job = take_devices_for_release(f);
+    if (job == NULL)
+    {
+        sloge("could not allocate device release job");
+        finish_release(f);
+        return;
+    }
+    if (uv_queue_work(f->loop, &job->req, release_devices_work, release_devices_done) != 0)
+    {
+        slogw("could not schedule device release; releasing on the loop thread");
+        release_devices_work(&job->req);
+        release_devices_done(&job->req, 0);
+    }
 }
 
 static bool mapping_should_stop(const loop_data* f)
@@ -469,6 +524,7 @@ void shmdatamapcallback(uv_timer_t* handle)
     if (f->state == APPSTATE_MAPPING)
     {
         map_live_simdata(f->simdata, f->simmap, f->siminfo.mapapi, false, NULL);
+        publish_frame(f);
         load_devices_if_pending(f);
     }
     if (mapping_should_stop(f))
@@ -510,6 +566,7 @@ static void on_udp_recv(uv_udp_t* handle, ssize_t nread, const uv_buf_t* rcvbuf,
     if (f->state == APPSTATE_MAPPING)
     {
         map_udp_packet(f, rcvbuf->base, nread);
+        publish_frame(f);
         load_devices_if_pending(f);
     }
     if (mapping_should_stop(f))
@@ -711,6 +768,7 @@ static void begin_live_mapping(uv_timer_t* handle, loop_data* f)
     {
         slogt("starting udp receive loop");
         map_live_simdata(f->simdata, f->simmap, f->siminfo.simulatorapi, true, NULL);
+        publish_frame(f);
         load_devices_if_pending(f);
         uv_udp_recv_start(&f->recv_socket, on_alloc, on_udp_recv);
         slogt("udp receive loop started");
@@ -776,7 +834,7 @@ static int session_open(loop_data* f, CargopitSettings* ms, uv_loop_t* loop)
     memset(f, 0, sizeof(*f));
     f->simdata = calloc(1, sizeof(SimData));
     f->simmap = simapi_simmap_create();
-    if (f->simdata == NULL || f->simmap == NULL)
+    if (f->simdata == NULL || f->simmap == NULL || telemetry_snapshot_init(&f->snapshot) != 0)
     {
         free(f->simdata);
         free(f->simmap);
@@ -812,6 +870,7 @@ static void session_close(loop_data* f)
     uv_run(f->loop, UV_RUN_DEFAULT);
     uv_loop_close(f->loop);
     slogi("All threads stopped...");
+    telemetry_snapshot_destroy(&f->snapshot);
     free(f->simdata);
     free(f->simmap);
     f->simdata = NULL;

@@ -52,6 +52,14 @@ target_link_libraries(haptic_effect_test
 target_include_directories(haptic_effect_test PRIVATE ${LUA_INCLUDE_DIR})
 add_test(NAME haptic_effect_test COMMAND haptic_effect_test)
 
+add_executable(device_runner_test device_runner_test.c)
+target_link_libraries(device_runner_test
+    gameloop helper devices slog simulatorapi
+    m hidapi-hidraw pulse serialport xml2 config uv xdg-basedir
+    Lua::Lua ${PROC_LIBS})
+target_include_directories(device_runner_test PRIVATE ${LUA_INCLUDE_DIR})
+add_test(NAME device_runner_test COMMAND device_runner_test)
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME startup_play_missing_simd

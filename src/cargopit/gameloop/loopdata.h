@@ -7,6 +7,7 @@
 #include "../devices/simdevice.h"
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../simulatorapi/simapi/simapi/simmapper.h"
+#include "devicerunner.h"
 
 /* Ordered: each user quit request steps one state down. */
 typedef enum
@@ -31,6 +32,8 @@ typedef struct loop_data
     bool devices_pending;
     bool use_udp;
     bool releasing;
+    /* Set by the quit key: stay idle after release so the next quit exits instead of re-mapping. */
+    bool user_stopped;
     bool started_tyre_calc;
     bool signals_started;
     int numdevices;
@@ -39,10 +42,10 @@ typedef struct loop_data
     CargopitSettings* ms;
     SimData* simdata;
     SimMap* simmap;
-    // allocated when devices load and freed in releaseloop
+    // allocated when devices load; ownership moves to the release job in releaseloop
     SimDevice* simdevices;
-    uv_timer_t** device_timers;
-    device_loop_data* device_batons;
+    DeviceRunner* runners;
+    TelemetrySnapshot snapshot;
 
     uv_timer_t datachecktimer;
     uv_timer_t datamaptimer;
