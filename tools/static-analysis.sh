@@ -144,7 +144,7 @@ if [[ -n "${api_findings}" ]]; then
     while IFS= read -r finding; do
         printf '  %s\n' "${finding}"
     done <<< "${api_findings}"
-    if ((strict == 1)); then
+    if ((strict == 1 || ci == 1)); then
         exit 1
     fi
 else
