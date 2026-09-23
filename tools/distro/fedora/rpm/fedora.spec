@@ -47,7 +47,13 @@ if [ -x $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui ]; then
 elif [ -x $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui ]; then
     cp $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
 fi
+install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.desktop \
+    $RPM_BUILD_ROOT/usr/share/applications/cargopit.desktop
+install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.svg \
+    $RPM_BUILD_ROOT/usr/share/icons/hicolor/scalable/apps/cargopit.svg
 
 %files
 /usr/bin/cargopit
 /usr/bin/cargopit-tui
+/usr/share/applications/cargopit.desktop
+/usr/share/icons/hicolor/scalable/apps/cargopit.svg
