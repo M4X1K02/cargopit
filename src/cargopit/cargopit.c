@@ -16,6 +16,7 @@
 #include "slog/slog.h"
 
 #define PROGRAM_NAME "cargopit"
+static const char INVALID_PARAMETERS_MESSAGE[] = "invalid parameters\n";
 
 static void display_banner(void)
 {
@@ -113,9 +114,13 @@ int main(int argc, char** argv)
     }
 
     ConfigError ppe = getParameters(argc, argv, p);
-    if (ppe == E_SUCCESS_AND_EXIT || ppe == E_SOMETHING_BAD)
+    if (ppe == E_SUCCESS_AND_EXIT)
     {
-        printf("invalid parameters\n");
+        goto cleanup_final;
+    }
+    if (ppe == E_SOMETHING_BAD)
+    {
+        fprintf(stderr, "%s", INVALID_PARAMETERS_MESSAGE);
         goto cleanup_final;
     }
 
