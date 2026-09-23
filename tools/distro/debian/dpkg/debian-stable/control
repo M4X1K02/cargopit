@@ -1,5 +1,5 @@
 Package: cargopit
-Version: 1
+Version: 0.4.0
 Section: misc
 Priority: optional
 Architecture: amd64
