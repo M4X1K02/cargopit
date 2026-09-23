@@ -6,8 +6,6 @@
 
 
 #include "usb_generic_shaker.h"
-#include "custom_frequency_response.h"
-#include "human_frequency_response.h"
 #include "../sounddevice.h"
 #include "../../helper/confighelper.h"
 
@@ -318,10 +316,6 @@ static int16_t sine_frame_then_advance(SoundData* data, double amplitude_scale, 
     }
 
     double a = (data->play_amplitude / AMPLITUDE_UNIT) * amplitude_scale * data->play_gain;
-    if (data->duration <= 0.0)
-    {
-        a *= custom_frequency_response_filter_correcting_output_gain(data->play_frequency);
-    }
     if (a > SHAKER_MAX_DIGITAL_DRIVE)
     {
         a = SHAKER_MAX_DIGITAL_DRIVE;
@@ -372,7 +366,7 @@ static double engine_stream_amplitude_scale(int is_gear, const SoundData* data)
         }
         return gear_envelope(data);
     }
-    return human_frequency_response_correcting_amplitude_scale(data->curr_frequency);
+    return SHAKER_ENGINE_FEEL_UNITY;
 }
 
 static void write_stream_frames(pa_stream* s, size_t length, SoundData* data, int is_gear)
@@ -479,7 +473,6 @@ int usb_generic_shaker_free(SoundDevice* sounddevice, pa_threaded_mainloop* main
 
 int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop, pa_context* context, const char* devname, int volume, uint32_t channelmask, int channels, const char* streamname)
 {
-    custom_frequency_response_analysis_build_correcting_output_table();
     pa_threaded_mainloop_lock(mainloop);
     pa_stream *stream;
 

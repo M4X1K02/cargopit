@@ -36,10 +36,6 @@ set(devices_source_files
   usb/wheels/gtneo.h
   usb/wheels/gtneo.c
   sound/usb_generic_shaker_pulse.c
-  sound/custom_frequency_response.h
-  sound/custom_frequency_response.c
-  sound/human_frequency_response.h
-  sound/human_frequency_response.c
   serial/arduino.h
   serial/arduino.c
   serial/arduinoledlua.h

@@ -12,7 +12,6 @@
 #include "sounddevice.h"
 #include "hapticeffect.h"
 #include "sound/usb_generic_shaker.h"
-#include "sound/custom_frequency_response.h"
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../helper/parameters.h"
 #include "../slog/slog.h"
@@ -259,8 +258,6 @@ int sounddev_engine_update(SimDevice* this, SimData* simdata)
         simdata->maxrpm,
         (double)this->hapticeffect.basefrequency,
         (double)this->hapticeffect.frequencyMax);
-    amp_frac *= custom_frequency_response_analysis_resonance_band_amplitude_scale(
-        data->curr_frequency);
     data->curr_amplitude = haptic_amplitude_from_level(amp_frac);
     data->harmonic2_gain = ENGINE_HARMONIC2_GAIN;
     data->harmonic3_gain = ENGINE_HARMONIC3_GAIN;
