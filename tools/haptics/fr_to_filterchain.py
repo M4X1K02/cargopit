@@ -58,6 +58,13 @@ REFINE_Q_STEP = 0.1
 REFINE_SHRINK = 0.5
 REFINE_MIN_GAIN_STEP_DB = 0.01
 OUTPUT_DECIMALS = 2
+COEFFICIENT_DIGITS = 12
+COEFFICIENT_NAMES = ("b0", "b1", "b2", "a0", "a1", "a2")
+RAW_FILTER_RATES = (44100, 48000, 88200, 96000, 176400, 192000)
+HIGHPASS = "highpass"
+LOWPASS = "lowpass"
+CEILING = "ceiling"
+NODE_INDENT = " " * 20
 
 CSV_FREQUENCY = "frequency_hz"
 CSV_TRANSFER = "transfer_db"
@@ -254,24 +261,60 @@ def fmt(value):
     return f"{value:.{OUTPUT_DECIMALS}f}"
 
 
-def node_line(name, label, controls):
+def butterworth(kind, cutoff_hz, rate):
+    """RBJ second-order Butterworth coefficients (b0, b1, b2, a0, a1, a2)."""
+    w0 = 2.0 * math.pi * cutoff_hz / rate
+    alpha = math.sin(w0) / (2.0 * BUTTERWORTH_Q)
+    cos_w0 = math.cos(w0)
+    if kind == HIGHPASS:
+        b0 = (1.0 + cos_w0) / 2.0
+        b1 = -(1.0 + cos_w0)
+    else:
+        b0 = (1.0 - cos_w0) / 2.0
+        b1 = 1.0 - cos_w0
+    return (b0, b1, b0, 1.0 + alpha, -2.0 * cos_w0, 1.0 - alpha)
+
+
+def fmt_coefficient(value):
+    return f"{value:.{COEFFICIENT_DIGITS}g}"
+
+
+def control_node(name, label, controls):
     body = " ".join(f'"{k}" = {fmt(v)}' for k, v in controls)
-    return f"                    {{ type = builtin name = {name} label = {label} control = {{ {body} }} }}"
+    return f"{NODE_INDENT}{{ type = builtin name = {name} label = {label} control = {{ {body} }} }}"
+
+
+def raw_node(name, kind, cutoff_hz):
+    """bq_raw keeps the guard filters exact: bq_lowpass/bq_highpass read "Q" as
+    a dB resonance before PipeWire 1.4 and as a real Q from 1.4 on."""
+    rows = []
+    for rate in RAW_FILTER_RATES:
+        coeffs = butterworth(kind, cutoff_hz, rate)
+        pairs = ", ".join(f"{k}={fmt_coefficient(v)}" for k, v in zip(COEFFICIENT_NAMES, coeffs))
+        rows.append(f"{NODE_INDENT}        {{ rate = {rate}, {pairs} }}")
+    return "\n".join([
+        f"{NODE_INDENT}# {kind} {fmt(cutoff_hz)} Hz, Butterworth",
+        f"{NODE_INDENT}{{ type = builtin name = {name} label = bq_raw",
+        f"{NODE_INDENT}  config = {{ coefficients = [",
+        *rows,
+        f"{NODE_INDENT}  ] }} }}",
+    ])
 
 
 def graph_nodes(bands, args):
-    nodes = [("highpass", "bq_highpass", [("Freq", args.highpass_hz), ("Q", BUTTERWORTH_Q)])]
+    nodes = [(HIGHPASS, raw_node(HIGHPASS, HIGHPASS, args.highpass_hz))]
     for index, (center, gain_db, q) in enumerate(bands, start=1):
-        nodes.append((f"eq{index}", "bq_peaking",
-                      [("Freq", center), ("Q", q), ("Gain", gain_db)]))
-    nodes.append(("lowpass", "bq_lowpass", [("Freq", args.lowpass_hz), ("Q", BUTTERWORTH_Q)]))
-    nodes.append(("ceiling", "clamp", [("Min", -args.clamp), ("Max", args.clamp)]))
+        name = f"eq{index}"
+        nodes.append((name, control_node(name, "bq_peaking",
+                                         [("Freq", center), ("Q", q), ("Gain", gain_db)])))
+    nodes.append((LOWPASS, raw_node(LOWPASS, LOWPASS, args.lowpass_hz)))
+    nodes.append((CEILING, control_node(CEILING, "clamp", [("Min", -args.clamp), ("Max", args.clamp)])))
     return nodes
 
 
 def link_lines(nodes):
-    names = [name for name, _, _ in nodes]
-    return [f'                    {{ output = "{a}:Out" input = "{b}:In" }}'
+    names = [name for name, _ in nodes]
+    return [f'{NODE_INDENT}{{ output = "{a}:Out" input = "{b}:In" }}'
             for a, b in zip(names, names[1:])]
 
 
@@ -295,7 +338,7 @@ def render(bands, fit_db, freqs, measurement_name, args):
         f'            media.name       = "{args.sink_description}"',
         "            filter.graph = {",
         "                nodes = [",
-        *[node_line(n, label, c) for n, label, c in nodes],
+        *[text for _, text in nodes],
         "                ]",
         "                links = [",
         *link_lines(nodes),
@@ -311,9 +354,11 @@ def render(bands, fit_db, freqs, measurement_name, args):
         f'                node.name      = "{args.sink_name}{OUTPUT_SUFFIX}"',
         "                node.passive   = true",
         f'                target.object  = "{args.target_sink}"',
-        "                # Stay silent instead of falling back to desktop speakers.",
-        "                node.dont-fallback  = true",
-        "                node.dont-reconnect = true",
+        "                # WirePlumber 0.5+: stay unlinked instead of falling back to the",
+        "                # default sink when target.object is missing. Do not add",
+        "                # node.dont-reconnect: WirePlumber destroys the stream if it is",
+        "                # handled before the amplifier sink appears, e.g. at login.",
+        "                node.dont-fallback = true",
         "            }",
         "        }",
         "    }",
