@@ -270,6 +270,8 @@ DeviceSettings;
 int strtogame(const char* game, CargopitSettings* ms);
 
 int strtoeffecttype(const char* effect, DeviceSettings* ds);
+/* True for effects that read a per-tyre channel (tyre, threshold keys). */
+bool haptic_effect_uses_tyre(VibrationEffectType effect);
 int strtodevsubtype(const char* device_subtype, DeviceSettings* ds, int simdev);
 int strtodev(const char* device_type, const char* device_subtype, DeviceSettings* ds);
 int strtodevsubsubtype(const char* device_subsubtype, DeviceSettings* ds);

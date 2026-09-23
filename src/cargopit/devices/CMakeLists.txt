@@ -36,6 +36,8 @@ set(devices_source_files
   usb/wheels/gtneo.h
   usb/wheels/gtneo.c
   sound/usb_generic_shaker_pulse.c
+  sound/streamprops.h
+  sound/streamprops.c
   serial/arduino.h
   serial/arduino.c
   serial/arduinoledlua.h

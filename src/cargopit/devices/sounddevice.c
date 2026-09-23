@@ -12,6 +12,7 @@
 #include "sounddevice.h"
 #include "hapticeffect.h"
 #include "sound/usb_generic_shaker.h"
+#include "sound/streamprops.h"
 #include "../simulatorapi/simapi/simapi/simdata.h"
 #include "../helper/parameters.h"
 #include "../slog/slog.h"
@@ -432,35 +433,24 @@ int sounddev_init(SoundDevice* sounddevice, const char* devname, SoundDeviceSett
     sounddevice->sounddata.lp2 = 0.0;
 
 
-    const char* streamname= "Engine";
-    switch (sounddevice->m.hapticeffect.effecttype) {
-        case (EFFECT_GEARSHIFT):
-            sounddevice->sounddata.last_gear = SIMAPI_GEAR_NEUTRAL;
-            sounddevice->sounddata.duration = sounddevice->m.hapticeffect.duration;
-            if (sounddevice->sounddata.duration <= 0.0)
-            {
-                sounddevice->sounddata.duration = GEAR_DURATION_DEFAULT_S;
-            }
-            streamname = "Gear";
-            break;
-        case (EFFECT_TYRESLIP):
-            streamname = "TyreSlip";
-            break;
-        case (EFFECT_TYRELOCK):
-            streamname = "TyreLock";
-            break;
-        case (EFFECT_ABSBRAKES):
-            streamname = "ABS";
-            break;
-        case (EFFECT_SUSPENSION):
-            streamname = "Suspension";
-            break;
-        case (EFFECT_ENGINERPM):
-        default:
-            streamname = "Engine";
-            break;
+    const HapticEffect* effect = &sounddevice->m.hapticeffect;
+    if (effect->effecttype == EFFECT_GEARSHIFT)
+    {
+        sounddevice->sounddata.last_gear = SIMAPI_GEAR_NEUTRAL;
+        sounddevice->sounddata.duration = effect->duration;
+        if (sounddevice->sounddata.duration <= 0.0)
+        {
+            sounddevice->sounddata.duration = GEAR_DURATION_DEFAULT_S;
+        }
     }
 
+    SoundStreamProps props;
+    if (sound_stream_props_build(&props, effect->effecttype, effect->tyre) != 0)
+    {
+        sloge("could not describe sound stream for effect %i", effect->effecttype);
+        return CARGOPIT_ERROR_INVALID_DEV;
+    }
+    slogi("sound stream node name is: %s", props.node_name);
 
     // Returned, not discarded: this function is declared int and used to fall
     // off its end, so new_sound_device() read whatever happened to be in the
@@ -471,7 +461,7 @@ int sounddev_init(SoundDevice* sounddevice, const char* devname, SoundDeviceSett
     // shook. Being undefined behaviour it varied by build, which is why the
     // same config worked against a locally compiled cargopit and not the
     // packaged one.
-    return usb_generic_shaker_init(sounddevice, mainloop, context, devname, sds.volume, sds.channelmask, sds.channels, streamname);
+    return usb_generic_shaker_init(sounddevice, mainloop, context, devname, sds.volume, sds.channelmask, sds.channels, &props);
 }
 
 static const vtable engine_sound_simdevice_vtable = { &sounddev_engine_update, &sounddev_free };

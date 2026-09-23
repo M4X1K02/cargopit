@@ -8,6 +8,7 @@
 #include "usb_generic_shaker.h"
 #include "../sounddevice.h"
 #include "../../helper/confighelper.h"
+#include "../../slog/slog.h"
 
 #define FORMAT PA_SAMPLE_S16LE
 #define SAMPLE_RATE   (48000)
@@ -25,6 +26,7 @@
 #define AUDIO_MAX_BUFFER_S 0.400
 #define SHAKER_MAX_DIGITAL_DRIVE 0.40
 #define SHAKER_SINK_INPUT_UNMUTED 0
+#define SHAKER_DEFAULT_SINK_LABEL "the default sink"
 #define PERCENT_SCALE 100.0
 
 #ifndef M_PI
@@ -471,8 +473,64 @@ int usb_generic_shaker_free(SoundDevice* sounddevice, pa_threaded_mainloop* main
     return err;
 }
 
-int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop, pa_context* context, const char* devname, int volume, uint32_t channelmask, int channels, const char* streamname)
+static pa_stream* new_described_stream(pa_context* context, const SoundStreamProps* props,
+                                       const pa_sample_spec* spec, const pa_channel_map* map)
 {
+    pa_proplist* proplist = pa_proplist_new();
+    if (proplist == NULL)
+    {
+        return NULL;
+    }
+    for (size_t i = 0; i < props->count; i++)
+    {
+        pa_proplist_sets(proplist, props->props[i].key, props->props[i].value);
+    }
+    pa_stream* stream = pa_stream_new_with_proplist(context, props->stream_name, spec, map, proplist);
+    pa_proplist_free(proplist);
+    return stream;
+}
+
+static int wait_for_stream_ready(pa_threaded_mainloop* mainloop, pa_stream* stream)
+{
+    for (;;)
+    {
+        pa_stream_state_t state = pa_stream_get_state(stream);
+        if (state == PA_STREAM_READY)
+        {
+            return 0;
+        }
+        if (!PA_STREAM_IS_GOOD(state))
+        {
+            return CARGOPIT_ERROR_INVALID_DEV;
+        }
+        pa_threaded_mainloop_wait(mainloop);
+    }
+}
+
+static int fail_stream(pa_threaded_mainloop* mainloop, pa_context* context, pa_stream* stream,
+                       const SoundStreamProps* props, const char* devname)
+{
+    sloge("could not connect sound stream %s to %s: %s",
+          props->node_name,
+          devname != NULL ? devname : SHAKER_DEFAULT_SINK_LABEL,
+          pa_strerror(pa_context_errno(context)));
+    if (stream != NULL)
+    {
+        pa_stream_set_state_callback(stream, NULL, NULL);
+        pa_stream_set_write_callback(stream, NULL, NULL);
+        pa_stream_disconnect(stream);
+        pa_stream_unref(stream);
+    }
+    pa_threaded_mainloop_unlock(mainloop);
+    return CARGOPIT_ERROR_INVALID_DEV;
+}
+
+int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop, pa_context* context, const char* devname, int volume, uint32_t channelmask, int channels, const SoundStreamProps* props)
+{
+    if (sounddevice == NULL || mainloop == NULL || context == NULL || props == NULL)
+    {
+        return CARGOPIT_ERROR_INVALID_DEV;
+    }
     pa_threaded_mainloop_lock(mainloop);
     pa_stream *stream;
 
@@ -514,7 +572,11 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
         pa_channel_map_parse(&channel_map, "front-left,front-right,front-center,lfe,rear-left,rear-right,side-left,side-right");
     }
 
-    stream = pa_stream_new(context, streamname, &sample_specifications, &channel_map);
+    stream = new_described_stream(context, props, &sample_specifications, &channel_map);
+    if (stream == NULL)
+    {
+        return fail_stream(mainloop, context, NULL, props, devname);
+    }
     pa_stream_set_state_callback(stream, stream_state_cb, mainloop);
 
     if (sounddevice->m.hapticeffect.effecttype == EFFECT_GEARSHIFT)
@@ -545,10 +607,13 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
     pa_volume_t channel_volume = PA_CLAMP_VOLUME((pa_volume_t)((volume / PERCENT_SCALE) * PA_VOLUME_NORM));
 
     pa_stream_flags_t stream_flags;
+    // DONT_MOVE: when the chosen sink (often an external processor) goes
+    // away the stream fails silent instead of landing on the default sink.
     stream_flags = PA_STREAM_INTERPOLATE_TIMING
         | PA_STREAM_AUTO_TIMING_UPDATE
         | PA_STREAM_ADJUST_LATENCY
-        | PA_STREAM_START_UNMUTED;
+        | PA_STREAM_START_UNMUTED
+        | PA_STREAM_DONT_MOVE;
 
     uint32_t active_channels = channelmask & sound_channel_mask_all(channels);
     if (active_channels == 0)
@@ -563,17 +628,13 @@ int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* main
         }
     }
 
-    pa_stream_connect_playback(stream, devname, &buffer_attr, stream_flags, &cv, NULL);
-    //pa_stream_connect_playback(stream, devname, &buffer_attr, stream_flags, &cv, NULL);
-
-    // Wait for the stream to be ready
-    for(;;)
+    if (pa_stream_connect_playback(stream, devname, &buffer_attr, stream_flags, &cv, NULL) < 0)
     {
-        pa_stream_state_t stream_state = pa_stream_get_state(stream);
-        PA_STREAM_IS_GOOD(stream_state);
-        //PA_STREAM_IS_GOOD(stream_state);
-        if (stream_state == PA_STREAM_READY) break;
-        pa_threaded_mainloop_wait(mainloop);
+        return fail_stream(mainloop, context, stream, props, devname);
+    }
+    if (wait_for_stream_ready(mainloop, stream) != 0)
+    {
+        return fail_stream(mainloop, context, stream, props, devname);
     }
 
     unmute_shaker_sink_input(context, stream);
