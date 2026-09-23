@@ -64,6 +64,15 @@ add_executable(revlights_test revlights_test.c)
 target_link_libraries(revlights_test devices m)
 add_test(NAME revlights_test COMMAND revlights_test)
 
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+    add_test(NAME tactile_preset_up_to_date
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/tools/haptics/fr_to_filterchain.py
+            ${CMAKE_SOURCE_DIR}/conf/pipewire/cargopit-rig-measurement.csv
+            --check ${CMAKE_SOURCE_DIR}/conf/pipewire/cargopit-tactile.conf)
+endif()
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME version_reporting
