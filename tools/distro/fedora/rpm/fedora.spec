@@ -1,15 +1,15 @@
 #dnf install pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel libserialport-devel lua-devel libuv-devel libxdg-basedir-devel libxml2-devel procps-ng-devel
 Summary: A device manager for racing sims
 Name: cargopit
-Version: 0.0.5
+Version: 0.4.0
 Release: 1
 License: GPLv3+
 Group: Applications/Sound
 Source: https://github.com/M4X1K02/cargopit
-URL: https://spacefreak18.github.io/simapi
+URL: https://github.com/M4X1K02/cargopit
 Distribution: Fedora Linux
-Vendor: spacefreak18
-Packager: Paul Jones <paul@spacefreak18.xyz>
+Vendor: M4X1K02
+Packager: M4X1K02 <maxik.secure@tutanota.com>
 Requires: pulseaudio-libs argtable libconfig hidapi libserialport libuv libxdg-basedir lua-libs libxml2 procps-ng
 BuildRequires: cmake gcc gcc-c++ make git cargo rust
 
@@ -47,7 +47,13 @@ if [ -x $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui ]; then
 elif [ -x $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui ]; then
     cp $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
 fi
+install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.desktop \
+    $RPM_BUILD_ROOT/usr/share/applications/cargopit.desktop
+install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.svg \
+    $RPM_BUILD_ROOT/usr/share/icons/hicolor/scalable/apps/cargopit.svg
 
 %files
 /usr/bin/cargopit
 /usr/bin/cargopit-tui
+/usr/share/applications/cargopit.desktop
+/usr/share/icons/hicolor/scalable/apps/cargopit.svg

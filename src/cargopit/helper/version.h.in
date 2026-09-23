@@ -1,0 +1,6 @@
+#ifndef CARGOPIT_VERSION_H
+#define CARGOPIT_VERSION_H
+
+#define CARGOPIT_VERSION "@PROJECT_VERSION@"
+
+#endif

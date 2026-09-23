@@ -66,7 +66,7 @@ End-user source install (compiles simapi, simd, and this tree; does not configur
 
 ## Release
 
-Packages are not published on merge. Push a version tag (for example `0.3.8`) or run **Make Packages** from the Actions tab. Only a tag uploads assets to a GitHub Release.
+Packages are not published on merge. Push a version tag (for example `0.4.0`) or run **Make Packages** from the Actions tab. Only a tag uploads assets to a GitHub Release.
 
 ## Tests
 

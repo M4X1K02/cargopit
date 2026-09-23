@@ -229,13 +229,9 @@ modules:
       - type: file
         path: io.github.M4X1K02.cargopit.metainfo.xml
       # Icon comes from tools/cargopit.svg via the `dir` source above (no
-      # separate file source needed). That file is a square 100x100 copy of
-      # the upstream artwork -- the published monocoque.svg the deb job
-      # downloads is 100x50, which Flatpak's export rejects outright, while
-      # appstreamcli separately hard-requires any desktop-application to
-      # have an icon at all (both confirmed via failed real CI runs). It is
-      # padded via a <g transform="translate(0,25)">, not stretched. Shared
-      # with the AppImage job, which has the same square-icon need.
+      # separate file source needed). It is a square 100x100 icon, as required
+      # by Flatpak export and appstreamcli. It is shared with the AppImage
+      # job, which has the same square-icon requirement.
     post-install:
       # This package's own licence and the notices file naming every bundled
       # dependency's origin.

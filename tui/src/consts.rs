@@ -6,6 +6,7 @@ pub const APP_TITLE: &str = "Cargopit TUI";
 pub const BINARY_CARGOPIT: &str = "cargopit";
 pub const BINARY_SIMD: &str = "simd";
 pub const BINARY_TUI: &str = "cargopit-tui";
+pub const VERSION_FLAG: &str = "--version";
 
 pub const CONFIG_FILE_NAME: &str = "cargopit.config";
 pub const CONFIG_DIR_NAME: &str = "cargopit";

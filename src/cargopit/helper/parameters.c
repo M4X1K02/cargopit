@@ -1,5 +1,6 @@
 #include "parameters.h"
 #include "confighelper.h"
+#include "version.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,11 @@
 
 static const char BUG_REPORT_URL[] = "github.com/M4X1K02/cargopit";
 #define ARGTABLE_ERROR_COUNT 20
+
+static void print_version(const char* progname)
+{
+    printf("%s %s\n", progname, CARGOPIT_VERSION);
+}
 
 static void apply_config_file_arg(struct arg_file* arg_conf, Parameters* p)
 {
@@ -270,6 +276,13 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
         }
     }
 
+    if (version0->count > 0)
+    {
+        print_version(progname);
+        exitcode = E_SUCCESS_AND_EXIT;
+        goto cleanup;
+    }
+
     if (help0->count > 0 || (cmd3->count == 0 && cmd1->count == 0 && cmd2a->count == 0))
     {
         printf("Usage: %s\n", progname);
@@ -286,8 +299,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
 
     if (vers->count > 0)
     {
-        printf("%s Simulator Hardware Manager\n",progname);
-        printf("October 2022, Paul Dino Jones\n");
+        print_version(progname);
         exitcode = E_SUCCESS_AND_EXIT;
         goto cleanup;
     }

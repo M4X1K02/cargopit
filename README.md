@@ -105,8 +105,11 @@ After install, run `cargopit-tui` or `start-cargopit`. simd is started automatic
 - `.deb` for Ubuntu, Debian testing, and Debian stable. Each package depends on `libconfig11`.
 - RPMs for Fedora 43 and Fedora 44. Nobara uses the Fedora RPM.
 - an x86_64 AppImage
+- a Flatpak bundle
 
 simshmbridge is not in those packages. Use the [prebuilt compatibility EXEs](https://github.com/spacefreak18/simshmbridge/releases).
+
+Release preparation and publishing steps are in [RELEASING.md](RELEASING.md).
 
 **Bazzite / Silverblue / Steam Deck (immutable).** Do not layer this with `rpm-ostree`. Use the distrobox helper:
 

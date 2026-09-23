@@ -1,6 +1,6 @@
 name: Make Packages
 
-# Manual release only. Push a version tag (for example 0.3.8) or run this
+# Manual release only. Push the version tag (for example 0.4.0) or run this
 # workflow from the Actions tab. A tag uploads assets to a GitHub Release;
 # a branch dispatch builds packages as artifacts and does not publish.
 on:
@@ -9,7 +9,17 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  validate-release-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release tag
+        run: bash tools/ci/package-version.sh >/dev/null
+
   build-cargopit-debs:
+    needs: validate-release-tag
     # Previously this matrix used `runs-on: ${{ matrix.os }}` with
     # debian-latest/debian-stable as runner *labels*, which only resolve to
     # self-hosted runners. With none online those two legs sat queued
@@ -87,15 +97,10 @@ jobs:
         mkdir -p PKG_SOURCE/DEBIAN
         mkdir -p PKG_SOURCE/usr/bin/
         mkdir -p PKG_SOURCE/usr/share/applications
-        mkdir -p PKG_SOURCE/usr/share/pixmaps
         mkdir -p PKG_SOURCE/usr/share/icons/hicolor/scalable/apps
         mkdir -p PKG_SOURCE/usr/share/cargopit
-    - name: Download xpm icon
-      run: |
-        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.xpm -o PKG_SOURCE/usr/share/pixmaps/monocoque.xpm
-    - name: Download svg icon
-      run: |
-        curl -sSL https://repo.spacefreak18.xyz/monocoque/icons/monocoque.svg -o PKG_SOURCE/usr/share/icons/hicolor/scalable/apps/monocoque.svg
+        cp ./tools/cargopit.svg \
+          PKG_SOURCE/usr/share/icons/hicolor/scalable/apps/cargopit.svg
     - name: Determine package version
       id: pkgver
       shell: bash
@@ -103,6 +108,7 @@ jobs:
         # Control files ship a placeholder Version; stamp the git tag instead.
         v="$(bash tools/ci/package-version.sh)"
         echo "version=$v" >> "$GITHUB_OUTPUT"
+        echo "package_file=cargopit-${v}-${{ matrix.os }}.deb" >> "$GITHUB_OUTPUT"
         echo "packaging as version $v"
 
     - name: Copy script files around to stop .github from being added to the package then build the package
@@ -117,15 +123,22 @@ jobs:
           cp ./build/tui/debug/cargopit-tui ./PKG_SOURCE/usr/bin/cargopit-tui
         fi
         cp ./tools/cargopit.desktop ./PKG_SOURCE/usr/share/applications/cargopit.desktop
-        dpkg-deb --build PKG_SOURCE cargopit-${{ matrix.os }}.deb
+        dpkg-deb --build PKG_SOURCE "${{ steps.pkgver.outputs.package_file }}"
         echo "--- control as packaged ---"
-        dpkg-deb --field cargopit-${{ matrix.os }}.deb Package Version
+        dpkg-deb --field "${{ steps.pkgver.outputs.package_file }}" Package Version
+
+    - name: Create checksum
+      run: |
+        sha256sum "${{ steps.pkgver.outputs.package_file }}" \
+          > "${{ steps.pkgver.outputs.package_file }}.sha256"
 
     - name: Upload the .deb as a build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: cargopit-${{ matrix.os }}.deb
-        path: cargopit-${{ matrix.os }}.deb
+        name: ${{ steps.pkgver.outputs.package_file }}
+        path: |
+          ${{ steps.pkgver.outputs.package_file }}
+          ${{ steps.pkgver.outputs.package_file }}.sha256
 
     - name: Release the Package
       # Only a tag publishes; a branch workflow_dispatch still builds artifacts.
@@ -133,11 +146,14 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        files: cargopit-${{ matrix.os }}.deb
+        files: |
+          ${{ steps.pkgver.outputs.package_file }}
+          ${{ steps.pkgver.outputs.package_file }}.sha256
         generate_release_notes: true
 
 
   build-cargopit-rpms:
+    needs: validate-release-tag
     # Same self-hosted-label problem as the deb jobs above (fedora-43 was a
     # runner label with nothing online to claim it); now a container on an
     # ordinary GitHub-hosted runner, with fedora-44 added alongside 43.
@@ -204,43 +220,55 @@ jobs:
     # Uses the spec from the checked-out tree instead of curl'ing it from
     # upstream's master branch, so a tag builds the spec that tag contains.
     #
-    # The spec's `Version: 0.0.5` is stale and hand-maintained -- real tags are
-    # well past it, so released rpms have been installing as cargopit-0.0.5.
-    # Stamped from the tag here rather than edited in the spec, so the file
-    # stays a working default for local rpmbuild while CI releases carry the
-    # real version.
+    # The spec's Version is also stamped from the tag here, so local rpmbuild
+    # has a useful default while CI releases carry the exact tag version.
     - name: run spec file
+      id: pkgver
       shell: bash
       run: |
         v="$(bash tools/ci/package-version.sh)"
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+        echo "package_file=cargopit-${v}-${{ matrix.os }}.rpm" >> "$GITHUB_OUTPUT"
         echo "packaging as version $v"
         sed -i "s/^Version:.*/Version: $v/" tools/distro/fedora/rpm/fedora.spec
         rpmbuild -ba tools/distro/fedora/rpm/fedora.spec
 
-    # Glob rather than a hardcoded cargopit-0.0.5-1.x86_64.rpm: the filename
-    # tracks the spec's Version/Release, which is now stamped per-tag above.
+    # Glob rather than a hardcoded RPM filename: the filename tracks the
+    # spec's Version/Release, which is stamped per-tag above.
     - name: rename file
       run: |
-        cp ~/rpmbuild/RPMS/x86_64/cargopit-*.rpm "$GITHUB_WORKSPACE/cargopit-${{ matrix.os }}.rpm"
+        cp ~/rpmbuild/RPMS/x86_64/cargopit-*.rpm \
+          "$GITHUB_WORKSPACE/${{ steps.pkgver.outputs.package_file }}"
         echo "--- rpm identity as built ---"
-        rpm -qp --qf '%{NAME} %{VERSION}-%{RELEASE}\n' "$GITHUB_WORKSPACE/cargopit-${{ matrix.os }}.rpm"
+        rpm -qp --qf '%{NAME} %{VERSION}-%{RELEASE}\n' \
+          "$GITHUB_WORKSPACE/${{ steps.pkgver.outputs.package_file }}"
+
+    - name: Create checksum
+      run: |
+        sha256sum "${{ steps.pkgver.outputs.package_file }}" \
+          > "${{ steps.pkgver.outputs.package_file }}.sha256"
 
     - name: Upload the .rpm as a build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: cargopit-${{ matrix.os }}.rpm
-        path: cargopit-${{ matrix.os }}.rpm
+        name: ${{ steps.pkgver.outputs.package_file }}
+        path: |
+          ${{ steps.pkgver.outputs.package_file }}
+          ${{ steps.pkgver.outputs.package_file }}.sha256
 
     - name: Release the Package
       if: github.ref_type == 'tag'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        files: cargopit-${{ matrix.os }}.rpm
+        files: |
+          ${{ steps.pkgver.outputs.package_file }}
+          ${{ steps.pkgver.outputs.package_file }}.sha256
         generate_release_notes: true
 
 
   build-cargopit-appimage:
+    needs: validate-release-tag
     # An AppImage only runs where glibc is at least as new as the one it
     # linked against, so it wants the OLDEST base that can build the code --
     # building on current Ubuntu silently excludes older distros and defeats
@@ -274,6 +302,14 @@ jobs:
           libxml2-dev libpulse-dev libproc2-dev cargo rustc \
           desktop-file-utils file patchelf wget
 
+    - name: Determine package version
+      id: pkgver
+      shell: bash
+      run: |
+        v="$(bash tools/ci/package-version.sh)"
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+        echo "package_file=cargopit-${v}-x86_64.AppImage" >> "$GITHUB_OUTPUT"
+
     # -std=gnu2x for the C23 enum syntax above: GCC 13 implements it but
     # still defaults to gnu17, unlike GCC 15+ (which the container-based
     # deb/rpm legs get, and which accept it without the flag). gnu2x rather
@@ -289,12 +325,9 @@ jobs:
     - name: Populate AppDir
       run: |
         DESTDIR="$PWD/AppDir" cmake --install build --prefix /usr
-        # Icon basename must match the desktop file's `Icon=monocoque`.
-        # This fork still ships upstream artwork; tools/cargopit.svg is the
-        # square copy shared with the Flatpak build. The published 100x50
-        # artwork is rejected by icon tooling.
+        # Icon basename must match the desktop file's `Icon=cargopit`.
         install -Dm644 tools/cargopit.svg \
-          AppDir/usr/share/icons/hicolor/scalable/apps/monocoque.svg
+          AppDir/usr/share/icons/hicolor/scalable/apps/cargopit.svg
 
     # APPIMAGE_EXTRACT_AND_RUN=1 because these tools are themselves
     # AppImages and there is no FUSE on the runner to mount them with.
@@ -305,8 +338,7 @@ jobs:
         # An AppImage carries no package metadata, so its filename is the only
         # place a version can live -- hence versioning the output name here
         # rather than stamping a field as the deb/rpm jobs do.
-        v="$(bash tools/ci/package-version.sh)"
-        export OUTPUT="cargopit-${v}-x86_64.AppImage"
+        export OUTPUT="${{ steps.pkgver.outputs.package_file }}"
         echo "packaging as $OUTPUT"
 
         wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
@@ -319,7 +351,7 @@ jobs:
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
           --appdir AppDir \
           --desktop-file AppDir/usr/share/applications/cargopit.desktop \
-          --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/monocoque.svg
+          --icon-file AppDir/usr/share/icons/hicolor/scalable/apps/cargopit.svg
 
         tools/appimage-collect-licenses.sh AppDir
 
@@ -332,26 +364,36 @@ jobs:
         PATH="$PWD:$PATH" ./linuxdeploy-x86_64.AppImage \
           --appdir AppDir \
           --output appimage
-        ls -la cargopit*.AppImage
+        ls -la "${{ steps.pkgver.outputs.package_file }}"
         echo "--- licence files in the image ---"
         find AppDir/usr/share/doc -name copyright | wc -l
+
+    - name: Create checksum
+      run: |
+        sha256sum "${{ steps.pkgver.outputs.package_file }}" \
+          > "${{ steps.pkgver.outputs.package_file }}.sha256"
 
     - name: Upload the AppImage as a build artifact
       uses: actions/upload-artifact@v4
       with:
-        name: cargopit-x86_64.AppImage
-        path: cargopit*.AppImage
+        name: ${{ steps.pkgver.outputs.package_file }}
+        path: |
+          ${{ steps.pkgver.outputs.package_file }}
+          ${{ steps.pkgver.outputs.package_file }}.sha256
 
     - name: Release the Package
       if: github.ref_type == 'tag'
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ github.ref_name }}
-        files: cargopit*.AppImage
+        files: |
+          ${{ steps.pkgver.outputs.package_file }}
+          ${{ steps.pkgver.outputs.package_file }}.sha256
         generate_release_notes: true
 
 
   build-cargopit-flatpak:
+    needs: validate-release-tag
     # Folded in from the standalone flatpak.yml so every artifact lands on
     # one release. Kept as continue-on-error because it is the newest and
     # least battle-tested leg: a Flatpak failure must never turn a release
@@ -386,24 +428,43 @@ jobs:
             org.freedesktop.Sdk//25.08 \
             org.freedesktop.Sdk.Extension.rust-stable//25.08
 
+      - name: Determine package version
+        id: pkgver
+        shell: bash
+        run: |
+          v="$(bash tools/ci/package-version.sh)"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "package_file=cargopit-${v}.flatpak" >> "$GITHUB_OUTPUT"
+
       - name: Build .flatpak
         working-directory: flatpak
         run: |
           flatpak-builder --force-clean --repo=repo build-dir io.github.M4X1K02.cargopit.yml
-          flatpak build-bundle repo cargopit.flatpak io.github.M4X1K02.cargopit
+          flatpak build-bundle repo "${{ steps.pkgver.outputs.package_file }}" \
+            io.github.M4X1K02.cargopit
+
+      - name: Create checksum
+        working-directory: flatpak
+        run: |
+          sha256sum "${{ steps.pkgver.outputs.package_file }}" \
+            > "${{ steps.pkgver.outputs.package_file }}.sha256"
 
       - name: Upload .flatpak as a build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cargopit.flatpak
-          path: flatpak/cargopit.flatpak
+          name: ${{ steps.pkgver.outputs.package_file }}
+          path: |
+            flatpak/${{ steps.pkgver.outputs.package_file }}
+            flatpak/${{ steps.pkgver.outputs.package_file }}.sha256
 
       - name: Release the Package
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.ref_name }}
-          files: flatpak/cargopit.flatpak
+          files: |
+            flatpak/${{ steps.pkgver.outputs.package_file }}
+            flatpak/${{ steps.pkgver.outputs.package_file }}.sha256
           generate_release_notes: true
 
   #arch-build:

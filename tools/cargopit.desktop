@@ -4,6 +4,6 @@ Type=Application
 Name=Cargopit
 Comment=Launch Cargopit TUI
 Exec=cargopit-tui
-Icon=monocoque
+Icon=cargopit
 Terminal=true
 Categories=Game;Development;

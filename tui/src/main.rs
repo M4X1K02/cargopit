@@ -16,10 +16,23 @@ use cargopit_tui::consts;
 use cargopit_tui::ui;
 
 fn main() {
+    if print_version() {
+        return;
+    }
     if let Err(err) = run() {
         eprintln!("{err}");
         std::process::exit(1);
     }
+}
+
+fn print_version() -> bool {
+    let mut arguments = std::env::args();
+    arguments.next();
+    if arguments.any(|argument| argument == consts::VERSION_FLAG) {
+        println!("{} {}", consts::BINARY_TUI, env!("CARGOPIT_VERSION"));
+        return true;
+    }
+    false
 }
 
 fn run() -> Result<()> {

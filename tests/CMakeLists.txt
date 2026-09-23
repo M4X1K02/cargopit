@@ -66,6 +66,9 @@ add_test(NAME revlights_test COMMAND revlights_test)
 
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
+    add_test(NAME version_reporting
+        COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/version_reporting.sh
+            $<TARGET_FILE:cargopit-cli> ${PROJECT_VERSION})
     add_test(NAME startup_play_missing_simd
         COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh missing $<TARGET_FILE:cargopit-cli>)
     add_test(NAME startup_play_starts_simd

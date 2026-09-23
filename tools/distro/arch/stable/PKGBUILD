@@ -1,13 +1,13 @@
-# Maintainer: Paul Jones <paul@spacefreak18.xyz>
+# Maintainer: M4X1K02 <maxik.secure@tutanota.com>
 _reponame=cargopit
 pkgname=cargopit
-pkgver=0.2.0
-pkgrel=4
+_release_tag=0.4.0
+pkgver=$_release_tag
+pkgrel=1
 pkgdesc="Device Manager for Racing Sims"
 arch=('x86_64')
 url="https://github.com/M4X1K02/cargopit"
 license=('GPL3')
-_commit=12509e9709871afcb3ae264823b4a7d3c3b71bf7
 depends=(
         hidapi
 	libserialport
@@ -24,7 +24,7 @@ makedepends=(
   rust
 )
 
-source=("cargopit::git+https://github.com/M4X1K02/cargopit.git#commit=$_commit")
+source=("cargopit::git+https://github.com/M4X1K02/cargopit.git#tag=$_release_tag")
 
 sha256sums=(
   'SKIP'
