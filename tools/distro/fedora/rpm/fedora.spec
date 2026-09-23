@@ -1,15 +1,15 @@
 #dnf install pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel libserialport-devel lua-devel libuv-devel libxdg-basedir-devel libxml2-devel procps-ng-devel
 Summary: A device manager for racing sims
 Name: cargopit
-Version: 0.0.5
+Version: 0.4.0
 Release: 1
 License: GPLv3+
 Group: Applications/Sound
 Source: https://github.com/M4X1K02/cargopit
-URL: https://spacefreak18.github.io/simapi
+URL: https://github.com/M4X1K02/cargopit
 Distribution: Fedora Linux
-Vendor: spacefreak18
-Packager: Paul Jones <paul@spacefreak18.xyz>
+Vendor: M4X1K02
+Packager: M4X1K02 <maxik.secure@tutanota.com>
 Requires: pulseaudio-libs argtable libconfig hidapi libserialport libuv libxdg-basedir lua-libs libxml2 procps-ng
 BuildRequires: cmake gcc gcc-c++ make git cargo rust
 

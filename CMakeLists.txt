@@ -6,6 +6,18 @@ else()
     set(CARGOPIT_SUBPROJECT ON)
 endif()
 
+set(CARGOPIT_VERSION_FILE "${CMAKE_CURRENT_LIST_DIR}/version.txt")
+if(NOT EXISTS "${CARGOPIT_VERSION_FILE}")
+    message(FATAL_ERROR "Missing Cargopit version file: ${CARGOPIT_VERSION_FILE}")
+endif()
+
+file(STRINGS "${CARGOPIT_VERSION_FILE}" CARGOPIT_VERSION LIMIT_COUNT 1)
+string(STRIP "${CARGOPIT_VERSION}" CARGOPIT_VERSION)
+if(NOT CARGOPIT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR
+        "Cargopit version must use MAJOR.MINOR.PATCH: '${CARGOPIT_VERSION}'")
+endif()
+
 
 #set(CMAKE_BUILD_TYPE Debug)
 
@@ -22,7 +34,14 @@ if(analyze)
 endif()
 
 
-project(cargopit)
+project(cargopit VERSION "${CARGOPIT_VERSION}")
+
+set(CARGOPIT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(
+    "${CMAKE_CURRENT_LIST_DIR}/src/cargopit/helper/version.h.in"
+    "${CARGOPIT_GENERATED_INCLUDE_DIR}/version.h"
+    @ONLY)
+include_directories("${CARGOPIT_GENERATED_INCLUDE_DIR}")
 
 set(CMAKE_EXE_LINKER_FLAGS "-Wl,--no-as-needed -ldl")
 set(LIBUSB_INCLUDE_DIR /usr/include/libusb-1.0)
@@ -266,6 +285,7 @@ if(BUILD_TUI)
             ${TUI_RUST_SOURCES}
             "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
             "${CMAKE_SOURCE_DIR}/tui/Cargo.lock"
+            "${CMAKE_SOURCE_DIR}/version.txt"
             "${CMAKE_SOURCE_DIR}/tui/build.rs"
             "${CMAKE_SOURCE_DIR}/tui/native/simapi_view.c"
             "${CMAKE_SOURCE_DIR}/tui/native/simapi_view.h"
@@ -279,4 +299,6 @@ endif()
 
 install(TARGETS cargopit-cli RUNTIME DESTINATION bin)
 install(FILES tools/cargopit.desktop DESTINATION share/applications)
+install(FILES tools/cargopit.svg
+    DESTINATION share/icons/hicolor/scalable/apps)
 install(DIRECTORY conf/ DESTINATION share/cargopit/conf)

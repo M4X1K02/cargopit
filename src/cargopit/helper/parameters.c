@@ -1,5 +1,6 @@
 #include "parameters.h"
 #include "confighelper.h"
+#include "version.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -286,8 +287,7 @@ ConfigError getParameters(int argc, char** argv, Parameters* p)
 
     if (vers->count > 0)
     {
-        printf("%s Simulator Hardware Manager\n",progname);
-        printf("October 2022, Paul Dino Jones\n");
+        printf("%s %s\n", progname, CARGOPIT_VERSION);
         exitcode = E_SUCCESS_AND_EXIT;
         goto cleanup;
     }
