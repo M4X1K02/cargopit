@@ -1,11 +1,12 @@
 //! Field access for the submodule `SimData` layout. Devices borrow one buffer per tick.
 
 use simapi_sys::{
-    SimDataBuf, F64_SIZE, GEARC_BYTES, OFF_BRAKE, OFF_FUEL, OFF_GAS, OFF_GEAR, OFF_GEARC,
-    OFF_MAXRPM, OFF_MTICK, OFF_PLAYER_FLAG, OFF_PROXIMITY, OFF_PROX_RADIUS, OFF_PROX_THETA,
-    OFF_PULSES, OFF_RPMS, OFF_SIMAPI, OFF_SUSP_VELOCITY, OFF_TURBOBOOST, OFF_TYRE_DIAMETER,
-    OFF_TYRE_RPS, OFF_TYRE_SLIP_RATIO, OFF_TYRE_TEMP, OFF_VELOCITY, OFF_XVELOCITY, OFF_YVELOCITY,
-    OFF_ZVELOCITY, PROXIMITY_STRIDE, WHEEL_COUNT,
+    SimDataBuf, F64_SIZE, GEARC_BYTES, OFF_ABS, OFF_BRAKE, OFF_BRAKE_TEMP, OFF_FUEL, OFF_GAS,
+    OFF_GEAR, OFF_GEARC, OFF_IDLERPM, OFF_MAXRPM, OFF_MTICK, OFF_PLAYER_FLAG, OFF_PROXIMITY,
+    OFF_PROX_RADIUS, OFF_PROX_THETA, OFF_PULSES, OFF_RPMS, OFF_SIMAPI, OFF_SIMEXE, OFF_SIMSTATUS,
+    OFF_SUSP_VELOCITY, OFF_TURBOBOOST, OFF_TYRE_DIAMETER, OFF_TYRE_RPS, OFF_TYRE_SLIP_RATIO,
+    OFF_TYRE_TEMP, OFF_VELOCITY, OFF_XVELOCITY, OFF_YVELOCITY, OFF_ZVELOCITY, PROXIMITY_STRIDE,
+    WHEEL_COUNT,
 };
 
 pub const PROXIMITY_CARS: usize = 6;
@@ -75,6 +76,18 @@ impl Telemetry {
         self.buf.get_u32(OFF_MAXRPM)
     }
 
+    pub fn idlerpm(&self) -> u32 {
+        self.buf.get_u32(OFF_IDLERPM)
+    }
+
+    pub fn simstatus(&self) -> u32 {
+        self.buf.get_u32(OFF_SIMSTATUS)
+    }
+
+    pub fn simexe(&self) -> u64 {
+        self.buf.get_u64(OFF_SIMEXE)
+    }
+
     pub fn set_maxrpm(&mut self, value: u32) {
         self.buf.set_u32(OFF_MAXRPM, value);
     }
@@ -121,6 +134,10 @@ impl Telemetry {
 
     pub fn brake(&self) -> f64 {
         self.buf.get_f64(OFF_BRAKE)
+    }
+
+    pub fn abs(&self) -> f64 {
+        self.buf.get_f64(OFF_ABS)
     }
 
     pub fn set_brake(&mut self, value: f64) {
@@ -197,6 +214,10 @@ impl Telemetry {
 
     pub fn set_tyre_temp(&mut self, index: usize, value: f64) {
         self.set_wheel(OFF_TYRE_TEMP, index, value);
+    }
+
+    pub fn brake_temp(&self, index: usize) -> f64 {
+        self.wheel(OFF_BRAKE_TEMP, index)
     }
 
     pub fn susp_velocity(&self, index: usize) -> f64 {
