@@ -2,19 +2,30 @@
 
 use crossterm::event::KeyCode;
 
+pub use cargopit_config::keys::{
+    ATOMIC_SAVE_SUFFIX, BUILD_DIRNAME, CACHE_DIR_NAME, CLASS_SERIAL, CLASS_SOUND, CLASS_USB,
+    CONFIG_DIR_NAME, CONFIG_FILE_NAME, CONF_DIRNAME, DEFAULT_CAR, DEFAULT_ENABLED, DEFAULT_SIM,
+    DIAMETERS_FILE_NAME, ENV_HOME, ENV_PATH, ENV_XDG_CACHE_HOME, ENV_XDG_CONFIG_HOME,
+    ENV_XDG_DATA_HOME, ENV_XDG_STATE_HOME, KEY_AMPFACTOR, KEY_API, KEY_BAUD, KEY_CAR, KEY_CONFIG,
+    KEY_CONFIGS, KEY_DEVICE, KEY_DEVICES, KEY_DEVID, KEY_DEVPATH, KEY_EFFECT, KEY_ENABLED,
+    KEY_ENDLED, KEY_NUMLEDS, KEY_PROFILE_NAME, KEY_SIM, KEY_SIMS, KEY_STARTLED, KEY_SUBTYPE,
+    KEY_TYPE, LOCAL_BIN_DIRNAME, SETTINGS_GAME_IDLE, SHARE_DIRNAME, SIMD_COL_BRIDGE,
+    SIMD_COL_EXE_MIN, SIMD_COL_EXTRA_MIN, SIMD_COL_GAMEID, SIMD_COL_NAME_MIN, SIMD_COL_SIMAPI,
+    SIMD_COL_SPACING, SIMD_COL_TELEMETRY, SIMD_CONFIG_DIR_NAME, SIMD_CONFIG_FILE_NAME,
+    SIMD_FIELD_BRIDGEDELAY, SIMD_FIELD_COUNT, SIMD_FIELD_GAMEID, SIMD_FIELD_HELP,
+    SIMD_FIELD_LAUNCHEXE, SIMD_FIELD_LIVEEXE, SIMD_FIELD_NAME, SIMD_FIELD_SIMAPI,
+    SIMD_FIELD_TELEMETRY, SIMD_FIELD_USEUDP, SIMD_TABLE_COLUMNS, SIMD_TELEMETRY_AUTO,
+    SIMD_TELEMETRY_SHM, SIMD_TELEMETRY_SOURCES, SIMD_TELEMETRY_SOURCE_COUNT, SIMD_TELEMETRY_UDP,
+    SIMD_UNNAMED, SIMD_VALUE_COMPLEX, SUBTYPE_MOZA_R9, TUI_STATE_FILE_NAME, TYPE_HAPTIC,
+    TYPE_SIMLEDS, TYPE_TACHOMETER, TYPE_WHEEL,
+};
+
 pub const APP_TITLE: &str = "Cargopit TUI";
 pub const BINARY_CARGOPIT: &str = "cargopit";
 pub const BINARY_SIMD: &str = "simd";
 pub const BINARY_TUI: &str = "cargopit-tui";
 pub const VERSION_FLAG: &str = "--version";
 
-pub const CONFIG_FILE_NAME: &str = "cargopit.config";
-pub const CONFIG_DIR_NAME: &str = "cargopit";
-pub const SIMD_CONFIG_DIR_NAME: &str = "simd";
-pub const SIMD_CONFIG_FILE_NAME: &str = "simd.config";
-pub const DIAMETERS_FILE_NAME: &str = "diameters.config";
-pub const TUI_STATE_FILE_NAME: &str = "tui-state.json";
-pub const CACHE_DIR_NAME: &str = "cargopit";
 pub const LOG_GLOB_SUFFIX: &str = ".log";
 
 pub const PID_FILE_SIMD: &str = "/tmp/simd.pid";
@@ -35,12 +46,6 @@ pub const UDEV_GROUP_INPUT: &str = "input";
 pub const UDEV_GROUP_DIALOUT: &str = "dialout";
 pub const UDEV_GROUP_UUCP: &str = "uucp";
 
-pub const ENV_XDG_CONFIG_HOME: &str = "XDG_CONFIG_HOME";
-pub const ENV_XDG_CACHE_HOME: &str = "XDG_CACHE_HOME";
-pub const ENV_XDG_DATA_HOME: &str = "XDG_DATA_HOME";
-pub const ENV_XDG_STATE_HOME: &str = "XDG_STATE_HOME";
-pub const ENV_HOME: &str = "HOME";
-pub const ENV_PATH: &str = "PATH";
 pub const ENV_TERM: &str = "TERM";
 pub const ENV_XDG_RUNTIME_DIR: &str = "XDG_RUNTIME_DIR";
 
@@ -54,11 +59,6 @@ pub const CONTROL_CMD_STOP: &str = "stop";
 pub const CONTROL_TIMEOUT_MS: u64 = 500;
 pub const PROC_SELF: &str = "/proc/self";
 pub const TERM_DUMB: &str = "dumb";
-
-pub const LOCAL_BIN_DIRNAME: &str = ".local/bin";
-pub const BUILD_DIRNAME: &str = "build";
-pub const CONF_DIRNAME: &str = "conf";
-pub const SHARE_DIRNAME: &str = "share";
 
 pub const MIN_TERMINAL_WIDTH: u16 = 60;
 pub const MIN_TERMINAL_HEIGHT: u16 = 20;
@@ -112,7 +112,6 @@ pub const DEFAULT_AMPLITUDE: i64 = 100;
 pub const DEFAULT_AMPLITUDE_MAX: i64 = 100;
 pub const DEFAULT_THRESHOLD: f64 = 0.2;
 pub const DEFAULT_DURATION: f64 = 0.125;
-pub const DEFAULT_ENABLED: bool = true;
 pub const DEFAULT_VERBOSITY: u8 = 0;
 pub const VERBOSITY_LEVEL_COUNT: u8 = 3;
 pub const DEFAULT_TACH_MAX_REVS: i64 = 8000;
@@ -194,31 +193,15 @@ pub const KEY_BACKSPACE: KeyCode = KeyCode::Backspace;
 pub const KEY_CONFIRM_YES: KeyCode = KeyCode::Char('y');
 pub const KEY_CONFIRM_NO: KeyCode = KeyCode::Char('n');
 
-pub const CLASS_USB: &str = "USB";
-pub const CLASS_SOUND: &str = "Sound";
-pub const CLASS_SERIAL: &str = "Serial";
-
-pub const TYPE_TACHOMETER: &str = "Tachometer";
-pub const TYPE_HAPTIC: &str = "Haptic";
-pub const TYPE_WHEEL: &str = "Wheel";
 pub const TYPE_SHIFT_LIGHTS: &str = "ShiftLights";
 pub const TYPE_SIM_WIND: &str = "SimWind";
-pub const TYPE_SIMLEDS: &str = "Simleds";
 pub const TYPE_CUSTOM: &str = "Custom";
 pub const TYPE_ARDUINO_CUSTOM: &str = "ArduinoCustom";
 pub const TYPE_USB_HAPTIC: &str = "UsbHaptic";
 pub const TYPE_USB_WHEEL: &str = "UsbWheel";
 pub const TYPE_SERIAL_HAPTIC: &str = "SerialHaptic";
 
-pub const KEY_DEVICE: &str = "device";
-pub const KEY_TYPE: &str = "type";
-pub const KEY_SUBTYPE: &str = "subtype";
-pub const KEY_DEVID: &str = "devid";
-pub const KEY_DEVPATH: &str = "devpath";
-pub const KEY_ENABLED: &str = "enabled";
 pub const KEY_FPS: &str = "fps";
-pub const KEY_CONFIG: &str = "config";
-pub const KEY_EFFECT: &str = "effect";
 pub const KEY_TYRE: &str = "tyre";
 pub const KEY_MODULATION: &str = "modulation";
 pub const KEY_FREQUENCY: &str = "frequency";
@@ -228,12 +211,7 @@ pub const KEY_AMPLITUDE_MAX: &str = "amplitudeMax";
 pub const KEY_THRESHOLD: &str = "threshold";
 pub const KEY_DURATION: &str = "duration";
 pub const KEY_MOTORS: &str = "motors";
-pub const KEY_BAUD: &str = "baud";
 pub const KEY_FANPOWER: &str = "fanpower";
-pub const KEY_AMPFACTOR: &str = "ampfactor";
-pub const KEY_NUMLEDS: &str = "numleds";
-pub const KEY_STARTLED: &str = "startled";
-pub const KEY_ENDLED: &str = "endled";
 pub const KEY_NUMLIGHTS: &str = "numlights";
 pub const KEY_GRANULARITY: &str = "granularity";
 pub const KEY_VOLUME: &str = "volume";
@@ -242,25 +220,17 @@ pub const KEY_PAN: &str = "pan";
 pub const KEY_CHANNEL_MASK: &str = "channelMask";
 pub const KEY_CHANNELS: &str = "channels";
 pub const KEY_NOISE: &str = "noise";
-pub const KEY_SIM: &str = "sim";
-pub const KEY_CAR: &str = "car";
-pub const KEY_API: &str = "api";
-pub const KEY_PROFILE_NAME: &str = "name";
-pub const KEY_DEVICES: &str = "devices";
-pub const KEY_CONFIGS: &str = "configs";
 pub const KEY_CARS: &str = "cars";
 pub const KEY_TYRE0: &str = "tyre0";
 pub const KEY_TYRE1: &str = "tyre1";
 pub const KEY_TYRE2: &str = "tyre2";
 pub const KEY_TYRE3: &str = "tyre3";
-pub const KEY_SIMS: &str = "sims";
 
 pub const SUBTYPE_CAMMUS_C5: &str = "CammusC5";
 pub const SUBTYPE_CAMMUS_C12: &str = "CammusC12";
 pub const SUBTYPE_MOZA_R5: &str = "MozaR5";
 pub const SUBTYPE_MOZA_R8: &str = "MozaR8";
 pub const SUBTYPE_MOZA_R3: &str = "MozaR3";
-pub const SUBTYPE_MOZA_R9: &str = "MozaR9";
 pub const SUBTYPE_MOZA_NEW: &str = "MozaNew";
 pub const SUBTYPE_CSL_ELITE_V3: &str = "CSLELITEV3PEDALS";
 pub const SUBTYPE_SIMAGIC_P1000: &str = "SIMAGICP1000PEDALS";
@@ -362,8 +332,6 @@ pub const MOTOR_LABELS: &[&str] = &[
 ];
 pub const MOTOR_COUNT: i64 = 15;
 
-pub const DEFAULT_SIM: &str = "default";
-pub const DEFAULT_CAR: &str = "default";
 pub const PROFILE_SIMS: &[&str] = &[
     "default", "ac", "acc", "ace", "ams2", "et", "at", "rf2", "all",
 ];
@@ -523,7 +491,6 @@ pub const TITLE_CONFIRM: &str = "Confirm";
 pub const TITLE_SETTINGS: &str = "Settings";
 pub const SETTINGS_BOUND_SEP: &str = " — ";
 pub const SETTINGS_BOUND_IDLE: &str = "idle";
-pub const SETTINGS_GAME_IDLE: u64 = 0;
 pub const NOTE_PROFILES_CROSS_GAME: &str =
     "Profiles are shared across games. Settings follow the title that is currently playing.";
 pub const TITLE_ABOUT: &str = "About";
@@ -876,7 +843,6 @@ pub const CONFIRM_RESTART: &str = "Restart play to apply? y/n";
 pub const CONFIRM_TEMPLATE: &str = "Insert this template into the current profile? y/n";
 pub const CONFIRM_DISCARD_UNSAVED: &str = "Unsaved changes. Discard without saving? y/n";
 pub const SIMD_EMPTY: &str = "No simd.config — press a to create from the simapi example.";
-pub const SIMD_UNNAMED: &str = "(unnamed)";
 pub const FLAG_LOG_DEFAULT: &str = "(default)";
 pub const FIELD_UNSET: &str = "(unset)";
 
@@ -937,8 +903,6 @@ pub const TACH_FIELD_OUTPUT: usize = 2;
 pub const TACH_FIELD_COUNT: usize = 3;
 pub const EDIT_CURSOR: &str = "█";
 
-pub const ATOMIC_SAVE_SUFFIX: &str = ".tmp";
-
 pub const BUNDLED_LUA: &[&str] = &[
     "basic_rpms.lua",
     "rpms_and_flags.lua",
@@ -948,67 +912,9 @@ pub const BUNDLED_LUA: &[&str] = &[
     "neo.lua",
 ];
 
-pub const SIMD_FIELD_NAME: &str = "name";
-pub const SIMD_FIELD_GAMEID: &str = "gameid";
-pub const SIMD_FIELD_LAUNCHEXE: &str = "launchexe";
-pub const SIMD_FIELD_LIVEEXE: &str = "liveexe";
-pub const SIMD_FIELD_BRIDGEDELAY: &str = "bridgedelay";
-pub const SIMD_FIELD_SIMAPI: &str = "simapi";
-pub const SIMD_FIELD_TELEMETRY: &str = "telemetry";
-pub const SIMD_FIELD_USEUDP: &str = "useudp";
-pub const SIMD_TELEMETRY_AUTO: &str = "auto";
-pub const SIMD_TELEMETRY_SHM: &str = "shm";
-pub const SIMD_TELEMETRY_UDP: &str = "udp";
-pub const SIMD_TELEMETRY_SOURCE_COUNT: usize = 3;
-pub const SIMD_TELEMETRY_SOURCES: [&str; SIMD_TELEMETRY_SOURCE_COUNT] =
-    [SIMD_TELEMETRY_AUTO, SIMD_TELEMETRY_SHM, SIMD_TELEMETRY_UDP];
-pub const SIMD_FIELD_COUNT: usize = 7;
-pub const SIMD_TABLE_COLUMNS: [&str; SIMD_FIELD_COUNT] = [
-    SIMD_FIELD_NAME,
-    SIMD_FIELD_GAMEID,
-    SIMD_FIELD_LAUNCHEXE,
-    SIMD_FIELD_LIVEEXE,
-    SIMD_FIELD_BRIDGEDELAY,
-    SIMD_FIELD_SIMAPI,
-    SIMD_FIELD_TELEMETRY,
-];
-pub const SIMD_VALUE_COMPLEX: &str = "?";
-pub const SIMD_COL_NAME_MIN: u16 = 16;
-pub const SIMD_COL_GAMEID: u16 = 7;
-pub const SIMD_COL_EXE_MIN: u16 = 10;
-pub const SIMD_COL_BRIDGE: u16 = 11;
-pub const SIMD_COL_SIMAPI: u16 = 6;
-pub const SIMD_COL_TELEMETRY: u16 = 9;
-pub const SIMD_COL_EXTRA_MIN: u16 = 8;
-pub const SIMD_COL_SPACING: u16 = 1;
 pub const LAYOUT_SIMD_TABLE_MIN: u16 = 6;
 pub const LAYOUT_SIMD_HELP_HEIGHT: u16 = 5;
 pub const SIMD_PAGE_ROWS: usize = 8;
-
-pub const SIMD_FIELD_HELP: &[(&str, &str)] = &[
-    (SIMD_FIELD_NAME, "Simulator title as simd matches it"),
-    (
-        SIMD_FIELD_GAMEID,
-        "Steam app id for shm compatibility matching",
-    ),
-    (
-        SIMD_FIELD_LAUNCHEXE,
-        "Windows exe name when the title launches",
-    ),
-    (
-        SIMD_FIELD_LIVEEXE,
-        "Windows exe name while the session is live",
-    ),
-    (
-        SIMD_FIELD_BRIDGEDELAY,
-        "Seconds to wait for the shm bridge (default 5)",
-    ),
-    (SIMD_FIELD_SIMAPI, "SimulatorAPI enum value from simapi.h"),
-    (
-        SIMD_FIELD_TELEMETRY,
-        "How play reads this title: auto, shm (POSIX /dev/shm), or udp. ACR shm needs the Proton helper to mirror Local\\acpmf_physics.",
-    ),
-];
 
 pub const SIMULATOR_API_TEST: u8 = 0;
 pub const SIMULATOR_API_ASSETTO_CORSA: u8 = 1;

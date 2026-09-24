@@ -1,39 +1,9 @@
+pub use crate::config::DeviceClass;
+
 use crate::config::DeviceEntry;
 use crate::consts;
 use crate::libconfig::Value;
 use crate::paths;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceClass {
-    Usb,
-    Sound,
-    Serial,
-}
-
-impl DeviceClass {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            DeviceClass::Usb => consts::CLASS_USB,
-            DeviceClass::Sound => consts::CLASS_SOUND,
-            DeviceClass::Serial => consts::CLASS_SERIAL,
-        }
-    }
-
-    pub fn cycle(self) -> Self {
-        self.cycle_by(1)
-    }
-
-    pub fn cycle_by(self, delta: i32) -> Self {
-        let all = Self::all();
-        let index = all.iter().position(|item| *item == self).unwrap_or(0) as i32;
-        let next = (index + delta).rem_euclid(all.len() as i32) as usize;
-        all[next]
-    }
-
-    pub fn all() -> [DeviceClass; 3] {
-        [DeviceClass::Usb, DeviceClass::Sound, DeviceClass::Serial]
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldId {
