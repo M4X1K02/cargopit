@@ -140,7 +140,7 @@ impl LogState {
         Self::last_unique(matching, limit)
     }
 
-    fn last_unique<'a>(matching: Vec<&'a LogLine>, limit: usize) -> Vec<&'a LogLine> {
+    fn last_unique(matching: Vec<&LogLine>, limit: usize) -> Vec<&LogLine> {
         let mut unique: Vec<&LogLine> = Vec::new();
         for line in matching {
             if unique.last().is_some_and(|prev| prev.text == line.text) {

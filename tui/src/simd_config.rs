@@ -8,7 +8,7 @@ use crate::consts;
 use crate::libconfig::{self, Value};
 use crate::paths;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SimdConfig {
     pub sims: Vec<SimdSim>,
     pub extra: Vec<(String, Value)>,
@@ -17,15 +17,6 @@ pub struct SimdConfig {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SimdSim {
     pub settings: Vec<(String, Value)>,
-}
-
-impl Default for SimdConfig {
-    fn default() -> Self {
-        Self {
-            sims: Vec::new(),
-            extra: Vec::new(),
-        }
-    }
 }
 
 impl SimdSim {

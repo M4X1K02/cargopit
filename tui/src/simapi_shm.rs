@@ -289,6 +289,12 @@ pub struct SimApiSession {
     events: Option<Receiver<ShmEvent>>,
 }
 
+impl Default for SimApiSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimApiSession {
     pub fn new() -> Self {
         let events = spawn_watcher();
@@ -465,7 +471,7 @@ fn listing_line_has_exe(line: &str, exe: &str) -> bool {
 fn comm_hosts_sim_exe(comm: &str) -> bool {
     let base = exe_basename(comm);
     let name = base.trim_end_matches(consts::WINDOWS_EXE_SUFFIX);
-    consts::SIM_EXE_HOST_COMMS.iter().any(|host| name == *host)
+    consts::SIM_EXE_HOST_COMMS.contains(&name)
 }
 
 fn token_is_exe(token: &str, exe: &str) -> bool {

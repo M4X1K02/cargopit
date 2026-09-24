@@ -1,0 +1,5 @@
+tick 0 t_ms 1000 hid_init 
+tick 0 t_ms 1000 hid_open id=1 vid=0xcafe pid=0xa301
+tick 0 t_ms 1000 clock_gettime clk=1 ns=1000000000
+tick 0 t_ms 1016 hid_close id=1
+tick 0 t_ms 1016 hid_exit 

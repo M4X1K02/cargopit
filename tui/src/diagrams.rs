@@ -197,7 +197,7 @@ fn flow_arrow(sending: bool, flow_frame: u64) -> Span<'static> {
 }
 
 fn pulse_glyph(flow_frame: u64) -> &'static str {
-    if flow_frame % 2 == 0 {
+    if flow_frame.is_multiple_of(2) {
         consts::TELEMETRY_PULSE_ON
     } else {
         consts::TELEMETRY_PULSE_OFF
@@ -551,10 +551,10 @@ mod tests {
             sending: false,
             status_label: consts::LABEL_TELEMETRY_IDLE,
         };
-        let live0 = pipeline_lines(true, &[live.clone()], true, true, true, 0);
+        let live0 = pipeline_lines(true, std::slice::from_ref(&live), true, true, true, 0);
         let live1 = pipeline_lines(true, &[live], true, true, true, 1);
         assert_ne!(format!("{:?}", live0), format!("{:?}", live1));
-        let idle0 = pipeline_lines(true, &[idle.clone()], true, false, true, 0);
+        let idle0 = pipeline_lines(true, std::slice::from_ref(&idle), true, false, true, 0);
         let idle1 = pipeline_lines(true, &[idle], true, false, true, 1);
         assert_eq!(format!("{:?}", idle0), format!("{:?}", idle1));
         let empty = pipeline_lines(false, &[], false, false, false, 0);
@@ -570,7 +570,7 @@ mod tests {
             sending: false,
             status_label: consts::LABEL_TELEMETRY_RUNNING,
         };
-        let first = pipeline_lines(true, &[running.clone()], true, false, true, 0);
+        let first = pipeline_lines(true, std::slice::from_ref(&running), true, false, true, 0);
         let second = pipeline_lines(true, &[running], true, false, true, 1);
         assert_eq!(format!("{:?}", first), format!("{:?}", second));
         let dump = format!("{:?}", first);
@@ -587,7 +587,7 @@ mod tests {
             sending: false,
             status_label: consts::LABEL_TELEMETRY_RUNNING,
         };
-        let first = pipeline_lines(true, &[running.clone()], true, true, true, 0);
+        let first = pipeline_lines(true, std::slice::from_ref(&running), true, true, true, 0);
         let second = pipeline_lines(true, &[running], true, true, true, 1);
         assert_ne!(format!("{:?}", first), format!("{:?}", second));
         let dump = format!("{:?}", first);

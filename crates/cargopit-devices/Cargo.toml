@@ -1,0 +1,10 @@
+[package]
+name = "cargopit-devices"
+description = "Device encoders, transports, and the injectable clock (phase 4)"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]

@@ -1,0 +1,9 @@
+tick 0 t_ms 1000 hid_init 
+tick 0 t_ms 1000 hid_open id=1 vid=0x3416 pid=0x1021
+tick 0 t_ms 1000 hid_write id=1 fc01006400000000000000000000
+tick 1 t_ms 1016 hid_write id=1 fc0100a000000000000000000000
+tick 2 t_ms 1032 hid_write id=1 fc0100c800000000000000000000
+tick 3 t_ms 1048 hid_write id=1 fc01012c00000000000000000000
+tick 3 t_ms 1064 hid_write id=1 fc000000ff000000000000000000
+tick 3 t_ms 1064 hid_close id=1
+tick 3 t_ms 1064 hid_exit 

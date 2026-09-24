@@ -44,7 +44,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .split(size);
     draw_tabs(frame, chunks[0], app);
     match &app.screen {
-        Screen::Dashboard => draw_dashboard(frame, chunks[1], app, &diag),
+        Screen::Dashboard => draw_dashboard(frame, chunks[1], app, diag),
         Screen::Devices => draw_devices(frame, chunks[1], app),
         Screen::Settings => draw_settings(frame, chunks[1], app),
         Screen::Telemetry => draw_telemetry(frame, chunks[1], app),
@@ -54,7 +54,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Screen::ProfileEdit => draw_profile_edit(frame, chunks[1], app),
         Screen::TemplatePicker => draw_templates(frame, chunks[1], app),
         Screen::Confirm(kind) => {
-            draw_confirm_background(frame, chunks[1], app, &diag);
+            draw_confirm_background(frame, chunks[1], app, diag);
             draw_confirm(frame, size, kind);
         }
         Screen::SettingsSub(sub) => draw_settings_sub(frame, chunks[1], app, *sub),
@@ -62,7 +62,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
     if let Some(text) = hint {
         draw_page_hint(frame, chunks[2], text);
     }
-    draw_status(frame, chunks[3], app, &diag);
+    draw_status(frame, chunks[3], app, diag);
     draw_help(frame, chunks[4], app);
 }
 
@@ -622,8 +622,6 @@ fn device_row(app: &App, device: &DeviceEntry) -> ListItem<'static> {
     );
     let glyph = if presence == consts::PRESENCE_CONNECTED {
         consts::LED_ON
-    } else if presence == consts::PRESENCE_MISSING {
-        consts::LED_OFF
     } else {
         consts::LED_OFF
     };
@@ -1601,8 +1599,14 @@ mod tests {
             });
             let dump = render_dump(app);
             assert!(dump.contains(&format!("{session_label}mapping")), "{dump}");
-            assert!(dump.contains(&format!("2 {}", consts::LABEL_PLAY_DEVICES)), "{dump}");
-            assert!(dump.contains(&format!("1 {}", consts::LABEL_PLAY_OVERRUNS)), "{dump}");
+            assert!(
+                dump.contains(&format!("2 {}", consts::LABEL_PLAY_DEVICES)),
+                "{dump}"
+            );
+            assert!(
+                dump.contains(&format!("1 {}", consts::LABEL_PLAY_OVERRUNS)),
+                "{dump}"
+            );
             assert!(dump.contains(consts::LABEL_PLAY_PAUSED), "{dump}");
         });
     }

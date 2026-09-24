@@ -1,0 +1,8 @@
+tick 0 t_ms 1000 sp_get_port_by_name /dev/ttyPARITY0
+tick 0 t_ms 1000 sp_open port=/dev/ttyPARITY0
+tick 0 t_ms 1000 sp_set_baudrate port=/dev/ttyPARITY0 baud=115200
+tick 0 t_ms 1000 clock_gettime clk=1 ns=1000000000
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 01ff000000000000
+tick 0 t_ms 1016 sp_blocking_write port=/dev/ttyPARITY0 0100010001000100
+tick 0 t_ms 1016 sp_close /dev/ttyPARITY0
+tick 0 t_ms 1016 sp_free_port /dev/ttyPARITY0

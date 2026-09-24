@@ -230,6 +230,14 @@ command, `--ci` to fail on high-confidence analyzer diagnostics and unsafe API
 findings for CI, or `--skip-build` to run only the source audit. Pull-request
 CI runs the `--ci` mode automatically.
 
+Rust workspace analysis (Clippy with warnings denied, plus rustfmt):
+
+```bash
+./tools/rust-static-analysis.sh
+```
+
+Pull-request CI runs that command on the workspace, including `cargopit-tui`.
+
 ### Valgrind
 
 ```bash
