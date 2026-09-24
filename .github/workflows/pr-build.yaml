@@ -47,7 +47,7 @@ jobs:
       - name: Update apt
         run: sudo apt update
       - name: Install dependencies
-        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev
+        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev libudev-dev
       - uses: dtolnay/rust-toolchain@stable
       - name: Configure and build the C capture harness
         run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target parity_c_capture uhid_probe
@@ -72,7 +72,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install simapi-sys build dependencies
-        run: sudo apt update && sudo apt install -y build-essential pkg-config libproc2-dev libclang-dev
+        run: sudo apt update && sudo apt install -y build-essential pkg-config libproc2-dev libclang-dev libhidapi-dev liblua5.4-dev libpulse-dev libudev-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
