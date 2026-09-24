@@ -133,6 +133,39 @@ impl SimDataBuf {
         self.bytes[offset..offset + value.len()].copy_from_slice(value);
     }
 
+    pub fn get_u8(&self, offset: usize) -> u8 {
+        self.require(offset, 1);
+        self.bytes[offset]
+    }
+
+    pub fn get_u32(&self, offset: usize) -> u32 {
+        self.require(offset, 4);
+        u32::from_le_bytes(self.bytes[offset..offset + 4].try_into().expect("u32"))
+    }
+
+    pub fn get_u64(&self, offset: usize) -> u64 {
+        self.require(offset, 8);
+        u64::from_le_bytes(self.bytes[offset..offset + 8].try_into().expect("u64"))
+    }
+
+    pub fn get_f64(&self, offset: usize) -> f64 {
+        self.require(offset, F64_SIZE);
+        f64::from_le_bytes(
+            self.bytes[offset..offset + F64_SIZE]
+                .try_into()
+                .expect("f64"),
+        )
+    }
+
+    pub fn get_f64_wheel(&self, base: usize, index: usize) -> f64 {
+        self.get_f64(base + index * F64_SIZE)
+    }
+
+    pub fn get_bytes(&self, offset: usize, len: usize) -> &[u8] {
+        self.require(offset, len);
+        &self.bytes[offset..offset + len]
+    }
+
     fn require(&self, offset: usize, len: usize) {
         if offset
             .checked_add(len)

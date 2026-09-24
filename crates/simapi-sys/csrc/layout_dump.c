@@ -53,6 +53,8 @@ int main(void)
     EMIT_OFF("OFF_STEER", steer);
     EMIT_OFF("OFF_FUEL", fuel);
     EMIT_OFF("OFF_FUELCAPACITY", fuelcapacity);
+    EMIT_OFF("OFF_TURBOBOOST", turboboost);
+    EMIT_OFF("OFF_TYRE_TEMP", tyretemp);
     EMIT_OFF("OFF_PROXIMITY", pd);
     EMIT_OFF("OFF_SIMAPI", simapi);
     EMIT_OFF("OFF_SIMEXE", simexe);
