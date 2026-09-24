@@ -262,42 +262,75 @@ fn list_pulse_sinks() -> Vec<HardwareChoice> {
     parse_pactl_sinks(&String::from_utf8_lossy(&output.stdout))
 }
 
-pub fn parse_pactl_sinks(text: &str) -> Vec<HardwareChoice> {
-    let mut out = Vec::new();
-    let mut name = String::new();
-    let mut description = String::new();
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("Sink #") {
-            push_sink(&mut out, &name, &description);
-            name.clear();
-            description.clear();
-            continue;
-        }
-        if let Some(value) = trimmed.strip_prefix("Name:") {
-            name = value.trim().to_string();
-        }
-        if let Some(value) = trimmed.strip_prefix("Description:") {
-            description = value.trim().to_string();
-        }
-    }
-    push_sink(&mut out, &name, &description);
-    out
+#[derive(Debug, Default)]
+struct PactlSink {
+    name: String,
+    description: String,
+    has_device_api: bool,
+    is_virtual: bool,
 }
 
-fn push_sink(out: &mut Vec<HardwareChoice>, name: &str, description: &str) {
-    if name.is_empty() {
-        return;
+impl PactlSink {
+    /// Processors (Easy Effects, Carla, filter-chain) and null sinks have no device behind them.
+    fn is_processor(&self) -> bool {
+        self.is_virtual || !self.has_device_api
     }
-    let label = if description.is_empty() {
-        name.to_string()
-    } else {
-        format!("{description} ({name})")
-    };
-    out.push(HardwareChoice {
-        value: name.to_string(),
-        label,
-    });
+
+    fn read_line(&mut self, trimmed: &str) {
+        if let Some(value) = trimmed.strip_prefix(consts::PACTL_FIELD_NAME) {
+            self.name = value.trim().to_string();
+            return;
+        }
+        if let Some(value) = trimmed.strip_prefix(consts::PACTL_FIELD_DESCRIPTION) {
+            self.description = value.trim().to_string();
+            return;
+        }
+        let Some((key, value)) = trimmed.split_once(consts::PACTL_PROP_SEPARATOR) else {
+            return;
+        };
+        match key.trim() {
+            consts::PACTL_PROP_DEVICE_API => self.has_device_api = true,
+            consts::PACTL_PROP_NODE_VIRTUAL => {
+                self.is_virtual = value.trim().trim_matches('"') == consts::PACTL_VALUE_TRUE;
+            }
+            _ => {}
+        }
+    }
+
+    fn choice(&self) -> HardwareChoice {
+        let base = if self.description.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{} ({})", self.description, self.name)
+        };
+        let label = if self.is_processor() {
+            format!("{base} [{}]", consts::LABEL_SINK_PROCESSOR)
+        } else {
+            base
+        };
+        HardwareChoice {
+            value: self.name.clone(),
+            label,
+        }
+    }
+}
+
+/// Hardware sinks first, then processor/virtual sinks, each in pactl order.
+pub fn parse_pactl_sinks(text: &str) -> Vec<HardwareChoice> {
+    let mut sinks = Vec::new();
+    let mut current = PactlSink::default();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with(consts::PACTL_SINK_HEADER) {
+            sinks.push(std::mem::take(&mut current));
+            continue;
+        }
+        current.read_line(trimmed);
+    }
+    sinks.push(current);
+    sinks.retain(|sink| !sink.name.is_empty());
+    sinks.sort_by_key(PactlSink::is_processor);
+    sinks.iter().map(PactlSink::choice).collect()
 }
 
 #[cfg(test)]
@@ -318,6 +351,90 @@ Sink #1
         assert_eq!(sinks.len(), 2);
         assert_eq!(sinks[0].value, "alsa_output.pci.analog");
         assert!(sinks[0].label.contains("Built-in Audio"));
+    }
+
+    const PACTL_MIXED_SINKS: &str = "\
+Sink #32
+\tState: SUSPENDED
+\tName: easyeffects_sink
+\tDescription: Easy Effects Sink
+\tProperties:
+\t\tfactory.name = \"support.null-audio-sink\"
+\t\tmedia.class = \"Audio/Sink\"
+Sink #33
+\tName: alsa_output.usb-Nobsound.analog-stereo
+\tDescription: Tactile amplifier
+\tProperties:
+\t\tdevice.api = \"alsa\"
+\t\tmedia.class = \"Audio/Sink\"
+Sink #36
+\tName: cargopit_tactile
+\tDescription: Cargopit tactile correction
+\tProperties:
+\t\tmedia.class = \"Audio/Sink\"
+\t\tnode.group = \"filter-chain-13473-29\"
+\t\tnode.virtual = \"true\"
+Sink #40
+\tName: alsa_output.pci.analog-stereo
+\tDescription: Built-in Audio
+\tProperties:
+\t\tdevice.api = \"alsa\"
+";
+
+    #[test]
+    fn hardware_sinks_come_before_processors() {
+        let values: Vec<String> = parse_pactl_sinks(PACTL_MIXED_SINKS)
+            .into_iter()
+            .map(|sink| sink.value)
+            .collect();
+        assert_eq!(
+            values,
+            [
+                "alsa_output.usb-Nobsound.analog-stereo",
+                "alsa_output.pci.analog-stereo",
+                "easyeffects_sink",
+                "cargopit_tactile",
+            ]
+        );
+    }
+
+    #[test]
+    fn processor_sinks_are_labelled() {
+        let sinks = parse_pactl_sinks(PACTL_MIXED_SINKS);
+        let tag = format!("[{}]", consts::LABEL_SINK_PROCESSOR);
+        let label = |value: &str| {
+            sinks
+                .iter()
+                .find(|sink| sink.value == value)
+                .map(|sink| sink.label.clone())
+                .unwrap()
+        };
+        assert_eq!(
+            label("alsa_output.usb-Nobsound.analog-stereo"),
+            "Tactile amplifier (alsa_output.usb-Nobsound.analog-stereo)"
+        );
+        assert!(label("easyeffects_sink").ends_with(&tag));
+        assert!(label("cargopit_tactile").ends_with(&tag));
+        assert!(!label("alsa_output.pci.analog-stereo").contains(&tag));
+    }
+
+    #[test]
+    fn virtual_flag_overrides_device_api() {
+        let text = "\
+Sink #1
+\tName: wrapped
+\tProperties:
+\t\tdevice.api = \"alsa\"
+\t\tnode.virtual = \"true\"
+Sink #2
+\tName: not_virtual
+\tProperties:
+\t\tdevice.api = \"alsa\"
+\t\tnode.virtual = \"false\"
+";
+        let sinks = parse_pactl_sinks(text);
+        assert_eq!(sinks[0].value, "not_virtual");
+        assert!(sinks[1].label.contains(consts::LABEL_SINK_PROCESSOR));
     }
 
     #[test]

@@ -112,7 +112,9 @@ impl FieldId {
             FieldId::Subtype => "Hardware model used to pick the USB or serial protocol.",
             FieldId::Enabled => "When false, the device stays in the profile but is not started.",
             FieldId::Fps => "Device update rate, 1-1000. Unset uses cargopit's 60 fps default.",
-            FieldId::Devid => "USB vendor:product id or PulseAudio sink name.",
+            FieldId::Devid => {
+                "USB vendor:product id, or the PipeWire sink for sound. A [processor] sink does its own EQ and limiting."
+            }
             FieldId::Devpath => "Serial port (/dev/ttyACM*) or sysfs rumble path.",
             FieldId::ConfigPath => "Tachometer XML or Lua script path for this device.",
             FieldId::Granularity => "Tachometer LED grouping (1, 2, or 4). Unset uses 1.",
