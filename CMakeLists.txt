@@ -231,6 +231,9 @@ if(ENABLE_STATIC_ANALYSIS)
 
     if(STATIC_ANALYSIS_AS_ERRORS)
         list(APPEND CARGOPIT_STATIC_ANALYSIS_FLAGS -Werror)
+        # Submodule headers use compiler-specific pragmas. Those stay visible
+        # and are excluded from the CI scan; they must not fail this build.
+        list(APPEND CARGOPIT_STATIC_ANALYSIS_FLAGS -Wno-error=unknown-pragmas)
     endif()
 
     # The simulatorapi target is a pinned external submodule. Analyze the

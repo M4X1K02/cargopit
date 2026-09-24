@@ -12,7 +12,7 @@ readonly SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly DEFAULT_BUILD_DIR="${SOURCE_DIR}/build/static-analysis"
 readonly PROJECT_C_PATH="src/cargopit"
 readonly UNSAFE_API_PATTERN='(^|[^[:alnum:]_])(gets|strcpy|strcat|sprintf|vsprintf|scanf|sscanf|fscanf|strncpy|strncat|atoi|atol|atof|system|popen)[[:space:]]*\('
-readonly CI_WARNING_PATTERN='warning:.*\[-W(analyzer-|array-bounds|stringop-overflow|format-overflow|format-truncation|return-type|free-nonheap-object|use-after-free)'
+readonly CI_WARNING_PATTERN='warning:'
 readonly CI_WARNING_EXCLUDE_PATTERN="/src/cargopit/simulatorapi/"
 
 build_dir="${DEFAULT_BUILD_DIR}"
@@ -32,8 +32,8 @@ Options:
   --skip-build     Only run the source API audit
   --strict         Return failure when the API audit finds a match and treat
                    compiler diagnostics as errors
-  --ci             Fail on high-confidence analyzer diagnostics and unsafe
-                   API findings; intended for continuous integration
+  --ci             Treat project-owned compiler warnings as errors and fail
+                   on unsafe API findings; intended for continuous integration
   -h, --help       Show this help
 EOF
 }
@@ -98,7 +98,7 @@ if ((skip_build == 0)); then
         -DBUILD_TUI=OFF
         -DENABLE_TESTS=ON
         -DENABLE_STATIC_ANALYSIS=ON
-        -DSTATIC_ANALYSIS_AS_ERRORS=$([[ "${strict}" -eq 1 ]] && printf ON || printf OFF)
+        -DSTATIC_ANALYSIS_AS_ERRORS=$([[ "${strict}" -eq 1 || "${ci}" -eq 1 ]] && printf ON || printf OFF)
         -DCMAKE_BUILD_TYPE=Debug
         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
         "-DCMAKE_C_COMPILER=${c_compiler}"
@@ -119,7 +119,7 @@ if ((skip_build == 0)); then
                 true
         )"
         if [[ -n "${ci_findings}" ]]; then
-            printf 'High-confidence static analysis diagnostics found:\n%s\n' \
+            printf 'Static analysis warnings found:\n%s\n' \
                 "${ci_findings}" >&2
             exit 1
         fi
