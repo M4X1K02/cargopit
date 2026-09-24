@@ -43,7 +43,7 @@ One profile is the hardware map for every game. Add, edit, duplicate, disable, r
 
 ### Tune
 
-Sound rows show the speaker mask and the effect sliders (volume, frequency, threshold). Save writes the config. Apply reloads the devices of a running play session through its control socket when that session plays the same profile, and restarts play otherwise.
+Sound rows show the speaker mask and the effect sliders (volume, frequency, threshold). EQ and limiting are not tuned here: route the device to a `[processor]` sink instead ([external processing](HOW-TO-USE.md#external-processing-eq-limiter-rig-correction)). Save writes the config. Apply reloads the devices of a running play session through its control socket when that session plays the same profile, and restarts play otherwise.
 
 ![Offline tune for an engine shaker, right channel](docs/tui/tune.png)
 
@@ -73,6 +73,7 @@ Settings follow the sim that is playing. The device profile does not. Flags, `si
 
 - Update loop at 60 fps by default, up to 1000 fps (`play --fps` for telemetry, per-device `fps` in `cargopit.config`), with a modular USB, serial, and sound backend.
 - Bass shakers over PulseAudio (including PipeWire's Pulse server): engine rumble, gear shifts, ABS, tyre slip/lock, and suspension. Per-device `enabled` and `streamVolume` keys in `cargopit.config`.
+- Streams are labelled per effect and tyre (`cargopit.TyreSlip.FrontLeft`) so any PipeWire processor (Easy Effects, Carla, filter-chain) can do EQ, limiting, and rig correction. `tools/haptics/fr_to_filterchain.py` turns your own seat sweep into a filter-chain preset. See [HOW-TO-USE](HOW-TO-USE.md#external-processing-eq-limiter-rig-correction).
 - USB haptic shakers with engine rumble mapped across the shaker band, plus chassis/tyre gating so effects stay off when the car is not rolling.
 - Tachometers: Revburner only, including existing Revburner XML and `cargopit config tachometer` to write a calibration file.
 - Serial output to Arduino and ESP32. Sample sketches for shift lights, simwind, and motor haptics live in `src/arduino/`. Custom serial devices use a [Lua payload format](https://spacefreak18.github.io/simapi/serial_custom).
@@ -252,5 +253,4 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 
 ## ToDo
 
-- frequency cap (low-pass filter) for sound haptic effects
 - road and kerb sound haptic effects

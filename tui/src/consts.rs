@@ -377,6 +377,16 @@ pub const CSL_RUMBLE_GLOB: &str = "/sys/module/hid_fanatec/drivers/hid:f*/0003:0
 
 pub const PACTL_BIN: &str = "pactl";
 pub const PACTL_LIST_SINKS: &[&str] = &["list", "sinks"];
+pub const PACTL_SINK_HEADER: &str = "Sink #";
+pub const PACTL_FIELD_NAME: &str = "Name:";
+pub const PACTL_FIELD_DESCRIPTION: &str = "Description:";
+/// Hardware sinks (ALSA, Bluetooth) carry `device.api`; processors and null sinks do not.
+pub const PACTL_PROP_DEVICE_API: &str = "device.api";
+/// Set by filter-chain and other virtual sinks even when they wrap a device.
+pub const PACTL_PROP_NODE_VIRTUAL: &str = "node.virtual";
+pub const PACTL_PROP_SEPARATOR: char = '=';
+pub const PACTL_VALUE_TRUE: &str = "true";
+pub const LABEL_SINK_PROCESSOR: &str = "processor";
 pub const PGREP_BIN: &str = "pgrep";
 pub const PGREP_EXACT: &str = "-x";
 pub const PKILL_BIN: &str = "pkill";

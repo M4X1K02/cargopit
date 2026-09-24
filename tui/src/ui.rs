@@ -822,10 +822,31 @@ fn selected_form_field(app: &App, tune: bool) -> Option<FieldId> {
 
 fn draw_field_help(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
     let (title, text) = match selected_form_field(app, tune) {
-        Some(field) => (field.label(), field.help()),
-        None => (consts::TITLE_ABOUT, consts::DIAGRAM_NO_DEVICE),
+        Some(field) => (field.label(), field_help_text(app, field)),
+        None => (consts::TITLE_ABOUT, consts::DIAGRAM_NO_DEVICE.to_string()),
     };
-    draw_about_panel(frame, area, title, text);
+    draw_about_panel(frame, area, title, &text);
+}
+
+/// Identity cells are too narrow for a full sink label, so the help panel repeats it.
+fn field_help_text(app: &App, field: FieldId) -> String {
+    let help = field.help();
+    let value = schema::display_value(&app.form.device, field);
+    match identity_choice_label(app, field, &value) {
+        Some(label) => format!("{help}\n{label}"),
+        None => help.to_string(),
+    }
+}
+
+fn identity_choice_label(app: &App, field: FieldId, value: &str) -> Option<String> {
+    if !schema::is_identity(field) || value.is_empty() {
+        return None;
+    }
+    app.discovery
+        .choices_for(app.form.device.class(), field == FieldId::Devpath)
+        .iter()
+        .find(|choice| choice.value == value)
+        .map(|choice| choice.label.clone())
 }
 
 fn draw_form_list(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
@@ -880,13 +901,8 @@ fn form_field_value(app: &App, field: FieldId, index: usize, tune: bool) -> Stri
         );
     }
     let mut value = schema::display_value(&app.form.device, field);
-    if schema::is_identity(field) {
-        let choices = app
-            .discovery
-            .choices_for(app.form.device.class(), field == FieldId::Devpath);
-        if let Some(choice) = choices.iter().find(|c| c.value == value) {
-            value = choice.label.clone();
-        }
+    if let Some(label) = identity_choice_label(app, field, &value) {
+        value = label;
     }
     if value.is_empty() {
         return consts::FIELD_UNSET.to_string();
@@ -2112,6 +2128,32 @@ mod tests {
                     );
                 }
             }
+        });
+    }
+
+    #[test]
+    fn device_id_help_shows_full_processor_sink_label() {
+        with_app(|app| {
+            let sink = "cargopit_tactile";
+            let tag = format!("[{}]", consts::LABEL_SINK_PROCESSOR);
+            app.discovery.pulse_sinks = vec![crate::hardware::HardwareChoice {
+                value: sink.into(),
+                label: format!("Cargopit tactile correction ({sink}) {tag}"),
+            }];
+            let mut device = crate::config::DeviceEntry::new();
+            schema::apply_defaults(&mut device, schema::DeviceClass::Sound, consts::TYPE_HAPTIC);
+            device.set_str(consts::KEY_DEVID, sink);
+            app.form = crate::form::DeviceForm::new(device, false);
+            app.form.field_index = app
+                .form
+                .fields()
+                .iter()
+                .position(|field| *field == FieldId::Devid)
+                .expect("sound devices have a device id");
+            app.tab = consts::TAB_DEVICES;
+            app.screen = Screen::DeviceForm;
+            let dump = render_dump_size(app, 120, 34);
+            assert!(dump.contains(&tag), "{dump}");
         });
     }
 

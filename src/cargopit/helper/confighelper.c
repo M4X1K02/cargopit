@@ -530,6 +530,14 @@ int loadtachconfig(char* config_file, DeviceSettings* ds)
     return 0;
 }
 
+bool haptic_effect_uses_tyre(VibrationEffectType effect)
+{
+    return effect == EFFECT_TYRESLIP
+        || effect == EFFECT_TYRELOCK
+        || effect == EFFECT_ABSBRAKES
+        || effect == EFFECT_SUSPENSION;
+}
+
 int gettyre(config_setting_t* device_settings, DeviceSettings* ds) {
     if (device_settings == NULL || ds == NULL)
     {
@@ -786,7 +794,7 @@ int devsetup(const char* device_type, const char* device_subtype, const char* co
         const char* effect;
         config_setting_lookup_string(device_settings, "effect", &effect);
         strtoeffecttype(effect, ds);
-        if (ds->hapticsettings.effect_type == EFFECT_TYRESLIP || ds->hapticsettings.effect_type == EFFECT_TYRELOCK || ds->hapticsettings.effect_type == EFFECT_ABSBRAKES || ds->hapticsettings.effect_type == EFFECT_SUSPENSION )
+        if (haptic_effect_uses_tyre(ds->hapticsettings.effect_type))
         {
             gettyre(device_settings, ds);
             ds->hapticsettings.threshold = 0;

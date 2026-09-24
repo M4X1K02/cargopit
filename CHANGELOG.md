@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Sound streams carry `node.name = cargopit.<Effect>[.<Tyre>]` plus
+  `cargopit.effect` / `cargopit.tyre` properties, so Easy Effects, Carla,
+  PipeWire filter-chain, or WirePlumber rules can pick them up.
+- `tools/haptics/fr_to_filterchain.py` turns a seat sweep CSV into a
+  PipeWire filter-chain sink with fitted peaking cuts, a subsonic high-pass,
+  a band-top low-pass, and a clamp. Sweeps and presets stay in the user's
+  config.
+- The TUI lists hardware sinks before processor sinks, tags processors, and
+  shows the selected sink's full name in the field help.
+
+### Changed
+
+- The built-in seat equalization is gone from cargopit. It was one rig's
+  measurement compiled into every build. Generate a preset from your own
+  sweep, or use another processor, to correct your seat.
+
+### Fixed
+
+- A sound device whose sink is missing is now reported and skipped. Before,
+  cargopit waited on the stream forever or played through the default sink.
+- Sound streams no longer move to the default sink when their target sink
+  (for example an external processor) disappears. They go silent until
+  `reload`.
+
 ## [0.4.0] - 2026-09-23
 
 Cargopit is the first release of this independent fork of monocoque. The

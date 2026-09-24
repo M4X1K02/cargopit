@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "../simdevice.h"
+#include "streamprops.h"
 
 #define SHAKER_ENGINE_CYLINDERS 4
 #define SHAKER_ENGINE_STROKE_CYCLES 2
@@ -14,7 +15,7 @@
 #define SHAKER_TONE_MAX_HZ 120.0
 #define SHAKER_OUTPUT_LP_HZ SHAKER_TONE_MAX_HZ
 
-int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop, pa_context* context, const char* devname, int volume, uint32_t channelmask, int channels, const char* streamname);
+int usb_generic_shaker_init(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop, pa_context* context, const char* devname, int volume, uint32_t channelmask, int channels, const SoundStreamProps* props);
 int usb_generic_shaker_free(SoundDevice* sounddevice, pa_threaded_mainloop* mainloop);
 //#else
 //int usb_generic_shaker_init(SoundDevice* sounddevice);

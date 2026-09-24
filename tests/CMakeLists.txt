@@ -64,6 +64,16 @@ add_executable(revlights_test revlights_test.c)
 target_link_libraries(revlights_test devices m)
 add_test(NAME revlights_test COMMAND revlights_test)
 
+add_executable(sound_stream_props_test sound_stream_props_test.c)
+target_link_libraries(sound_stream_props_test devices helper config slog xml2 simulatorapi m ${PROC_LIBS})
+add_test(NAME sound_stream_props_test COMMAND sound_stream_props_test)
+
+find_package(Python3 COMPONENTS Interpreter)
+if (Python3_Interpreter_FOUND)
+    add_test(NAME fr_to_filterchain_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fr_to_filterchain_test.py)
+endif()
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME version_reporting

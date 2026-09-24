@@ -28,6 +28,26 @@ Use `cargopit-tui` for device lists, play/test flags, simd.config, Lua scripts, 
 
 Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, plus the udev rules from `udev/69-cargopit.rules`. The TUI Diagnostics page reports groups, udev, binaries, and `SIMAPI.DAT`.
 
+### External processing (EQ, limiter, rig correction)
+
+Cargopit generates the haptic signal. Room and rig correction, EQ, compression, and limiting belong to a PipeWire processor that you choose. In the TUI, set a Sound device's **Device id** to that processor's sink. Processor sinks are listed after hardware sinks and tagged `[processor]`.
+
+* **Easy Effects** or **Carla**: start the tool, then pick its sink.
+* **Correction for your rig**: seat response depends on the seat, mount, and amplifier, so cargopit does not ship a curve. Measure a seat sweep (for example phyphox "Acceleration with g") as a `frequency_hz,transfer_db` CSV and keep it with your own config. From a source checkout, run:
+
+  ```bash
+  tools/haptics/fr_to_filterchain.py ~/.config/cargopit/seat-sweep.csv \
+      --target-sink <amp sink from pactl list short sinks> \
+      > ~/.config/pipewire/pipewire.conf.d/cargopit-tactile.conf
+  systemctl --user restart pipewire
+  ```
+
+  That creates a filter-chain sink named `cargopit_tactile`. It applies peaking cuts fitted to your sweep, a 10 Hz high-pass, a 120 Hz low-pass, and a sample clamp. By default it cuts towards the median level of the 32–120 Hz band and never boosts. `--help` lists the target, resonance, cut, filter, and channel options. It needs PipeWire 1.0 or newer.
+
+Each stream is a PipeWire node named `cargopit.<Effect>` or `cargopit.<Effect>.<Tyre>` (for example `cargopit.TyreSlip.FrontLeft`), with `cargopit.effect` and `cargopit.tyre` properties for qpwgraph, Carla, or WirePlumber rules.
+
+If the chosen sink is missing, cargopit logs `could not connect sound stream` and skips that device. If the sink disappears during play, the stream goes silent rather than moving to your speakers. Once the processor is back, use **Apply** in the TUI or `echo reload | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/cargopit.sock` to reconnect. External tools can add gain, so keep a limiter or gain cap on the amplifier as well.
+
 ## Steam & Game Config
 
 ### Steam
