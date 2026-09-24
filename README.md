@@ -225,10 +225,9 @@ Logs: `~/.cache/cargopit/*.log`.
 
 This configures a C-only analysis build with GCC's `-fanalyzer`, high-signal
 buffer and format warnings, and a first-pass audit for unsafe legacy C APIs.
-Use `--strict` to make those API findings and compiler diagnostics fail the
-command, `--ci` to fail on high-confidence analyzer diagnostics and unsafe API
-findings for CI, or `--skip-build` to run only the source audit. Pull-request
-CI runs the `--ci` mode automatically.
+Use `--strict` or `--ci` to make compiler warnings and unsafe-API findings
+fail the command. `--ci` is what pull-request CI runs. The simapi submodule
+is not part of that gate. `--skip-build` runs only the source audit.
 
 Rust workspace analysis (Clippy with warnings denied, plus rustfmt):
 
