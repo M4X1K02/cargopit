@@ -25,7 +25,7 @@ jobs:
         # Same C/system list as ci.yaml's ubuntu-latest leg. cargo/rustc come
         # from rust-toolchain below: Ubuntu's packages are too old for
         # tui/Cargo.toml rust-version (1.88+).
-        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev
+        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev libudev-dev
       - uses: dtolnay/rust-toolchain@stable
       - name: Configure CMake
         run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
