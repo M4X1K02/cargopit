@@ -3,9 +3,9 @@
 use simapi_sys::{
     SimDataBuf, F64_SIZE, GEARC_BYTES, OFF_BRAKE, OFF_FUEL, OFF_GAS, OFF_GEAR, OFF_GEARC,
     OFF_MAXRPM, OFF_MTICK, OFF_PLAYER_FLAG, OFF_PROXIMITY, OFF_PROX_RADIUS, OFF_PROX_THETA,
-    OFF_RPMS, OFF_SIMAPI, OFF_SUSP_VELOCITY, OFF_TURBOBOOST, OFF_TYRE_DIAMETER, OFF_TYRE_RPS,
-    OFF_TYRE_SLIP_RATIO, OFF_TYRE_TEMP, OFF_VELOCITY, OFF_XVELOCITY, OFF_YVELOCITY, OFF_ZVELOCITY,
-    PROXIMITY_STRIDE, WHEEL_COUNT,
+    OFF_PULSES, OFF_RPMS, OFF_SIMAPI, OFF_SUSP_VELOCITY, OFF_TURBOBOOST, OFF_TYRE_DIAMETER,
+    OFF_TYRE_RPS, OFF_TYRE_SLIP_RATIO, OFF_TYRE_TEMP, OFF_VELOCITY, OFF_XVELOCITY, OFF_YVELOCITY,
+    OFF_ZVELOCITY, PROXIMITY_STRIDE, WHEEL_COUNT,
 };
 
 pub const PROXIMITY_CARS: usize = 6;
@@ -19,6 +19,24 @@ impl Telemetry {
         Self {
             buf: SimDataBuf::new(),
         }
+    }
+
+    pub fn from_buf(buf: SimDataBuf) -> Self {
+        Self { buf }
+    }
+
+    pub fn clone_buf(&self) -> Self {
+        Self {
+            buf: self.buf.clone(),
+        }
+    }
+
+    pub fn pulses(&self) -> u32 {
+        self.buf.get_u32(OFF_PULSES)
+    }
+
+    pub fn set_pulses(&mut self, value: u32) {
+        self.buf.set_u32(OFF_PULSES, value);
     }
 
     pub fn mtick(&self) -> u64 {
