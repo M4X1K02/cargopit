@@ -1011,12 +1011,14 @@ impl App {
         match code {
             consts::KEY_ESC => self.leave_or_confirm_discard(),
             consts::KEY_ADD => {
-                let mut profile = SimProfile::default();
-                profile.name = format!(
-                    "{} {}",
-                    consts::TITLE_PROFILE,
-                    self.config.profiles.len() + 1
-                );
+                let profile = SimProfile {
+                    name: format!(
+                        "{} {}",
+                        consts::TITLE_PROFILE,
+                        self.config.profiles.len() + 1
+                    ),
+                    ..SimProfile::default()
+                };
                 self.config.profiles.push(profile);
                 self.profile_index = self.config.profiles.len() - 1;
                 self.persist_config();
@@ -1047,10 +1049,8 @@ impl App {
                     self.profile_edit.name.push(ch);
                 }
             }
-            consts::KEY_BACKSPACE => {
-                if self.profile_field == consts::PROFILE_FIELD_NAME {
-                    self.profile_edit.name.pop();
-                }
+            consts::KEY_BACKSPACE if self.profile_field == consts::PROFILE_FIELD_NAME => {
+                self.profile_edit.name.pop();
             }
             _ => {}
         }
@@ -1495,7 +1495,7 @@ fn spawn_pipe_reader<R: std::io::Read + Send + 'static>(
     };
     thread::spawn(move || {
         let reader = BufReader::new(pipe);
-        for line in reader.lines().flatten() {
+        for line in reader.lines().map_while(Result::ok) {
             if tx.send((kind, line)).is_err() {
                 break;
             }

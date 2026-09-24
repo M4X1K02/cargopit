@@ -35,9 +35,7 @@ fn main() {
         panic!("layout dump failed to compile");
     }
 
-    let output = Command::new(&dump_bin)
-        .output()
-        .expect("run layout dump");
+    let output = Command::new(&dump_bin).output().expect("run layout dump");
     if !output.status.success() {
         panic!("layout dump reported a SimData or SIMAPI_VERSION mismatch");
     }

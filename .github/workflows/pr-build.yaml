@@ -64,6 +64,21 @@ jobs:
       - name: Reject unmarked golden edits
         run: bash tests/parity/check-golden-edits.sh origin/master
 
+  rust-static-analysis:
+    name: Rust static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install a C compiler for simapi-sys layout checks
+        run: sudo apt update && sudo apt install -y build-essential
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Run Rust static analysis
+        run: bash tools/rust-static-analysis.sh
+
   static-analysis:
     name: Legacy C static analysis
     runs-on: ubuntu-latest

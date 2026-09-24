@@ -606,7 +606,7 @@ pub fn sound_channel_mask_all(channels: i64) -> u32 {
 }
 
 pub fn sound_channel_bit(index: i64) -> u32 {
-    if index < 0 || index >= consts::SOUND_CHANNEL_COUNT_MAX {
+    if !(0..consts::SOUND_CHANNEL_COUNT_MAX).contains(&index) {
         return 0;
     }
     1u32 << index as u32
@@ -815,7 +815,7 @@ pub fn validate(device: &DeviceEntry) -> Result<(), String> {
             .get_i64(consts::KEY_STREAM_VOLUME)
             .or_else(|| device.get_i64(consts::KEY_VOLUME))
             .unwrap_or(consts::DEFAULT_VOLUME);
-        if volume < consts::VOLUME_MIN || volume > consts::VOLUME_MAX {
+        if !(consts::VOLUME_MIN..=consts::VOLUME_MAX).contains(&volume) {
             return Err("volume must be between 0 and 100".into());
         }
     }

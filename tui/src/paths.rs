@@ -80,20 +80,16 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 }
 
 pub fn bundled_conf_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    dirs.push(source_root().join(consts::CONF_DIRNAME));
-    dirs.push(
+    vec![
+        source_root().join(consts::CONF_DIRNAME),
         data_home()
             .join(consts::CONFIG_DIR_NAME)
             .join(consts::CONF_DIRNAME),
-    );
-    dirs.push(
         PathBuf::from("/usr")
             .join(consts::SHARE_DIRNAME)
             .join(consts::CONFIG_DIR_NAME)
             .join(consts::CONF_DIRNAME),
-    );
-    dirs
+    ]
 }
 
 pub fn find_bundled_file(name: &str) -> Option<PathBuf> {

@@ -148,17 +148,21 @@ fn rpm_frames() -> Vec<SimDataBuf> {
 }
 
 fn gear_frames() -> Vec<SimDataBuf> {
-    [(GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL), (GEAR_FIRST, b'1'), (GEAR_SECOND, b'2')]
-        .into_iter()
-        .enumerate()
-        .map(|(index, (gear, gear_char))| {
-            let mut frame = basic_frame();
-            frame.set_u64(OFF_MTICK, (index as u64 + 1) * TICK_STEP);
-            frame.set_u32(OFF_RPMS, TEST_RPM_MID_LOW);
-            set_gear(&mut frame, gear, gear_char);
-            frame
-        })
-        .collect()
+    [
+        (GEAR_NEUTRAL, TEST_GEAR_CHAR_NEUTRAL),
+        (GEAR_FIRST, b'1'),
+        (GEAR_SECOND, b'2'),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (gear, gear_char))| {
+        let mut frame = basic_frame();
+        frame.set_u64(OFF_MTICK, (index as u64 + 1) * TICK_STEP);
+        frame.set_u32(OFF_RPMS, TEST_RPM_MID_LOW);
+        set_gear(&mut frame, gear, gear_char);
+        frame
+    })
+    .collect()
 }
 
 fn slip_frames() -> Vec<SimDataBuf> {
@@ -220,16 +224,21 @@ fn brake_temperature_frames() -> Vec<SimDataBuf> {
 }
 
 fn velocity_frames() -> Vec<SimDataBuf> {
-    [TEST_VELOCITY_SLOW, TEST_VELOCITY_CRUISE, TEST_VELOCITY_FAST, TEST_VELOCITY_TOP]
-        .into_iter()
-        .enumerate()
-        .map(|(index, velocity)| {
-            let mut frame = basic_frame();
-            frame.set_u64(OFF_MTICK, (index as u64 + 1) * TICK_STEP);
-            frame.set_u32(OFF_VELOCITY, velocity);
-            frame
-        })
-        .collect()
+    [
+        TEST_VELOCITY_SLOW,
+        TEST_VELOCITY_CRUISE,
+        TEST_VELOCITY_FAST,
+        TEST_VELOCITY_TOP,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, velocity)| {
+        let mut frame = basic_frame();
+        frame.set_u64(OFF_MTICK, (index as u64 + 1) * TICK_STEP);
+        frame.set_u32(OFF_VELOCITY, velocity);
+        frame
+    })
+    .collect()
 }
 
 fn blink_frames() -> Vec<SimDataBuf> {

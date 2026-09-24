@@ -58,7 +58,10 @@ impl SimDataBuf {
     }
 
     fn require(&self, offset: usize, len: usize) {
-        if offset.checked_add(len).is_none_or(|end| end > self.bytes.len()) {
+        if offset
+            .checked_add(len)
+            .is_none_or(|end| end > self.bytes.len())
+        {
             panic!("SimData field write is outside the submodule layout");
         }
     }

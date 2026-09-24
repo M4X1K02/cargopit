@@ -143,11 +143,8 @@ impl DeviceEntry {
 
     pub fn keep_keys_for_class(&mut self, class: DeviceClass, type_name: &str) {
         let allowed = schema::allowed_keys(class, type_name);
-        self.settings.retain(|(key, _)| {
-            allowed
-                .iter()
-                .any(|allowed_key| *allowed_key == key.as_str())
-        });
+        self.settings
+            .retain(|(key, _)| allowed.contains(&key.as_str()));
         self.set_str(consts::KEY_DEVICE, class.as_str());
         if class == DeviceClass::Sound && type_name == consts::TYPE_HAPTIC {
             self.remove(consts::KEY_TYPE);

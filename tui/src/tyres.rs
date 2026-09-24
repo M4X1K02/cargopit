@@ -6,7 +6,7 @@ use crate::config;
 use crate::consts;
 use crate::libconfig::{self, Value};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct TyreStore {
     pub cars: Vec<TyreCar>,
     pub extra: Vec<(String, Value)>,
@@ -21,15 +21,6 @@ pub struct TyreCar {
     pub tyre2: f64,
     pub tyre3: f64,
     pub extra: Vec<(String, Value)>,
-}
-
-impl Default for TyreStore {
-    fn default() -> Self {
-        Self {
-            cars: Vec::new(),
-            extra: Vec::new(),
-        }
-    }
 }
 
 impl Default for TyreCar {
