@@ -277,19 +277,21 @@ if(BUILD_TUI)
         --manifest-path "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
         --target-dir "${TUI_TARGET_DIR}")
     file(GLOB_RECURSE TUI_RUST_SOURCES CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/tui/src/*.rs")
+        "${CMAKE_SOURCE_DIR}/tui/src/*.rs"
+        "${CMAKE_SOURCE_DIR}/crates/simapi-sys/src/*.rs"
+        "${CMAKE_SOURCE_DIR}/crates/simapi-sys/csrc/*")
     add_custom_command(
         OUTPUT "${TUI_BIN}"
         COMMAND ${CARGO_COMMAND}
         DEPENDS
             ${TUI_RUST_SOURCES}
             "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
-            "${CMAKE_SOURCE_DIR}/tui/Cargo.lock"
-            "${CMAKE_SOURCE_DIR}/version.txt"
             "${CMAKE_SOURCE_DIR}/tui/build.rs"
-            "${CMAKE_SOURCE_DIR}/tui/native/simapi_view.c"
-            "${CMAKE_SOURCE_DIR}/tui/native/simapi_view.h"
-            "${CMAKE_SOURCE_DIR}/tui/native/simapi_view_stub.c"
+            "${CMAKE_SOURCE_DIR}/Cargo.toml"
+            "${CMAKE_SOURCE_DIR}/Cargo.lock"
+            "${CMAKE_SOURCE_DIR}/version.txt"
+            "${CMAKE_SOURCE_DIR}/crates/simapi-sys/Cargo.toml"
+            "${CMAKE_SOURCE_DIR}/crates/simapi-sys/build.rs"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tui"
         COMMENT "Building cargopit-tui with cargo"
         VERBATIM)

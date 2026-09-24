@@ -261,9 +261,9 @@ Required build packages (names vary by distro):
   yder (simd), cargo/rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ (or rustup)
   optional: mingw-w64 (only with --build-bridges), python3 (tests)
 
-Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 rust python yder
-Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3
-Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3
+Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 rust python yder clang
+Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3 clang-devel
+Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3 libclang-dev
 EOF
 }
 
@@ -317,7 +317,7 @@ install_yder_from_source() {
 
 install_deps_arch() {
     local deps=(
-        git cmake make gcc pkgconf python curl unzip rust
+        git cmake make gcc pkgconf python curl unzip rust clang
         libuv argtable libserialport libconfig hidapi lua54
         libpulse libxdg-basedir libxml2 yder procps-ng
     )
@@ -333,7 +333,7 @@ install_deps_fedora() {
         git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
-        pulseaudio-libs-devel procps-ng-devel
+        pulseaudio-libs-devel procps-ng-devel clang-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)
@@ -356,7 +356,7 @@ install_deps_debian() {
     local deps=(
         build-essential git cmake pkg-config python3 curl unzip ca-certificates cargo
         libuv1-dev libargtable2-dev libserialport-dev libconfig-dev
-        libhidapi-dev libxdg-basedir-dev libxml2-dev libpulse-dev
+        libhidapi-dev libxdg-basedir-dev libxml2-dev libpulse-dev libclang-dev
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw-w64)
@@ -384,7 +384,7 @@ install_deps_opensuse() {
         git cmake gcc gcc-c++ make pkg-config python3 curl unzip cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
-        libpulse-devel procps-devel
+        libpulse-devel procps-devel clang-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)

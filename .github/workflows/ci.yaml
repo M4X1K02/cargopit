@@ -60,7 +60,7 @@ jobs:
           build-essential cmake pkg-config \
           libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev cargo rustc
+          libxml2-dev libpulse-dev libproc2-dev libclang-dev cargo rustc
 
     - uses: actions/checkout@v4
       with:
@@ -299,7 +299,7 @@ jobs:
           build-essential cmake pkg-config \
           libuv1-dev libargtable2-dev libserialport-dev \
           libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev cargo rustc \
+          libxml2-dev libpulse-dev libproc2-dev libclang-dev cargo rustc \
           desktop-file-utils file patchelf wget
 
     - name: Determine package version

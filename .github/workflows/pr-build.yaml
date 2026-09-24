@@ -25,7 +25,7 @@ jobs:
         # Same C/system list as ci.yaml's ubuntu-latest leg. cargo/rustc come
         # from rust-toolchain below: Ubuntu's packages are too old for
         # tui/Cargo.toml rust-version (1.88+).
-        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev
       - uses: dtolnay/rust-toolchain@stable
       - name: Configure CMake
         run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
@@ -47,7 +47,7 @@ jobs:
       - name: Update apt
         run: sudo apt update
       - name: Install dependencies
-        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev
       - uses: dtolnay/rust-toolchain@stable
       - name: Configure and build the C capture harness
         run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target parity_c_capture uhid_probe
@@ -71,8 +71,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install a C compiler for simapi-sys layout checks
-        run: sudo apt update && sudo apt install -y build-essential
+      - name: Install simapi-sys build dependencies
+        run: sudo apt update && sudo apt install -y build-essential pkg-config libproc2-dev libclang-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -89,6 +89,6 @@ jobs:
       - name: Update apt
         run: sudo apt update
       - name: Install C dependencies
-        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev
       - name: Run static analysis
         run: bash tools/static-analysis.sh --ci --build-dir build/static-analysis
