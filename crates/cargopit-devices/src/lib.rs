@@ -4,6 +4,7 @@ pub mod clock;
 pub mod device;
 pub mod haptic;
 pub mod lua_host;
+pub mod serial;
 pub mod telemetry;
 pub mod transport;
 pub mod usb;
