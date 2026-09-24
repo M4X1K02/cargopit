@@ -7,18 +7,18 @@
 - Sound streams carry `node.name = cargopit.<Effect>[.<Tyre>]` plus
   `cargopit.effect` / `cargopit.tyre` properties, so Easy Effects, Carla,
   PipeWire filter-chain, or WirePlumber rules can pick them up.
-- `conf/pipewire/cargopit-tactile.conf`: a PipeWire filter-chain sink with
-  the seat correction, a subsonic high-pass, a band-top low-pass, and a clamp.
-  `tools/haptics/fr_to_filterchain.py` regenerates it from a seat sweep CSV.
+- `tools/haptics/fr_to_filterchain.py` turns a seat sweep CSV into a
+  PipeWire filter-chain sink with fitted peaking cuts, a subsonic high-pass,
+  a band-top low-pass, and a clamp. Sweeps and presets stay in the user's
+  config.
 - The TUI lists hardware sinks before processor sinks, tags processors, and
   shows the selected sink's full name in the field help.
 
 ### Changed
 
-- The built-in seat equalization is gone from cargopit. The one-rig
-  measurement it used moved to `conf/pipewire/cargopit-rig-measurement.csv`
-  and the preset above. Load the preset (or your own processor) to keep the
-  correction.
+- The built-in seat equalization is gone from cargopit. It was one rig's
+  measurement compiled into every build. Generate a preset from your own
+  sweep, or use another processor, to correct your seat.
 
 ### Fixed
 

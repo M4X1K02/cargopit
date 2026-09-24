@@ -2,15 +2,19 @@
 """Fit a PipeWire filter-chain tactile preset to a measured rig response.
 
 Input is a CSV of `frequency_hz,transfer_db` points from a sine sweep measured
-at the seat (for example phyphox "Acceleration with g"). The correction curve
-follows the rules cargopit used when this lived in C: smooth the measurement,
-aim for a flat target, never boost, cap the cut, and add an extra cut at the
-seat resonance. That curve is approximated with peaking biquads and wrapped in
-a filter-chain virtual sink with a subsonic high-pass, a band-top low-pass and
-a sample clamp.
+at the seat of your rig (for example phyphox "Acceleration with g"). The
+measurement is smoothed and corrected towards a flat target (by default the
+median level of the shaker band), never boosting and capping the cut, with an
+optional extra cut at a seat resonance. That curve is approximated with
+peaking biquads and wrapped in a filter-chain virtual sink with a subsonic
+high-pass, a band-top low-pass and a sample clamp.
 
-    fr_to_filterchain.py MEASUREMENT.csv > cargopit-tactile.conf
-    fr_to_filterchain.py MEASUREMENT.csv --check cargopit-tactile.conf
+Measurements and the presets made from them belong to one rig, so keep them in
+your own config rather than in the cargopit tree:
+
+    fr_to_filterchain.py sweep.csv --target-sink <amp sink> \\
+        > ~/.config/pipewire/pipewire.conf.d/cargopit-tactile.conf
+    fr_to_filterchain.py sweep.csv --check ~/.config/pipewire/pipewire.conf.d/cargopit-tactile.conf
 
 Only the standard library is used so it runs anywhere cargopit builds.
 """
@@ -21,12 +25,10 @@ import math
 import sys
 from pathlib import Path
 
-DEFAULT_TARGET_TRANSFER_DB = 16.731778731404
 DEFAULT_MAX_CUT_DB = 14.0
 DEFAULT_MAX_BOOST_DB = 0.0
 DEFAULT_NO_BOOST_BELOW_HZ = 32.0
 DEFAULT_BOOST_BLEND_HZ = 8.0
-DEFAULT_RESONANCE_HZ = 42.918696
 DEFAULT_RESONANCE_SIGMA_HZ = 5.0
 DEFAULT_RESONANCE_EXTRA_CUT_DB = 8.0
 SMOOTH_RADIUS_BINS = 4
@@ -111,16 +113,21 @@ def smooth(values):
     return [mean_window(values, i, SMOOTH_RADIUS_BINS) for i in range(len(values))]
 
 
-def smooth_in_place(values):
-    """Running smooth where each point sees the already-smoothed points before it.
+def median(values):
+    ordered = sorted(values)
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[mid]
+    return (ordered[mid - 1] + ordered[mid]) * HALF
 
-    The correction pass has always been computed this way, and the shipped
-    preset has to reproduce the curve the rig was tuned against.
-    """
-    out = list(values)
-    for i in range(len(out)):
-        out[i] = mean_window(out, i, SMOOTH_RADIUS_BINS)
-    return out
+
+def band_target_db(freqs, smoothed, args):
+    """Flat target: the explicit --target-db, else the median of the shaker band."""
+    if args.target_db is not None:
+        return args.target_db
+    in_band = [db for hz, db in zip(freqs, smoothed)
+               if args.no_boost_below_hz <= hz <= args.lowpass_hz]
+    return median(in_band or smoothed)
 
 
 def smoothstep(t):
@@ -137,6 +144,8 @@ def boost_blend(hz, args):
 
 
 def resonance_extra_cut(hz, args):
+    if args.resonance_hz is None:
+        return 0.0
     if args.resonance_sigma_hz <= 0.0 or args.resonance_extra_cut_db <= 0.0:
         return 0.0
     x = (hz - args.resonance_hz) / args.resonance_sigma_hz
@@ -149,13 +158,14 @@ def limit_correction(db, args):
 
 def correction_curve(freqs, transfer_db, args):
     smoothed = smooth(transfer_db)
+    target_db = band_target_db(freqs, smoothed, args)
     raw = []
     for hz, measured in zip(freqs, smoothed):
-        corr = limit_correction(args.target_db - measured, args)
+        corr = limit_correction(target_db - measured, args)
         if corr > 0.0:
             corr *= boost_blend(hz, args)
         raw.append(corr)
-    blended = smooth_in_place(raw)
+    blended = smooth(raw)
     return [limit_correction(c - resonance_extra_cut(hz, args), args)
             for hz, c in zip(freqs, blended)]
 
@@ -248,13 +258,16 @@ def fit_bands(freqs, target, args):
     bands = []
     for _ in range(args.max_filters):
         fitted = response_db(freqs, bands, args.rate)
-        residual = [t - f for t, f in zip(target, fitted)]
+        # Only chase error a band may fix: with boost capped, a positive
+        # residual would just add a 0 dB filter.
+        residual = [limit_correction(t - f, args) for t, f in zip(target, fitted)]
         peak = max(range(len(residual)), key=lambda i: abs(residual[i]))
         if abs(residual[peak]) < args.tolerance_db:
             break
         band = (freqs[peak], residual[peak], half_width_q(freqs, residual, peak))
         bands = refine(freqs, target, bands + [constrain(band, freqs, args)], args)
-    return sorted(tuple(round(v, OUTPUT_DECIMALS) for v in b) for b in bands)
+    rounded = [tuple(round(v, OUTPUT_DECIMALS) for v in b) for b in bands]
+    return sorted(b for b in rounded if b[1] != 0.0)
 
 
 def fmt(value):
@@ -371,12 +384,14 @@ def parse_args(argv):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("measurement", type=Path)
     p.add_argument("--check", type=Path, help="exit non-zero if FILE differs from the output")
-    p.add_argument("--target-db", type=float, default=DEFAULT_TARGET_TRANSFER_DB)
+    p.add_argument("--target-db", type=float, default=None,
+                   help="flat target level (default: median of the shaker band)")
     p.add_argument("--max-cut-db", type=float, default=DEFAULT_MAX_CUT_DB)
     p.add_argument("--max-boost-db", type=float, default=DEFAULT_MAX_BOOST_DB)
     p.add_argument("--no-boost-below-hz", type=float, default=DEFAULT_NO_BOOST_BELOW_HZ)
     p.add_argument("--boost-blend-hz", type=float, default=DEFAULT_BOOST_BLEND_HZ)
-    p.add_argument("--resonance-hz", type=float, default=DEFAULT_RESONANCE_HZ)
+    p.add_argument("--resonance-hz", type=float, default=None,
+                   help="extra cut centred on this seat resonance (default: none)")
     p.add_argument("--resonance-sigma-hz", type=float, default=DEFAULT_RESONANCE_SIGMA_HZ)
     p.add_argument("--resonance-extra-cut-db", type=float, default=DEFAULT_RESONANCE_EXTRA_CUT_DB)
     p.add_argument("--max-filters", type=int, default=DEFAULT_MAX_FILTERS)

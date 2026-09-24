@@ -70,11 +70,8 @@ add_test(NAME sound_stream_props_test COMMAND sound_stream_props_test)
 
 find_package(Python3 COMPONENTS Interpreter)
 if (Python3_Interpreter_FOUND)
-    add_test(NAME tactile_preset_up_to_date
-        COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tools/haptics/fr_to_filterchain.py
-            ${CMAKE_SOURCE_DIR}/conf/pipewire/cargopit-rig-measurement.csv
-            --check ${CMAKE_SOURCE_DIR}/conf/pipewire/cargopit-tactile.conf)
+    add_test(NAME fr_to_filterchain_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fr_to_filterchain_test.py)
 endif()
 
 find_program(BASH_PROGRAM bash)

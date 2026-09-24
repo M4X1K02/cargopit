@@ -33,8 +33,16 @@ Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, pl
 Cargopit generates the haptic signal. Room and rig correction, EQ, compression, and limiting belong to a PipeWire processor that you choose. In the TUI, set a Sound device's **Device id** to that processor's sink. Processor sinks are listed after hardware sinks and tagged `[processor]`.
 
 * **Easy Effects** or **Carla**: start the tool, then pick its sink.
-* **Shipped preset**: `conf/pipewire/cargopit-tactile.conf` (installed under `share/cargopit/conf/pipewire/`) is a filter-chain sink named `cargopit_tactile`. It carries the seat correction that used to be built into cargopit, plus a 10 Hz high-pass, a 120 Hz low-pass, and a sample clamp. To use it, copy it to `~/.config/pipewire/pipewire.conf.d/`, set `target.object` to your amplifier's sink (`pactl list short sinks`), and run `systemctl --user restart pipewire`. It needs PipeWire 1.0 or newer.
-* **Your own rig**: measure a seat sweep as `frequency_hz,transfer_db` CSV, then run `tools/haptics/fr_to_filterchain.py sweep.csv --target-sink <amp sink> > cargopit-tactile.conf` from a source checkout. `--help` lists the target, cut, filter, and channel options.
+* **Correction for your rig**: seat response depends on the seat, mount, and amplifier, so cargopit does not ship a curve. Measure a seat sweep (for example phyphox "Acceleration with g") as a `frequency_hz,transfer_db` CSV and keep it with your own config. From a source checkout, run:
+
+  ```bash
+  tools/haptics/fr_to_filterchain.py ~/.config/cargopit/seat-sweep.csv \
+      --target-sink <amp sink from pactl list short sinks> \
+      > ~/.config/pipewire/pipewire.conf.d/cargopit-tactile.conf
+  systemctl --user restart pipewire
+  ```
+
+  That creates a filter-chain sink named `cargopit_tactile`. It applies peaking cuts fitted to your sweep, a 10 Hz high-pass, a 120 Hz low-pass, and a sample clamp. By default it cuts towards the median level of the 32–120 Hz band and never boosts. `--help` lists the target, resonance, cut, filter, and channel options. It needs PipeWire 1.0 or newer.
 
 Each stream is a PipeWire node named `cargopit.<Effect>` or `cargopit.<Effect>.<Tyre>` (for example `cargopit.TyreSlip.FrontLeft`), with `cargopit.effect` and `cargopit.tyre` properties for qpwgraph, Carla, or WirePlumber rules.
 
