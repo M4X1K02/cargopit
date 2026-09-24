@@ -60,6 +60,12 @@ target_link_libraries(device_runner_test
 target_include_directories(device_runner_test PRIVATE ${LUA_INCLUDE_DIR})
 add_test(NAME device_runner_test COMMAND device_runner_test)
 
+add_executable(game_map_ac_dr2_test game_map_ac_dr2_test.c)
+target_link_libraries(game_map_ac_dr2_test simulatorapi m ${PROC_LIBS})
+target_include_directories(game_map_ac_dr2_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simapi)
+add_test(NAME game_map_ac_dr2_test COMMAND game_map_ac_dr2_test)
+
 add_executable(revlights_test revlights_test.c)
 target_link_libraries(revlights_test devices m)
 add_test(NAME revlights_test COMMAND revlights_test)
