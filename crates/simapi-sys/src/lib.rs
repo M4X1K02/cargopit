@@ -1,7 +1,83 @@
-//! Offsets and size of `SimData` taken from the simapi submodule at build time.
-//! Callers write bytes at these offsets. They do not declare a Rust layout.
+//! Bindings and safe wrappers for the checked-out simapi submodule.
+
+mod session;
+mod telemetry;
+
+#[allow(
+    non_upper_case_globals,
+    non_camel_case_types,
+    non_snake_case,
+    dead_code,
+    clippy::all
+)]
+pub mod bindings {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+}
 
 include!(concat!(env!("OUT_DIR"), "/layout.rs"));
+
+pub use session::GameSession;
+pub use telemetry::{
+    read_telemetry, write_telemetry, TelemetrySnapshot, TELEMETRY_GEARC_LEN, TELEMETRY_NAME_LEN,
+};
+
+const EXPECTED_SIMDATA_SIZE: usize = 46044;
+const EXPECTED_SIMAPI_VERSION: u32 = 1;
+
+const _: () = assert!(SIMDATA_SIZE == EXPECTED_SIMDATA_SIZE);
+const _: () = assert!(SIMAPI_VERSION_VALUE == EXPECTED_SIMAPI_VERSION);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ASSETTO_CORSA_TOKEN: &str = "ac";
+
+    #[test]
+    fn layout_matches_submodule() {
+        assert_eq!(SIMDATA_SIZE, EXPECTED_SIMDATA_SIZE);
+        assert_eq!(std::mem::size_of::<bindings::SimData>(), SIMDATA_SIZE);
+        assert_eq!(SIMAPI_VERSION_VALUE, EXPECTED_SIMAPI_VERSION);
+    }
+
+    #[test]
+    fn game_token_and_clear_do_not_touch_shm() {
+        assert_eq!(
+            GameSession::game_id(ASSETTO_CORSA_TOKEN),
+            bindings::SimulatorEXE_SIMULATOREXE_ASSETTO_CORSA as i32
+        );
+        let mut session = GameSession::new();
+        session.clear(false).expect("clear");
+    }
+
+    #[test]
+    fn telemetry_roundtrip_preserves_view_fields() {
+        let mut bytes = vec![0u8; SIMDATA_SIZE];
+        let mut view = TelemetrySnapshot {
+            mtick: 9,
+            rpms: 4500,
+            velocity: 142,
+            gear: 4,
+            gearc: *b"3\0\0\0",
+            gas: 0.5,
+            simon: 1,
+            ..TelemetrySnapshot::default()
+        };
+        view.car[..4].copy_from_slice(b"mx5\0");
+        assert!(write_telemetry(&mut bytes, &view));
+        let parsed = read_telemetry(&bytes).expect("telemetry");
+        assert_eq!(parsed.mtick, 9);
+        assert_eq!(parsed.rpms, 4500);
+        assert_eq!(parsed.velocity, 142);
+        assert_eq!(parsed.gear, 4);
+        assert_eq!(parsed.gearc[0], b'3');
+        assert_eq!(parsed.car[0], b'm');
+        assert_eq!(parsed.gas, 0.5);
+        assert_eq!(parsed.simon, 1);
+        assert_eq!(parsed.simapiversion, SIMAPI_VERSION_VALUE as u8);
+        assert_eq!(parsed.valid, 1);
+    }
+}
 
 pub const WHEEL_COUNT: usize = 4;
 pub const CAR_NAME_BYTES: usize = 128;

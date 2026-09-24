@@ -162,13 +162,13 @@ Vendored/static copies are listed so their licenses stay visible. PulseAudio is 
 **Arch**
 
 ```bash
-pacman -S --needed git cmake base-devel curl libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 yder procps-ng rust
+pacman -S --needed git cmake base-devel curl libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 yder procps-ng rust clang
 ```
 
 **Fedora / Nobara**
 
 ```bash
-dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel cargo
+dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel cargo clang-devel
 ```
 
 `yder-devel` (needed to build simd) is often missing from Fedora repos. `install.sh` builds yder from source when the package is absent. Extra packages: https://repo.spacefreak18.xyz/Packages/Fedora/43/
@@ -176,7 +176,7 @@ dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argta
 **Debian / Ubuntu / Mint**
 
 ```bash
-apt install build-essential git cmake pkg-config cargo rustc libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+apt install build-essential git cmake pkg-config cargo rustc libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev
 ```
 
 Use `liblua5.3-dev` if 5.4 is not in the repo, and `libprocps-dev` if `libproc2-dev` is absent. `libyder-dev` is similarly optional; the installer can build yder.
@@ -186,7 +186,7 @@ Ubuntu 24.04's default `cargo` / `rustc` packages are 1.75 and cannot build `car
 **openSUSE**
 
 ```bash
-zypper install git cmake gcc gcc-c++ make pkg-config cargo rust libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel
+zypper install git cmake gcc gcc-c++ make pkg-config cargo rust libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel clang-devel
 ```
 
 ## User Setup Guide

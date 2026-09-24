@@ -8,6 +8,8 @@ repository.workspace = true
 version.workspace = true
 
 [dependencies]
+libc = "0.2"
 
 [build-dependencies]
+bindgen = "0.71"
 cc = "1"

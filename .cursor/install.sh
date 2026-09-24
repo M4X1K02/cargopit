@@ -24,12 +24,12 @@ $SUDO apt-get install -y --no-install-recommends \
     cmake pkg-config build-essential \
     libuv1-dev libargtable2-dev libserialport-dev libconfig-dev \
     libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev \
-    libpulse-dev libproc2-dev
+    libpulse-dev libproc2-dev libclang-dev
 
 # --- Submodules -------------------------------------------------------------
 # simapi (shared-memory headers/mappers) is required to configure and build;
 # an empty submodule fails CMake with a missing CMakeLists.txt error. The Rust
-# TUI's build.rs also compiles a native view against simapi's simdata.h.
+# TUI links simapi-sys, which bindgen-compiles those headers.
 git submodule update --init --recursive
 
 # --- Rust toolchain (for the cargopit-tui build) ----------------------------

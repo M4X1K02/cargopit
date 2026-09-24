@@ -95,28 +95,86 @@ pub enum ShmEvent {
     Disappeared,
 }
 
-extern "C" {
-    fn cargopit_tui_simdata_size() -> usize;
-    fn cargopit_tui_read_simdata(mem: *const u8, len: usize, out: *mut TelemetryView) -> i32;
-    fn cargopit_tui_write_fixture(mem: *mut u8, len: usize, input: *const TelemetryView) -> i32;
-}
-
 pub fn simdata_size() -> usize {
-    unsafe { cargopit_tui_simdata_size() }
+    simapi_sys::SIMDATA_SIZE
 }
 
 pub fn read_simdata(bytes: &[u8]) -> Option<TelemetryView> {
-    let mut view = TelemetryView::default();
-    let rc = unsafe { cargopit_tui_read_simdata(bytes.as_ptr(), bytes.len(), &mut view) };
-    if rc != 0 || view.valid == 0 {
+    let snap = simapi_sys::read_telemetry(bytes)?;
+    if snap.valid == 0 {
         return None;
     }
-    Some(view)
+    Some(view_from_snapshot(snap))
 }
 
 pub fn write_fixture(bytes: &mut [u8], view: &TelemetryView) -> bool {
-    let rc = unsafe { cargopit_tui_write_fixture(bytes.as_mut_ptr(), bytes.len(), view) };
-    rc == 0
+    simapi_sys::write_telemetry(bytes, &snapshot_from_view(view))
+}
+
+fn view_from_snapshot(snap: simapi_sys::TelemetrySnapshot) -> TelemetryView {
+    TelemetryView {
+        mtick: snap.mtick,
+        simexe: snap.simexe,
+        simstatus: snap.simstatus,
+        velocity: snap.velocity,
+        rpms: snap.rpms,
+        gear: snap.gear,
+        maxrpm: snap.maxrpm,
+        idlerpm: snap.idlerpm,
+        lap: snap.lap,
+        position: snap.position,
+        numlaps: snap.numlaps,
+        simapi: snap.simapi,
+        simon: snap.simon,
+        simapiversion: snap.simapiversion,
+        valid: snap.valid,
+        gearc: snap.gearc,
+        car: snap.car,
+        track: snap.track,
+        gas: snap.gas,
+        brake: snap.brake,
+        clutch: snap.clutch,
+        steer: snap.steer,
+        fuel: snap.fuel,
+        fuelcapacity: snap.fuelcapacity,
+        abs: snap.abs,
+        xvelocity: snap.xvelocity,
+        yvelocity: snap.yvelocity,
+        zvelocity: snap.zvelocity,
+    }
+}
+
+fn snapshot_from_view(view: &TelemetryView) -> simapi_sys::TelemetrySnapshot {
+    simapi_sys::TelemetrySnapshot {
+        mtick: view.mtick,
+        simexe: view.simexe,
+        simstatus: view.simstatus,
+        velocity: view.velocity,
+        rpms: view.rpms,
+        gear: view.gear,
+        maxrpm: view.maxrpm,
+        idlerpm: view.idlerpm,
+        lap: view.lap,
+        position: view.position,
+        numlaps: view.numlaps,
+        simapi: view.simapi,
+        simon: view.simon,
+        simapiversion: view.simapiversion,
+        valid: view.valid,
+        gearc: view.gearc,
+        car: view.car,
+        track: view.track,
+        gas: view.gas,
+        brake: view.brake,
+        clutch: view.clutch,
+        steer: view.steer,
+        fuel: view.fuel,
+        fuelcapacity: view.fuelcapacity,
+        abs: view.abs,
+        xvelocity: view.xvelocity,
+        yvelocity: view.yvelocity,
+        zvelocity: view.zvelocity,
+    }
 }
 
 pub fn c_string(bytes: &[u8]) -> String {

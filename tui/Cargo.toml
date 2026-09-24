@@ -17,15 +17,13 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
+simapi-sys = { path = "../crates/simapi-sys" }
 crossterm = "0.28"
 inotify = "0.11"
 memmap2 = "0.9"
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-[build-dependencies]
-cc = "1"
 
 [dev-dependencies]
 tempfile = "3"
