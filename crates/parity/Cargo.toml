@@ -12,4 +12,5 @@ name = "parity-scenarios"
 path = "src/main.rs"
 
 [dependencies]
+cargopit-devices = { path = "../cargopit-devices" }
 simapi-sys = { path = "../simapi-sys" }

@@ -6,6 +6,7 @@ pub mod haptic;
 pub mod lua_host;
 pub mod telemetry;
 pub mod transport;
+pub mod usb;
 
 pub use clock::{Clock, SystemClock, VirtualClock};
 pub use device::{tick_interval_ms, DeviceKind, SimDevice, DEFAULT_DEVICE_FPS, MS_PER_SECOND};
