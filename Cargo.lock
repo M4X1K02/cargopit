@@ -59,6 +59,9 @@ dependencies = [
 [[package]]
 name = "cargopit-config"
 version = "0.4.0"
+dependencies = [
+ "anyhow",
+]
 
 [[package]]
 name = "cargopit-devices"
@@ -69,6 +72,7 @@ name = "cargopit-tui"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "cargopit-config",
  "crossterm",
  "inotify",
  "memmap2",

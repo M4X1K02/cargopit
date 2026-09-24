@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = "1"
+cargopit-config = { path = "../crates/cargopit-config" }
 simapi-sys = { path = "../crates/simapi-sys" }
 crossterm = "0.28"
 inotify = "0.11"

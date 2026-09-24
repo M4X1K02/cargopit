@@ -279,7 +279,8 @@ if(BUILD_TUI)
     file(GLOB_RECURSE TUI_RUST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_SOURCE_DIR}/tui/src/*.rs"
         "${CMAKE_SOURCE_DIR}/crates/simapi-sys/src/*.rs"
-        "${CMAKE_SOURCE_DIR}/crates/simapi-sys/csrc/*")
+        "${CMAKE_SOURCE_DIR}/crates/simapi-sys/csrc/*"
+        "${CMAKE_SOURCE_DIR}/crates/cargopit-config/src/*.rs")
     add_custom_command(
         OUTPUT "${TUI_BIN}"
         COMMAND ${CARGO_COMMAND}
@@ -292,6 +293,7 @@ if(BUILD_TUI)
             "${CMAKE_SOURCE_DIR}/version.txt"
             "${CMAKE_SOURCE_DIR}/crates/simapi-sys/Cargo.toml"
             "${CMAKE_SOURCE_DIR}/crates/simapi-sys/build.rs"
+            "${CMAKE_SOURCE_DIR}/crates/cargopit-config/Cargo.toml"
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tui"
         COMMENT "Building cargopit-tui with cargo"
         VERBATIM)
