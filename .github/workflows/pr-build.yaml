@@ -36,6 +36,34 @@ jobs:
       - name: TUI tests
         run: cargo test --manifest-path tui/Cargo.toml --target-dir build/tui
 
+  parity-harness:
+    name: Rust port parity harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+      - name: Update apt
+        run: sudo apt update
+      - name: Install dependencies
+        run: sudo apt install -y cmake pkg-config build-essential libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Configure and build the C capture harness
+        run: cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build build --target parity_c_capture uhid_probe
+      - name: Clock grep check
+        run: bash tests/parity/check-clock.sh
+      - name: UHID capability probe
+        run: ./build/tests/parity/uhid_probe
+      - name: Scenario and layout tests
+        run: cargo test --workspace --exclude cargopit-tui
+      - name: C capture self-check
+        run: ctest --test-dir build -R 'parity_self_check|uhid_probe' --output-on-failure --timeout 120
+      - name: Golden files match a fresh C capture
+        run: bash tests/parity/verify-goldens.sh
+      - name: Reject unmarked golden edits
+        run: bash tests/parity/check-golden-edits.sh origin/master
+
   static-analysis:
     name: Legacy C static analysis
     runs-on: ubuntu-latest

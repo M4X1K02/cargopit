@@ -1,0 +1,10 @@
+[package]
+name = "cargopit-config"
+description = "Shared cargopit config parser and writer (phase 3)"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]

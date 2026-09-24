@@ -1,0 +1,13 @@
+[package]
+name = "simapi-sys"
+description = "Build-time simapi layout checks and field offsets for the checked-out submodule"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+
+[build-dependencies]
+cc = "1"

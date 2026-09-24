@@ -1,0 +1,11 @@
+tick 0 t_ms 1000 sp_get_port_by_name /dev/ttyPARITY0
+tick 0 t_ms 1000 sp_open port=/dev/ttyPARITY0
+tick 0 t_ms 1000 sp_set_baudrate port=/dev/ttyPARITY0 baud=115200
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 7e163f17190000000000010000000200000003ff000004ff000018
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 7e163f17190005ff000006ff000007ff000008ff000009ff00002e
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 7e163f1719000aff7f000bff7f000cff7f000d0000ff0e0000ffc4
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 7e163f17190100ff000001ff000002ff000003ff000004ff000016
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 7e163f17190105ff000006ff000007ff000008ff000009ff00002f
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 7e163f1719000f00000010000000110000000f000000100000005f
+tick 1 t_ms 1032 sp_close /dev/ttyPARITY0
+tick 1 t_ms 1032 sp_free_port /dev/ttyPARITY0

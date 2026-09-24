@@ -1,0 +1,7 @@
+tick 0 t_ms 1000 glob /sys/module/hid_fanatec/drivers/hid:fake/0003:0EB7:183B.0001/rumble
+tick 0 t_ms 1000 fopen /sys/module/hid_fanatec/drivers/hid:fake/0003:0EB7:183B.0001/rumble
+tick 0 t_ms 1000 clock_gettime clk=1 ns=1000000000
+tick 1 t_ms 1016 clock_gettime clk=1 ns=1016000000
+tick 2 t_ms 1032 clock_gettime clk=1 ns=1032000000
+tick 3 t_ms 1048 clock_gettime clk=1 ns=1048000000
+tick 3 t_ms 1064 sysfs_close /sys/module/hid_fanatec/drivers/hid:fake/0003:0EB7:183B.0001/rumble

@@ -74,6 +74,8 @@ if (Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fr_to_filterchain_test.py)
 endif()
 
+add_subdirectory(parity)
+
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
     add_test(NAME version_reporting

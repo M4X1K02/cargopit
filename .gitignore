@@ -1,4 +1,5 @@
 /build
+/target
 /tui/target
 /src/cargopit/tags
 /src/cargopit/simulatorapi/simapi

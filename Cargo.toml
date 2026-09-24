@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/simapi-sys",
+    "crates/cargopit-config",
+    "crates/cargopit-devices",
+    "crates/cargopit",
+    "crates/parity",
+    "tui",
+]
+default-members = [
+    "crates/simapi-sys",
+    "crates/cargopit-config",
+    "crates/cargopit-devices",
+    "crates/cargopit",
+    "crates/parity",
+    "tui",
+]
+
+[workspace.package]
+edition = "2021"
+license = "GPL-3.0-or-later"
+rust-version = "1.88"
+repository = "https://github.com/M4X1K02/cargopit"
+version = "0.4.0"

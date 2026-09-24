@@ -1,0 +1,11 @@
+[package]
+name = "cargopit"
+description = "Cargopit host runtime (phases 8-10). The C binary remains cargopit until cutover."
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[dependencies]
+cargopit-devices = { path = "../cargopit-devices" }

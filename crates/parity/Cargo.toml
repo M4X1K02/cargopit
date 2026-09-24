@@ -1,0 +1,15 @@
+[package]
+name = "parity"
+description = "Scenario source and golden comparison for the C/Rust parity harness"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "parity-scenarios"
+path = "src/main.rs"
+
+[dependencies]
+simapi-sys = { path = "../simapi-sys" }

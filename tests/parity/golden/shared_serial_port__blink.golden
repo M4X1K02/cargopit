@@ -1,0 +1,11 @@
+tick 0 t_ms 1000 sp_get_port_by_name /dev/ttyPARITY0
+tick 0 t_ms 1000 sp_open port=/dev/ttyPARITY0
+tick 0 t_ms 1000 sp_set_baudrate port=/dev/ttyPARITY0 baud=9600
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 07
+tick 1 t_ms 1016 sp_blocking_write port=/dev/ttyPARITY0 07
+tick 2 t_ms 1032 sp_blocking_write port=/dev/ttyPARITY0 07
+tick 0 t_ms 1048 sp_blocking_write port=/dev/ttyPARITY0 647f
+tick 1 t_ms 1064 sp_blocking_write port=/dev/ttyPARITY0 647f
+tick 2 t_ms 1080 sp_blocking_write port=/dev/ttyPARITY0 647f
+tick 2 t_ms 1096 sp_close /dev/ttyPARITY0
+tick 2 t_ms 1096 sp_free_port /dev/ttyPARITY0

@@ -1,0 +1,11 @@
+tick 0 t_ms 1000 sp_get_port_by_name /dev/ttyPARITY0
+tick 0 t_ms 1000 sp_open port=/dev/ttyPARITY0
+tick 0 t_ms 1000 sp_set_baudrate port=/dev/ttyPARITY0 baud=115200
+tick 0 t_ms 1000 sp_wait timeout_ms=5000
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 ffffffffffff6c65647363
+tick 0 t_ms 1000 sp_wait timeout_ms=5000
+tick 0 t_ms 1000 sp_blocking_read 380d
+tick 0 t_ms 1000 gettimeofday virtual
+tick 0 t_ms 1000 sp_blocking_write port=/dev/ttyPARITY0 ffffffffffff736c656473000000000000000000000000000000000000000000000000fffefd
+tick 0 t_ms 1016 sp_close /dev/ttyPARITY0
+tick 0 t_ms 1016 sp_free_port /dev/ttyPARITY0
