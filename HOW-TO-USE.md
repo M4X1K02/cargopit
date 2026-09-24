@@ -28,6 +28,18 @@ Use `cargopit-tui` for device lists, play/test flags, simd.config, Lua scripts, 
 
 Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, plus the udev rules from `udev/69-cargopit.rules`. The TUI Diagnostics page reports groups, udev, binaries, and `SIMAPI.DAT`.
 
+### External processing (EQ, limiter, rig correction)
+
+Cargopit generates the haptic signal. Room and rig correction, EQ, compression, and limiting belong to a PipeWire processor that you choose. In the TUI, set a Sound device's **Device id** to that processor's sink. Processor sinks are listed after hardware sinks and tagged `[processor]`.
+
+* **Easy Effects** or **Carla**: start the tool, then pick its sink.
+* **Shipped preset**: `conf/pipewire/cargopit-tactile.conf` (installed under `share/cargopit/conf/pipewire/`) is a filter-chain sink named `cargopit_tactile`. It carries the seat correction that used to be built into cargopit, plus a 10 Hz high-pass, a 120 Hz low-pass, and a sample clamp. To use it, copy it to `~/.config/pipewire/pipewire.conf.d/`, set `target.object` to your amplifier's sink (`pactl list short sinks`), and run `systemctl --user restart pipewire`. It needs PipeWire 1.0 or newer.
+* **Your own rig**: measure a seat sweep as `frequency_hz,transfer_db` CSV, then run `tools/haptics/fr_to_filterchain.py sweep.csv --target-sink <amp sink> > cargopit-tactile.conf` from a source checkout. `--help` lists the target, cut, filter, and channel options.
+
+Each stream is a PipeWire node named `cargopit.<Effect>` or `cargopit.<Effect>.<Tyre>` (for example `cargopit.TyreSlip.FrontLeft`), with `cargopit.effect` and `cargopit.tyre` properties for qpwgraph, Carla, or WirePlumber rules.
+
+If the chosen sink is missing, cargopit logs `could not connect sound stream` and skips that device. If the sink disappears during play, the stream goes silent rather than moving to your speakers. Once the processor is back, use **Apply** in the TUI or `echo reload | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/cargopit.sock` to reconnect. External tools can add gain, so keep a limiter or gain cap on the amplifier as well.
+
 ## Steam & Game Config
 
 ### Steam
