@@ -65,6 +65,33 @@ impl GameSession {
         self.data.mtick != first
     }
 
+    pub fn map_live(&mut self, map_api: i32, udp: bool) {
+        unsafe {
+            bindings::simapi_datamap(
+                self.data.as_mut(),
+                self.map,
+                map_api as bindings::SimulatorAPI,
+                udp,
+                std::ptr::null_mut(),
+            );
+        }
+    }
+
+    pub fn open_publish_map(&mut self) {
+        unsafe {
+            if (*self.map).addr.is_null() {
+                bindings::simapi_universalmap_open(self.map, self.data.as_mut());
+            }
+        }
+    }
+
+    pub fn frame_bytes(&self) -> &[u8] {
+        let len = std::mem::size_of::<bindings::SimData>();
+        unsafe {
+            std::slice::from_raw_parts((&*self.data as *const bindings::SimData).cast::<u8>(), len)
+        }
+    }
+
     pub fn clear(&mut self, issimd: bool) -> Result<(), &'static str> {
         let rc = unsafe { bindings::simapi_sim_clear(self.data.as_mut(), self.map, issimd) };
         if rc != 0 {

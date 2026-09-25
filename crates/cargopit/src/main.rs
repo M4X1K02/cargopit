@@ -36,45 +36,107 @@ fn main() -> ExitCode {
 fn play(parsed: &cli::Invocation) -> ExitCode {
     let _ = parsed.disable_audio;
     match simd::ensure() {
-        EnsureStatus::Ok => run_discovery(parsed.force_udp),
+        EnsureStatus::Ok => run_discovery(parsed.force_udp, parsed.fps),
         EnsureStatus::NotInstalled | EnsureStatus::StartFailed => ExitCode::SUCCESS,
     }
 }
 
-fn run_discovery(force_udp: bool) -> ExitCode {
+struct PlayLoop {
+    phase: PlayPhase,
+    use_udp: bool,
+    map_api: i32,
+    wait_ms: u64,
+}
+
+fn run_discovery(force_udp: bool, fps: i32) -> ExitCode {
     let mut session = GameSession::new();
-    let mut phase = PlayPhase::Searching;
+    let mut snapshot = games::FrameSnapshot::new();
+    let mut play = PlayLoop {
+        phase: PlayPhase::Searching,
+        use_udp: force_udp,
+        map_api: games::MAP_API_SIMD,
+        wait_ms: games::CHECK_INTERVAL_MS,
+    };
     loop {
-        phase = poll_once(&mut session, phase, force_udp);
-        if phase == PlayPhase::Exiting {
+        play = poll_once(&mut session, &mut snapshot, play, force_udp, fps);
+        if play.phase == PlayPhase::Exiting {
             return ExitCode::SUCCESS;
         }
-        thread::sleep(Duration::from_millis(games::CHECK_INTERVAL_MS));
+        thread::sleep(Duration::from_millis(play.wait_ms));
     }
 }
 
-fn poll_once(session: &mut GameSession, phase: PlayPhase, force_udp: bool) -> PlayPhase {
+fn poll_once(
+    session: &mut GameSession,
+    snapshot: &mut games::FrameSnapshot,
+    play: PlayLoop,
+    force_udp: bool,
+    fps: i32,
+) -> PlayLoop {
     let mut seen = observe(session, force_udp, false);
-    if phase == PlayPhase::Searching && games::simd_map_is_stale(seen.map_api, false) {
+    if play.phase == PlayPhase::Searching && games::simd_map_is_stale(seen.map_api, false) {
         let advancing = session.daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
         if games::simd_map_is_stale(seen.map_api, advancing) {
             seen = observe(session, force_udp, true);
         }
     }
     let seen = bridge_if_needed(seen);
-    match phase {
+    match play.phase {
         PlayPhase::Searching => match games::search_tick(seen, force_udp) {
-            PlayAction::StartMapping { .. } => PlayPhase::Mapping,
-            PlayAction::Wait | PlayAction::Release => PlayPhase::Searching,
+            PlayAction::StartMapping { use_udp } => begin_mapping(session, seen, use_udp),
+            PlayAction::Wait | PlayAction::Release => searching(play),
         },
-        PlayPhase::Mapping => match games::mapping_tick(seen) {
-            PlayAction::Release => {
-                let _ = session.clear(false);
-                PlayPhase::Searching
-            }
-            PlayAction::Wait | PlayAction::StartMapping { .. } => PlayPhase::Mapping,
+        PlayPhase::Mapping => map_or_release(session, snapshot, play, seen, fps),
+        PlayPhase::Exiting => play,
+    }
+}
+
+fn searching(play: PlayLoop) -> PlayLoop {
+    PlayLoop {
+        phase: PlayPhase::Searching,
+        wait_ms: games::CHECK_INTERVAL_MS,
+        ..play
+    }
+}
+
+fn begin_mapping(session: &mut GameSession, seen: SeenSim, use_udp: bool) -> PlayLoop {
+    if seen.map_api != games::MAP_API_SIMD {
+        session.open_publish_map();
+    }
+    PlayLoop {
+        phase: PlayPhase::Mapping,
+        use_udp,
+        map_api: seen.map_api,
+        wait_ms: if use_udp {
+            games::CHECK_INTERVAL_MS
+        } else {
+            games::MAPPING_START_MS
         },
-        PlayPhase::Exiting => PlayPhase::Exiting,
+    }
+}
+
+fn map_or_release(
+    session: &mut GameSession,
+    snapshot: &mut games::FrameSnapshot,
+    play: PlayLoop,
+    seen: SeenSim,
+    fps: i32,
+) -> PlayLoop {
+    if games::mapping_tick(seen) == PlayAction::Release || games::mapping_should_stop(seen) {
+        let _ = session.clear(false);
+        return searching(play);
+    }
+    if play.use_udp {
+        return PlayLoop {
+            wait_ms: games::CHECK_INTERVAL_MS,
+            ..play
+        };
+    }
+    session.map_live(play.map_api, false);
+    snapshot.publish(session.frame_bytes());
+    PlayLoop {
+        wait_ms: games::map_interval_ms(fps),
+        ..play
     }
 }
 

@@ -12,6 +12,10 @@ pub const MAP_API_SIMD: i32 = 0;
 pub const STATUS_MENU: i32 = 1;
 pub const STATUS_ACTIVE_PLAY: i32 = 2;
 pub const CHECK_INTERVAL_MS: u64 = 1000;
+pub const MAPPING_START_MS: u64 = 2000;
+const MS_PER_SECOND: f64 = 1000.0;
+const HALF_MS: f64 = 0.5;
+const MIN_MAP_INTERVAL_MS: u64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TelemetrySource {
@@ -76,6 +80,19 @@ pub fn search_tick(seen: SeenSim, force_udp: bool) -> PlayAction {
     }
 }
 
+pub fn map_interval_ms(fps: i32) -> u64 {
+    let clamped = crate::scheduler::clamp_fps(fps) as f64;
+    let interval = (MS_PER_SECOND / clamped + HALF_MS) as u64;
+    if interval == 0 {
+        return MIN_MAP_INTERVAL_MS;
+    }
+    interval
+}
+
+pub fn mapping_should_stop(seen: SeenSim) -> bool {
+    !seen.is_sim_on || seen.sim_status <= STATUS_MENU
+}
+
 pub fn mapping_tick(seen: SeenSim) -> PlayAction {
     if seen.map_api != MAP_API_SIMD {
         return PlayAction::Wait;
@@ -84,6 +101,41 @@ pub fn mapping_tick(seen: SeenSim) -> PlayAction {
         return PlayAction::Release;
     }
     PlayAction::Wait
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameSnapshot {
+    frame: Vec<u8>,
+    sequence: u64,
+}
+
+impl FrameSnapshot {
+    pub fn new() -> Self {
+        Self {
+            frame: Vec::new(),
+            sequence: 0,
+        }
+    }
+
+    pub fn publish(&mut self, frame: &[u8]) {
+        self.frame.clear();
+        self.frame.extend_from_slice(frame);
+        self.sequence = self.sequence.wrapping_add(1);
+    }
+
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    pub fn frame(&self) -> &[u8] {
+        &self.frame
+    }
+}
+
+impl Default for FrameSnapshot {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 pub fn use_acr_bridge(simexe: u64, source: TelemetrySource, physics: Option<&[u8]>) -> bool {
@@ -185,6 +237,45 @@ mod tests {
             }),
             PlayAction::Release
         );
+    }
+
+    #[test]
+    fn map_interval_matches_the_c_rounding() {
+        assert_eq!(map_interval_ms(60), 17);
+        assert_eq!(map_interval_ms(1), 1000);
+        assert_eq!(map_interval_ms(0), 1000);
+        assert_eq!(MAPPING_START_MS, 2000);
+    }
+
+    #[test]
+    fn mapping_stops_when_the_sim_leaves_active_play() {
+        let live = SeenSim {
+            is_sim_on: true,
+            sim_status: STATUS_ACTIVE_PLAY,
+            map_api: 1,
+            uses_udp: false,
+            sim_exe: 0,
+        };
+        assert!(!mapping_should_stop(live));
+        assert!(mapping_should_stop(SeenSim {
+            is_sim_on: false,
+            ..live
+        }));
+        assert!(mapping_should_stop(SeenSim {
+            sim_status: STATUS_MENU,
+            ..live
+        }));
+    }
+
+    #[test]
+    fn publish_copies_the_frame_and_bumps_sequence() {
+        let mut snapshot = FrameSnapshot::new();
+        snapshot.publish(&[1, 2, 3]);
+        assert_eq!(snapshot.sequence(), 1);
+        assert_eq!(snapshot.frame(), &[1, 2, 3]);
+        snapshot.publish(&[9]);
+        assert_eq!(snapshot.sequence(), 2);
+        assert_eq!(snapshot.frame(), &[9]);
     }
 
     #[test]
