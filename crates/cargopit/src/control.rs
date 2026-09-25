@@ -11,7 +11,6 @@ pub const RUNTIME_DIR_ENV: &str = "XDG_RUNTIME_DIR";
 pub const CMD_STATUS: &str = "status";
 pub const CMD_RELOAD: &str = "reload";
 pub const CMD_STOP: &str = "stop";
-pub const SIM_NONE: &str = "none";
 pub const REPLY_OK: &str = "{\"ok\":true}";
 pub const REPLY_UNKNOWN: &str = "{\"ok\":false,\"error\":\"unknown command\"}";
 pub const REPLY_TOO_LONG: &str = "{\"ok\":false,\"error\":\"command too long\"}";
