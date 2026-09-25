@@ -1,4 +1,4 @@
-//! Rust host used by contract tests. The installed C binary stays `cargopit` until cutover.
+//! Rust host. `play` discovers a live sim after simd is running.
 
 use std::env;
 use std::io::{self, Write};
@@ -6,12 +6,13 @@ use std::process::ExitCode;
 use std::thread;
 use std::time::Duration;
 
+use cargopit::acr;
 use cargopit::cli::{self, ProgramAction};
+use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
 use cargopit::simd::{self, EnsureStatus};
 use cargopit::tach;
 use cargopit::testmode;
-
-const PARK_MS: u64 = 200;
+use simapi_sys::GameSession;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -35,11 +36,73 @@ fn main() -> ExitCode {
 fn play(parsed: &cli::Invocation) -> ExitCode {
     let _ = parsed.disable_audio;
     match simd::ensure() {
-        EnsureStatus::Ok => loop {
-            thread::sleep(Duration::from_millis(PARK_MS));
-        },
+        EnsureStatus::Ok => run_discovery(parsed.force_udp),
         EnsureStatus::NotInstalled | EnsureStatus::StartFailed => ExitCode::SUCCESS,
     }
+}
+
+fn run_discovery(force_udp: bool) -> ExitCode {
+    let mut session = GameSession::new();
+    let mut phase = PlayPhase::Searching;
+    loop {
+        phase = poll_once(&mut session, phase, force_udp);
+        if phase == PlayPhase::Exiting {
+            return ExitCode::SUCCESS;
+        }
+        thread::sleep(Duration::from_millis(games::CHECK_INTERVAL_MS));
+    }
+}
+
+fn poll_once(session: &mut GameSession, phase: PlayPhase, force_udp: bool) -> PlayPhase {
+    let mut seen = observe(session, force_udp, false);
+    if phase == PlayPhase::Searching && games::simd_map_is_stale(seen.map_api, false) {
+        let advancing = session.daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
+        if games::simd_map_is_stale(seen.map_api, advancing) {
+            seen = observe(session, force_udp, true);
+        }
+    }
+    let seen = bridge_if_needed(seen);
+    match phase {
+        PlayPhase::Searching => match games::search_tick(seen, force_udp) {
+            PlayAction::StartMapping { .. } => PlayPhase::Mapping,
+            PlayAction::Wait | PlayAction::Release => PlayPhase::Searching,
+        },
+        PlayPhase::Mapping => match games::mapping_tick(seen) {
+            PlayAction::Release => {
+                let _ = session.clear(false);
+                PlayPhase::Searching
+            }
+            PlayAction::Wait | PlayAction::StartMapping { .. } => PlayPhase::Mapping,
+        },
+        PlayPhase::Exiting => PlayPhase::Exiting,
+    }
+}
+
+fn bridge_if_needed(seen: SeenSim) -> SeenSim {
+    let physics = std::fs::read(acr::PHYSICS_SHM_PATH).ok();
+    if games::use_acr_bridge(
+        seen.sim_exe,
+        games::TelemetrySource::Auto,
+        physics.as_deref(),
+    ) {
+        return games::bridged_acr(seen);
+    }
+    seen
+}
+
+fn observe(session: &mut GameSession, force_udp: bool, direct: bool) -> SeenSim {
+    let info = session.detect(force_udp, direct);
+    SeenSim {
+        is_sim_on: info.isSimOn,
+        sim_status: session_status(session),
+        map_api: info.mapapi as i32,
+        uses_udp: info.SimUsesUDP,
+        sim_exe: info.simulatorexe as u64,
+    }
+}
+
+fn session_status(session: &mut GameSession) -> i32 {
+    session.data_mut().simstatus as i32
 }
 
 fn test_mode(parsed: &cli::Invocation) -> ExitCode {

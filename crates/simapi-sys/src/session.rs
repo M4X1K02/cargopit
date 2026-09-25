@@ -47,6 +47,24 @@ impl GameSession {
         unsafe { bindings::simapi_get_sim(self.data.as_mut(), self.map, force_udp, None, simd) }
     }
 
+    pub fn daemon_advancing(&mut self, probe: std::time::Duration) -> bool {
+        if !self.data.simon {
+            return false;
+        }
+        let first = self.data.mtick;
+        std::thread::sleep(probe);
+        unsafe {
+            bindings::simapi_datamap(
+                self.data.as_mut(),
+                self.map,
+                bindings::SimulatorAPI_SIMULATORAPI_SIMAPI_TEST,
+                false,
+                std::ptr::null_mut(),
+            );
+        }
+        self.data.mtick != first
+    }
+
     pub fn clear(&mut self, issimd: bool) -> Result<(), &'static str> {
         let rc = unsafe { bindings::simapi_sim_clear(self.data.as_mut(), self.map, issimd) };
         if rc != 0 {
