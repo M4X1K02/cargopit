@@ -1,12 +1,12 @@
 //! Field access for the submodule `SimData` layout. Devices borrow one buffer per tick.
 
 use simapi_sys::{
-    SimDataBuf, F64_SIZE, GEARC_BYTES, OFF_ABS, OFF_BRAKE, OFF_BRAKE_TEMP, OFF_FUEL, OFF_GAS,
-    OFF_GEAR, OFF_GEARC, OFF_IDLERPM, OFF_MAXRPM, OFF_MTICK, OFF_PLAYER_FLAG, OFF_PROXIMITY,
-    OFF_PROX_RADIUS, OFF_PROX_THETA, OFF_PULSES, OFF_RPMS, OFF_SIMAPI, OFF_SIMEXE, OFF_SIMON,
-    OFF_SIMSTATUS, OFF_SUSP_VELOCITY, OFF_TURBOBOOST, OFF_TYRE_DIAMETER, OFF_TYRE_RPS,
-    OFF_TYRE_SLIP_RATIO, OFF_TYRE_TEMP, OFF_VELOCITY, OFF_XVELOCITY, OFF_YVELOCITY, OFF_ZVELOCITY,
-    PROXIMITY_STRIDE, WHEEL_COUNT,
+    SimDataBuf, CAR_BYTES, F64_SIZE, GEARC_BYTES, OFF_ABS, OFF_BRAKE, OFF_BRAKE_TEMP, OFF_CAR,
+    OFF_FUEL, OFF_GAS, OFF_GEAR, OFF_GEARC, OFF_IDLERPM, OFF_MAXRPM, OFF_MTICK, OFF_PLAYER_FLAG,
+    OFF_PROXIMITY, OFF_PROX_RADIUS, OFF_PROX_THETA, OFF_PULSES, OFF_RPMS, OFF_SIMAPI,
+    OFF_SIMAPIVERSION, OFF_SIMEXE, OFF_SIMON, OFF_SIMSTATUS, OFF_SUSP_VELOCITY, OFF_TURBOBOOST,
+    OFF_TYRE_DIAMETER, OFF_TYRE_RPS, OFF_TYRE_SLIP_RATIO, OFF_TYRE_TEMP, OFF_VELOCITY,
+    OFF_XVELOCITY, OFF_YVELOCITY, OFF_ZVELOCITY, PROXIMITY_STRIDE, WHEEL_COUNT,
 };
 
 pub const PROXIMITY_CARS: usize = 6;
@@ -141,13 +141,27 @@ impl Telemetry {
         self.buf.set_u8(OFF_SIMAPI, value);
     }
 
+    pub fn simapiversion(&self) -> u8 {
+        self.buf.get_u8(OFF_SIMAPIVERSION)
+    }
+
+    pub fn set_simapiversion(&mut self, value: u8) {
+        self.buf.set_u8(OFF_SIMAPIVERSION, value);
+    }
+
+    pub fn car(&self) -> String {
+        c_string(self.buf.get_bytes(OFF_CAR, CAR_BYTES))
+    }
+
+    pub fn set_car(&mut self, text: &str) {
+        let mut bytes = [0u8; CAR_BYTES];
+        let copy = text.len().min(CAR_BYTES.saturating_sub(1));
+        bytes[..copy].copy_from_slice(&text.as_bytes()[..copy]);
+        self.buf.set_bytes(OFF_CAR, &bytes);
+    }
+
     pub fn gearc(&self) -> String {
-        let bytes = self.buf.get_bytes(OFF_GEARC, GEARC_BYTES);
-        let end = bytes
-            .iter()
-            .position(|byte| *byte == 0)
-            .unwrap_or(bytes.len());
-        String::from_utf8_lossy(&bytes[..end]).into_owned()
+        c_string(self.buf.get_bytes(OFF_GEARC, GEARC_BYTES))
     }
 
     pub fn set_gearc(&mut self, text: &str) {
@@ -171,6 +185,10 @@ impl Telemetry {
 
     pub fn abs(&self) -> f64 {
         self.buf.get_f64(OFF_ABS)
+    }
+
+    pub fn set_abs(&mut self, value: f64) {
+        self.buf.set_f64(OFF_ABS, value);
     }
 
     pub fn set_brake(&mut self, value: f64) {
@@ -310,4 +328,12 @@ impl Default for Telemetry {
 
 pub fn wheel_bytes() -> usize {
     WHEEL_COUNT * F64_SIZE
+}
+
+fn c_string(bytes: &[u8]) -> String {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
