@@ -1,10 +1,17 @@
 //! Play-session control socket. One line in, one JSON line out.
 
+use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
+
 pub const SOCKET_NAME: &str = "cargopit.sock";
+const SOCKET_MODE: u32 = 0o600;
 pub const RUNTIME_DIR_ENV: &str = "XDG_RUNTIME_DIR";
 pub const CMD_STATUS: &str = "status";
 pub const CMD_RELOAD: &str = "reload";
 pub const CMD_STOP: &str = "stop";
+pub const SIM_NONE: &str = "none";
 pub const REPLY_OK: &str = "{\"ok\":true}";
 pub const REPLY_UNKNOWN: &str = "{\"ok\":false,\"error\":\"unknown command\"}";
 pub const REPLY_TOO_LONG: &str = "{\"ok\":false,\"error\":\"command too long\"}";
@@ -22,11 +29,81 @@ pub struct SessionStatus {
     pub overruns: u64,
 }
 
+pub fn current_uid() -> u32 {
+    unsafe { getuid() }
+}
+
+unsafe extern "C" {
+    fn getuid() -> u32;
+}
+
 pub fn socket_path(runtime_dir: Option<&str>, uid: u32) -> String {
     match runtime_dir {
         Some(dir) if !dir.is_empty() => format!("{dir}/{SOCKET_NAME}"),
         _ => format!("/tmp/cargopit-{uid}.sock"),
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlEffect {
+    None,
+    Reload,
+    Stop,
+}
+
+pub fn effect(command: &str) -> ControlEffect {
+    match command.trim_end_matches('\n') {
+        CMD_RELOAD => ControlEffect::Reload,
+        CMD_STOP => ControlEffect::Stop,
+        _ => ControlEffect::None,
+    }
+}
+
+pub fn bind_listener(path: &str) -> std::io::Result<UnixListener> {
+    if Path::new(path).exists() {
+        std::fs::remove_file(path)?;
+    }
+    let listener = UnixListener::bind(path)?;
+    listener.set_nonblocking(true)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(SOCKET_MODE))?;
+    Ok(listener)
+}
+
+pub fn serve_stream(
+    stream: &mut UnixStream,
+    status: &SessionStatus,
+) -> std::io::Result<ControlEffect> {
+    let mut buf = [0u8; LINE_MAX];
+    let mut used = 0usize;
+    let command = loop {
+        if used >= LINE_MAX - 1 {
+            break String::from_utf8_lossy(&buf[..used]).into_owned();
+        }
+        let mut byte = [0u8; 1];
+        let read = stream.read(&mut byte)?;
+        if read == 0 {
+            break String::from_utf8_lossy(&buf[..used]).into_owned();
+        }
+        buf[used] = byte[0];
+        used += 1;
+        if byte[0] == b'\n' {
+            break String::from_utf8_lossy(&buf[..used]).into_owned();
+        }
+    };
+    let response = reply(&command, status);
+    let effect = effect(command.trim_end_matches('\n'));
+    stream.write_all(response.as_bytes())?;
+    stream.write_all(b"\n")?;
+    let _ = stream.shutdown(std::net::Shutdown::Both);
+    Ok(effect)
+}
+
+pub fn try_accept(listener: &UnixListener, status: &SessionStatus) -> Option<ControlEffect> {
+    let Ok((mut stream, _)) = listener.accept() else {
+        return None;
+    };
+    let _ = stream.set_nonblocking(false);
+    serve_stream(&mut stream, status).ok()
 }
 
 pub fn reply(command: &str, status: &SessionStatus) -> String {
@@ -94,5 +171,24 @@ mod tests {
             "/run/user/1/cargopit.sock"
         );
         assert_eq!(socket_path(None, 7), "/tmp/cargopit-7.sock");
+    }
+
+    #[test]
+    fn listener_answers_status_and_stop() {
+        let dir = std::env::temp_dir().join(format!("cargopit-sock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(SOCKET_NAME);
+        let listener = bind_listener(path.to_str().unwrap()).unwrap();
+        let mut client = UnixStream::connect(&path).unwrap();
+        client.write_all(b"status\n").unwrap();
+        let effect = try_accept(&listener, &sample()).unwrap();
+        assert_eq!(effect, ControlEffect::None);
+        let mut reply_buf = [0u8; 256];
+        let n = client.read(&mut reply_buf).unwrap();
+        let text = String::from_utf8_lossy(&reply_buf[..n]);
+        assert!(text.contains("\"ok\":true"));
+        assert!(text.ends_with('\n'));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

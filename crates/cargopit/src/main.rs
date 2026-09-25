@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use cargopit::acr;
 use cargopit::cli::{self, ProgramAction};
+use cargopit::control::{self, ControlEffect, SessionStatus};
 use cargopit::devices::LoadedDevices;
 use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
 use cargopit::scheduler::{self, TimerKind};
@@ -64,6 +65,11 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
     let mut snapshot = games::FrameSnapshot::new();
     let mut socket: Option<UdpSocket> = None;
     let clock = SystemClock::new();
+    let control_path = control::socket_path(
+        std::env::var(control::RUNTIME_DIR_ENV).ok().as_deref(),
+        control::current_uid(),
+    );
+    let control = control::bind_listener(&control_path).ok();
     let mut devices = DeviceLoop {
         loaded: LoadedDevices::empty(),
         scheduler: scheduler::Scheduler::new(),
@@ -77,11 +83,14 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
     };
     loop {
         play = poll_once(
-            &mut session,
-            &mut snapshot,
-            &mut socket,
-            &clock,
-            &mut devices,
+            &mut PlayParts {
+                session: &mut session,
+                snapshot: &mut snapshot,
+                socket: &mut socket,
+                clock: &clock,
+                devices: &mut devices,
+                control: control.as_ref(),
+            },
             play,
             parsed,
         );
@@ -92,41 +101,100 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
     }
 }
 
-fn poll_once(
-    session: &mut GameSession,
-    snapshot: &mut games::FrameSnapshot,
-    socket: &mut Option<UdpSocket>,
-    clock: &impl Clock,
-    devices: &mut DeviceLoop,
-    play: PlayLoop,
-    parsed: &cli::Invocation,
-) -> PlayLoop {
+struct PlayParts<'a> {
+    session: &'a mut GameSession,
+    snapshot: &'a mut games::FrameSnapshot,
+    socket: &'a mut Option<UdpSocket>,
+    clock: &'a SystemClock,
+    devices: &'a mut DeviceLoop,
+    control: Option<&'a std::os::unix::net::UnixListener>,
+}
+
+fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
     let force_udp = parsed.force_udp;
     let fps = parsed.fps;
-    let mut seen = observe(session, force_udp, false);
+    let mut seen = observe(parts.session, force_udp, false);
     if play.phase == PlayPhase::Searching && games::simd_map_is_stale(seen.map_api, false) {
-        let advancing = session.daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
+        let advancing = parts
+            .session
+            .daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
         if games::simd_map_is_stale(seen.map_api, advancing) {
-            seen = observe(session, force_udp, true);
+            seen = observe(parts.session, force_udp, true);
         }
     }
     let seen = bridge_if_needed(seen);
+    let play = apply_control(parts.control, parts.devices, play, parsed);
+    if play.phase == PlayPhase::Exiting {
+        return play;
+    }
     match play.phase {
         PlayPhase::Searching => match games::search_tick(seen, force_udp) {
             PlayAction::StartMapping { use_udp } => {
-                devices.pending = true;
-                begin_mapping(session, snapshot, socket, seen, use_udp)
+                parts.devices.pending = true;
+                begin_mapping(parts.session, parts.snapshot, parts.socket, seen, use_udp)
             }
             PlayAction::Wait | PlayAction::Release => searching(play),
         },
         PlayPhase::Mapping => {
-            let next = map_or_release(session, snapshot, socket, clock, play, seen, fps);
+            let next = map_or_release(
+                parts.session,
+                parts.snapshot,
+                parts.socket,
+                parts.clock,
+                play,
+                seen,
+                fps,
+            );
             if next.phase == PlayPhase::Mapping {
-                tick_devices(devices, clock, parsed);
+                tick_devices(parts.devices, parts.clock, parsed);
             }
             next
         }
         PlayPhase::Exiting => play,
+    }
+}
+
+fn apply_control(
+    control: Option<&std::os::unix::net::UnixListener>,
+    devices: &mut DeviceLoop,
+    play: PlayLoop,
+    parsed: &cli::Invocation,
+) -> PlayLoop {
+    let Some(listener) = control else {
+        return play;
+    };
+    let status = session_view(&play, devices, parsed);
+    match control::try_accept(listener, &status) {
+        Some(ControlEffect::Stop) => PlayLoop {
+            phase: PlayPhase::Exiting,
+            ..play
+        },
+        Some(ControlEffect::Reload) => {
+            devices.pending = true;
+            searching(play)
+        }
+        Some(ControlEffect::None) | None => play,
+    }
+}
+
+fn session_view(play: &PlayLoop, devices: &DeviceLoop, parsed: &cli::Invocation) -> SessionStatus {
+    let updates = (0..devices.loaded.len())
+        .map(|index| devices.loaded.updates(index))
+        .sum();
+    let state = match play.phase {
+        PlayPhase::Searching => games::STATE_SEARCHING,
+        PlayPhase::Mapping => games::STATE_MAPPING,
+        PlayPhase::Exiting => games::STATE_EXITING,
+    };
+    SessionStatus {
+        state: state.to_string(),
+        releasing: false,
+        paused: false,
+        config_index: parsed.config_index,
+        sim: control::SIM_NONE.to_string(),
+        devices: devices.loaded.len() as u64,
+        updates,
+        overruns: 0,
     }
 }
 
