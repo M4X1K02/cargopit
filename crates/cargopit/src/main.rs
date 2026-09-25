@@ -94,6 +94,7 @@ struct PlayLoop {
     wait_ms: u64,
     user_stopped: bool,
     releasing: bool,
+    sim_exe: u64,
 }
 
 struct DeviceLoop {
@@ -158,6 +159,7 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
         wait_ms: games::CHECK_INTERVAL_MS,
         user_stopped: false,
         releasing: false,
+        sim_exe: 0,
     };
     loop {
         play = poll_once(
@@ -203,6 +205,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     }
     parts.devices.tyres.note(observed.flags);
     let seen = bridge_if_needed(observed.seen);
+    let play = note_sim(play, seen.sim_exe);
     let play = apply_quit(play);
     if play.phase == PlayPhase::Exiting {
         return play;
@@ -305,11 +308,15 @@ fn session_view(play: &PlayLoop, devices: &DeviceLoop, parsed: &cli::Invocation)
         releasing: play.releasing,
         paused: play.user_stopped,
         config_index: parsed.config_index,
-        sim: control::SIM_NONE.to_string(),
+        sim: games::sim_display_name(play.sim_exe, play.phase == PlayPhase::Exiting),
         devices: devices.loaded.len() as u64,
         updates,
         overruns: 0,
     }
+}
+
+fn note_sim(play: PlayLoop, sim_exe: u64) -> PlayLoop {
+    PlayLoop { sim_exe, ..play }
 }
 
 fn searching(play: PlayLoop) -> PlayLoop {
@@ -366,6 +373,7 @@ fn begin_mapping(
         },
         user_stopped: false,
         releasing: false,
+        sim_exe: seen.sim_exe,
     }
 }
 

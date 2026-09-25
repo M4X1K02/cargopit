@@ -12,6 +12,7 @@ pub const MAP_API_SIMD: i32 = 0;
 pub const STATUS_MENU: i32 = 1;
 pub const STATUS_ACTIVE_PLAY: i32 = 2;
 pub const CHECK_INTERVAL_MS: u64 = 1000;
+pub const SIM_NOT_DETECTED: &str = "None Detected";
 pub const QUIT_KEY: u8 = b'q';
 pub const MSG_USER_STOP: &str = "User requested stop, releasing devices";
 pub const MSG_STOPPED_MAPPING: &str = "stopped mapping data, press q again to quit";
@@ -92,6 +93,29 @@ pub fn bridged_acr(seen: SeenSim) -> SeenSim {
         uses_udp: true,
         ..seen
     }
+}
+
+pub fn sim_display_name(sim_exe: u64, exiting: bool) -> String {
+    if exiting || sim_exe == 0 {
+        return SIM_NOT_DETECTED.to_string();
+    }
+    let Ok(code) = u32::try_from(sim_exe) else {
+        return SIM_NOT_DETECTED.to_string();
+    };
+    native_sim_name(code).unwrap_or_else(|| SIM_NOT_DETECTED.to_string())
+}
+
+fn native_sim_name(code: u32) -> Option<String> {
+    let ptr = unsafe { simapi_sys::bindings::simapi_gametofullstr(code) };
+    if ptr.is_null() {
+        return None;
+    }
+    let name = unsafe { std::ffi::CStr::from_ptr(ptr) };
+    let text = name.to_string_lossy();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.into_owned())
 }
 
 pub fn search_tick(seen: SeenSim, force_udp: bool, user_stopped: bool) -> PlayAction {
@@ -255,6 +279,30 @@ mod tests {
             uses_udp,
             sim_exe: 0,
         }
+    }
+
+    #[test]
+    fn status_uses_the_c_sim_display_name() {
+        use simapi_sys::bindings::{
+            SimulatorEXE_SIMULATOREXE_ASSETTO_CORSA, SimulatorEXE_SIMULATOREXE_DIRT_RALLY_2,
+        };
+        const NAME_ASSETTO_CORSA: &str = "Assetto Corsa";
+        const NAME_DIRT_RALLY_2: &str = "DiRT Rally 2.0";
+        const NAME_UNKNOWN: &str = "default";
+        assert_eq!(sim_display_name(0, false), SIM_NOT_DETECTED);
+        assert_eq!(
+            sim_display_name(u64::from(SimulatorEXE_SIMULATOREXE_ASSETTO_CORSA), true),
+            SIM_NOT_DETECTED
+        );
+        assert_eq!(
+            sim_display_name(u64::from(SimulatorEXE_SIMULATOREXE_ASSETTO_CORSA), false),
+            NAME_ASSETTO_CORSA
+        );
+        assert_eq!(
+            sim_display_name(u64::from(SimulatorEXE_SIMULATOREXE_DIRT_RALLY_2), false),
+            NAME_DIRT_RALLY_2
+        );
+        assert_eq!(sim_display_name(u64::from(u32::MAX), false), NAME_UNKNOWN);
     }
 
     #[test]
