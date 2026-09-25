@@ -304,7 +304,13 @@ if(BUILD_TUI)
     install(PROGRAMS "${TUI_BIN}" DESTINATION bin)
 endif()
 
+set(CARGOPIT_LEGACY_NAME cargopit-legacy)
+add_custom_command(TARGET cargopit-cli POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:cargopit-cli>
+            $<TARGET_FILE_DIR:cargopit-cli>/${CARGOPIT_LEGACY_NAME}
+    COMMENT "Install name for the C host during the shadow release")
 install(TARGETS cargopit-cli RUNTIME DESTINATION bin)
+install(PROGRAMS $<TARGET_FILE_DIR:cargopit-cli>/${CARGOPIT_LEGACY_NAME} DESTINATION bin)
 install(FILES tools/cargopit.desktop DESTINATION share/applications)
 install(FILES tools/cargopit.svg
     DESTINATION share/icons/hicolor/scalable/apps)

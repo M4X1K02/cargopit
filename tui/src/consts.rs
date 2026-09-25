@@ -22,6 +22,8 @@ pub use cargopit_config::keys::{
 
 pub const APP_TITLE: &str = "Cargopit TUI";
 pub const BINARY_CARGOPIT: &str = "cargopit";
+pub const BINARY_CARGOPIT_LEGACY: &str = "cargopit-legacy";
+pub const ENV_CARGOPIT_BIN: &str = "CARGOPIT_BIN";
 pub const BINARY_SIMD: &str = "simd";
 pub const BINARY_TUI: &str = "cargopit-tui";
 pub const VERSION_FLAG: &str = "--version";
