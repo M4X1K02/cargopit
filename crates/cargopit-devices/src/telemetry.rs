@@ -3,10 +3,10 @@
 use simapi_sys::{
     SimDataBuf, F64_SIZE, GEARC_BYTES, OFF_ABS, OFF_BRAKE, OFF_BRAKE_TEMP, OFF_FUEL, OFF_GAS,
     OFF_GEAR, OFF_GEARC, OFF_IDLERPM, OFF_MAXRPM, OFF_MTICK, OFF_PLAYER_FLAG, OFF_PROXIMITY,
-    OFF_PROX_RADIUS, OFF_PROX_THETA, OFF_PULSES, OFF_RPMS, OFF_SIMAPI, OFF_SIMEXE, OFF_SIMSTATUS,
-    OFF_SUSP_VELOCITY, OFF_TURBOBOOST, OFF_TYRE_DIAMETER, OFF_TYRE_RPS, OFF_TYRE_SLIP_RATIO,
-    OFF_TYRE_TEMP, OFF_VELOCITY, OFF_XVELOCITY, OFF_YVELOCITY, OFF_ZVELOCITY, PROXIMITY_STRIDE,
-    WHEEL_COUNT,
+    OFF_PROX_RADIUS, OFF_PROX_THETA, OFF_PULSES, OFF_RPMS, OFF_SIMAPI, OFF_SIMEXE, OFF_SIMON,
+    OFF_SIMSTATUS, OFF_SUSP_VELOCITY, OFF_TURBOBOOST, OFF_TYRE_DIAMETER, OFF_TYRE_RPS,
+    OFF_TYRE_SLIP_RATIO, OFF_TYRE_TEMP, OFF_VELOCITY, OFF_XVELOCITY, OFF_YVELOCITY, OFF_ZVELOCITY,
+    PROXIMITY_STRIDE, WHEEL_COUNT,
 };
 
 pub const PROXIMITY_CARS: usize = 6;
@@ -30,6 +30,19 @@ impl Telemetry {
         Self {
             buf: self.buf.clone(),
         }
+    }
+
+    pub fn byte_len(&self) -> usize {
+        self.buf.as_bytes().len()
+    }
+
+    pub fn copy_into(&self, dest: &mut [u8]) -> bool {
+        let bytes = self.buf.as_bytes();
+        if dest.len() < bytes.len() {
+            return false;
+        }
+        dest[..bytes.len()].copy_from_slice(bytes);
+        true
     }
 
     pub fn pulses(&self) -> u32 {
@@ -80,12 +93,32 @@ impl Telemetry {
         self.buf.get_u32(OFF_IDLERPM)
     }
 
+    pub fn set_idlerpm(&mut self, value: u32) {
+        self.buf.set_u32(OFF_IDLERPM, value);
+    }
+
     pub fn simstatus(&self) -> u32 {
         self.buf.get_u32(OFF_SIMSTATUS)
     }
 
+    pub fn set_simstatus(&mut self, value: u32) {
+        self.buf.set_u32(OFF_SIMSTATUS, value);
+    }
+
     pub fn simexe(&self) -> u64 {
         self.buf.get_u64(OFF_SIMEXE)
+    }
+
+    pub fn set_simexe(&mut self, value: u64) {
+        self.buf.set_u64(OFF_SIMEXE, value);
+    }
+
+    pub fn simon(&self) -> bool {
+        self.buf.get_u8(OFF_SIMON) != 0
+    }
+
+    pub fn set_simon(&mut self, value: bool) {
+        self.buf.set_bool(OFF_SIMON, value);
     }
 
     pub fn set_maxrpm(&mut self, value: u32) {
@@ -218,6 +251,10 @@ impl Telemetry {
 
     pub fn brake_temp(&self, index: usize) -> f64 {
         self.wheel(OFF_BRAKE_TEMP, index)
+    }
+
+    pub fn set_brake_temp(&mut self, index: usize, value: f64) {
+        self.set_wheel(OFF_BRAKE_TEMP, index, value);
     }
 
     pub fn susp_velocity(&self, index: usize) -> f64 {
