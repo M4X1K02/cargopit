@@ -108,7 +108,7 @@ fn device_from_entry(entry: &DeviceEntry, id: i32, disable_audio: bool) -> Optio
     if entry.get_bool(keys::KEY_ENABLED) == Some(false) {
         return None;
     }
-    let kind = kind_from_type(entry.get_str(keys::KEY_TYPE).unwrap_or(""));
+    let kind = entry_kind(entry);
     if disable_audio && kind == DeviceKind::Sound {
         return None;
     }
@@ -118,16 +118,24 @@ fn device_from_entry(entry: &DeviceEntry, id: i32, disable_audio: bool) -> Optio
     device.set_config_file(entry.get_str(keys::KEY_CONFIG).map(str::to_string));
     Some(PreparedDevice {
         device,
-        effect: effect_id(entry),
+        effect: device_effect(entry),
     })
 }
 
-fn effect_id(entry: &DeviceEntry) -> Option<i32> {
+pub fn device_effect(entry: &DeviceEntry) -> Option<i32> {
     let name = entry.get_str(keys::KEY_EFFECT)?;
     names::lookup(names::EFFECTS, name)
 }
 
-fn kind_from_type(name: &str) -> DeviceKind {
+pub fn entry_kind(entry: &DeviceEntry) -> DeviceKind {
+    let class = entry
+        .get_str(keys::KEY_DEVICE)
+        .or_else(|| entry.get_str(keys::KEY_TYPE))
+        .unwrap_or("");
+    device_kind(class)
+}
+
+pub fn device_kind(name: &str) -> DeviceKind {
     if name.eq_ignore_ascii_case(CLASS_USB) {
         return DeviceKind::Usb;
     }

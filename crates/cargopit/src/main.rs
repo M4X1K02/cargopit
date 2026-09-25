@@ -553,29 +553,37 @@ fn session_status(session: &mut GameSession) -> i32 {
 }
 
 fn test_mode(parsed: &cli::Invocation) -> ExitCode {
-    let count = device_count(parsed);
-    println!("{}", testmode::preparing(count));
+    let config = parsed
+        .config_file
+        .as_ref()
+        .and_then(|path| cargopit_config::config::load_file(std::path::Path::new(path)).ok());
+    match testmode::plan(
+        config.as_ref(),
+        parsed.config_index,
+        parsed.device_index,
+        parsed.disable_audio,
+    ) {
+        testmode::Plan::MissingIndex => eprintln!("{}", testmode::MSG_NO_DEVICES),
+        testmode::Plan::Empty => println!("{}", testmode::preparing(0)),
+        testmode::Plan::Ready {
+            subjects,
+            device_index,
+        } => print_test_script(&subjects, device_index),
+    }
     let _ = io::stdout().flush();
     ExitCode::SUCCESS
 }
 
-fn device_count(parsed: &cli::Invocation) -> usize {
-    let Some(path) = &parsed.config_file else {
-        return 0;
+fn print_test_script(subjects: &[testmode::TestSubject], device_index: Option<u32>) {
+    let options = testmode::RunOptions {
+        subjects,
+        device_index,
+        trace: false,
     };
-    let Ok(config) = cargopit_config::config::load_file(std::path::Path::new(path)) else {
-        return 0;
-    };
-    let index = if parsed.config_index < 0 {
-        0usize
-    } else {
-        parsed.config_index as usize
-    };
-    config
-        .profiles
-        .get(index)
-        .map(|profile| profile.devices.len())
-        .unwrap_or(0)
+    let script = testmode::run(&options, &mut |_| false);
+    for line in script.lines {
+        println!("{line}");
+    }
 }
 
 fn config_tach(parsed: &cli::Invocation) -> ExitCode {
