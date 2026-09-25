@@ -1,8 +1,10 @@
 //! Rust host. `play` discovers a live sim after simd is running.
 
 use std::env;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+use std::os::fd::AsRawFd;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -18,6 +20,42 @@ use cargopit::testmode;
 use cargopit::udp;
 use cargopit_devices::clock::{Clock, SystemClock};
 use simapi_sys::GameSession;
+
+static STOP_SIGNAL: AtomicBool = AtomicBool::new(false);
+
+/// # Safety
+/// Installed as a POSIX signal handler. It only stores an atomic flag.
+unsafe extern "C" fn on_stop_signal(_signum: i32) {
+    STOP_SIGNAL.store(true, Ordering::Relaxed);
+}
+
+fn install_stop_signals() {
+    unsafe {
+        libc::signal(
+            libc::SIGINT,
+            on_stop_signal as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            on_stop_signal as *const () as libc::sighandler_t,
+        );
+    }
+}
+
+fn read_quit_key() -> Option<u8> {
+    let stdin = io::stdin();
+    let flags = unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_GETFL) };
+    if flags >= 0 {
+        unsafe {
+            libc::fcntl(stdin.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
+        }
+    }
+    let mut byte = [0u8; 1];
+    match stdin.lock().read(&mut byte) {
+        Ok(1) => Some(byte[0]),
+        _ => None,
+    }
+}
 use std::net::UdpSocket;
 
 fn main() -> ExitCode {
@@ -64,6 +102,7 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
     let mut session = GameSession::new();
     let mut snapshot = games::FrameSnapshot::new();
     let mut socket: Option<UdpSocket> = None;
+    install_stop_signals();
     let clock = SystemClock::new();
     let control_path = control::socket_path(
         std::env::var(control::RUNTIME_DIR_ENV).ok().as_deref(),
@@ -123,6 +162,10 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
         }
     }
     let seen = bridge_if_needed(seen);
+    let play = apply_quit(parts, play);
+    if play.phase == PlayPhase::Exiting {
+        return play;
+    }
     let play = apply_control(parts.control, parts.devices, play, parsed);
     if play.phase == PlayPhase::Exiting {
         return play;
@@ -151,6 +194,23 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
             next
         }
         PlayPhase::Exiting => play,
+    }
+}
+
+fn apply_quit(parts: &mut PlayParts<'_>, play: PlayLoop) -> PlayLoop {
+    let mapping = play.phase == PlayPhase::Mapping;
+    let signalled = STOP_SIGNAL.swap(false, Ordering::Relaxed);
+    match games::quit_action(read_quit_key(), signalled, mapping) {
+        games::QuitAction::Continue => play,
+        games::QuitAction::Exit => PlayLoop {
+            phase: PlayPhase::Exiting,
+            ..play
+        },
+        games::QuitAction::Release => {
+            let _ = parts.session.clear(false);
+            println!("User requested stop, releasing devices");
+            searching(play)
+        }
     }
 }
 

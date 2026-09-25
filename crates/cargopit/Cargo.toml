@@ -10,4 +10,5 @@ version.workspace = true
 [dependencies]
 cargopit-config = { path = "../cargopit-config" }
 cargopit-devices = { path = "../cargopit-devices" }
+libc = "0.2"
 simapi-sys = { path = "../simapi-sys" }

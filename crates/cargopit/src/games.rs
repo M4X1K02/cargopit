@@ -12,6 +12,7 @@ pub const MAP_API_SIMD: i32 = 0;
 pub const STATUS_MENU: i32 = 1;
 pub const STATUS_ACTIVE_PLAY: i32 = 2;
 pub const CHECK_INTERVAL_MS: u64 = 1000;
+pub const QUIT_KEY: u8 = b'q';
 pub const MAPPING_START_MS: u64 = 2000;
 const MS_PER_SECOND: f64 = 1000.0;
 const HALF_MS: f64 = 0.5;
@@ -109,6 +110,26 @@ pub fn map_interval_ms(fps: i32) -> u64 {
     interval
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuitAction {
+    Continue,
+    Release,
+    Exit,
+}
+
+pub fn quit_action(key: Option<u8>, signalled: bool, mapping: bool) -> QuitAction {
+    if signalled {
+        return QuitAction::Exit;
+    }
+    if key != Some(QUIT_KEY) {
+        return QuitAction::Continue;
+    }
+    if mapping {
+        return QuitAction::Release;
+    }
+    QuitAction::Exit
+}
+
 pub fn mapping_should_stop(seen: SeenSim) -> bool {
     !seen.is_sim_on || seen.sim_status <= STATUS_MENU
 }
@@ -181,6 +202,17 @@ mod tests {
         assert_eq!(route_udp(&acr), PacketRoute::Acr);
         assert_eq!(UDP_BIND_ADDRESS, "0.0.0.0");
         assert_eq!(UDP_RECV_BYTES, 65536);
+    }
+
+    #[test]
+    fn quit_key_releases_while_mapping_and_exits_while_searching() {
+        assert_eq!(quit_action(None, true, true), QuitAction::Exit);
+        assert_eq!(quit_action(Some(b'x'), false, true), QuitAction::Continue);
+        assert_eq!(
+            quit_action(Some(QUIT_KEY), false, true),
+            QuitAction::Release
+        );
+        assert_eq!(quit_action(Some(QUIT_KEY), false, false), QuitAction::Exit);
     }
 
     #[test]
