@@ -587,25 +587,48 @@ fn print_test_script(subjects: &[testmode::TestSubject], device_index: Option<u3
 }
 
 fn config_tach(parsed: &cli::Invocation) -> ExitCode {
-    if tach::rpm_targets(parsed.max_revs, parsed.granularity).is_none() {
+    let Some(targets) = tach::rpm_targets(parsed.max_revs, parsed.granularity) else {
         eprintln!("{}", tach::min_revs_message());
         return ExitCode::SUCCESS;
-    }
+    };
     let Some(path) = &parsed.save_file else {
         print!("{}", cli::usage_text());
         return ExitCode::SUCCESS;
     };
-    let targets = tach::rpm_targets(parsed.max_revs, parsed.granularity).unwrap_or_default();
+    let interactive = io::IsTerminal::is_terminal(&io::stdin());
+    let stdin = io::stdin();
+    let reader = io::BufReader::new(stdin.lock());
+    let mut keys = reader.bytes().map_while(Result::ok);
+    let Ok(pulses) = tach::capture(&targets, &mut keys, |event| {
+        host_tach_event(event, interactive);
+    }) else {
+        return ExitCode::SUCCESS;
+    };
     let nodes: Vec<tach::TachNode> = targets
         .iter()
-        .map(|rpm| tach::TachNode {
-            rpm: *rpm,
-            pulses: 0,
-        })
+        .zip(pulses)
+        .map(|(rpm, pulses)| tach::TachNode { rpm: *rpm, pulses })
         .collect();
-    let xml = tach::write_xml(parsed.max_revs, &nodes);
-    if std::fs::write(path, xml).is_err() {
-        eprintln!("could not write tachometer file");
+    if std::fs::write(path, tach::write_xml(parsed.max_revs, &nodes)).is_err() {
+        eprintln!("{}", tach::MSG_WRITE_FAILED);
+        return ExitCode::SUCCESS;
     }
+    settle_tach(interactive);
+    let _ = io::stdout().flush();
     ExitCode::SUCCESS
+}
+
+fn host_tach_event(event: tach::WizardEvent, interactive: bool) {
+    match event {
+        tach::WizardEvent::Line(text) => println!("{text}"),
+        tach::WizardEvent::Settle => settle_tach(interactive),
+        tach::WizardEvent::Show(_) => {}
+    }
+}
+
+fn settle_tach(interactive: bool) {
+    if !interactive {
+        return;
+    }
+    thread::sleep(Duration::from_secs(tach::SETTLE_SECS));
 }
