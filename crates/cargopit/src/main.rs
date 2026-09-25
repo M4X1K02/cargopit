@@ -13,6 +13,7 @@ use cargopit::cli::{self, ProgramAction};
 use cargopit::control::{self, ControlEffect, SessionStatus};
 use cargopit::devices::LoadedDevices;
 use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
+use cargopit::log::{self, Level};
 use cargopit::scheduler::{self, TimerKind};
 use cargopit::simd::{self, EnsureStatus};
 use cargopit::tach;
@@ -206,7 +207,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     parts.devices.tyres.note(observed.flags);
     let seen = bridge_if_needed(observed.seen);
     let play = note_sim(play, seen.sim_exe);
-    let play = apply_quit(play);
+    let play = apply_quit(play, parsed);
     if play.phase == PlayPhase::Exiting {
         return play;
     }
@@ -215,7 +216,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
         return play;
     }
     if play.releasing {
-        return finish_release(parts, play);
+        return finish_release(parts, play, parsed);
     }
     match play.phase {
         PlayPhase::Searching => match games::search_tick(seen, force_udp, play.user_stopped) {
@@ -247,7 +248,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     }
 }
 
-fn apply_quit(play: PlayLoop) -> PlayLoop {
+fn apply_quit(play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
     let mapping = play.phase == PlayPhase::Mapping;
     let signalled = STOP_SIGNAL.swap(false, Ordering::Relaxed);
     match games::quit_action(read_quit_key(), signalled, mapping) {
@@ -258,6 +259,7 @@ fn apply_quit(play: PlayLoop) -> PlayLoop {
         },
         games::QuitAction::Release => {
             println!("{}", games::MSG_USER_STOP);
+            slog(parsed, Level::Info, games::MSG_USER_STOP);
             PlayLoop {
                 user_stopped: true,
                 releasing: true,
@@ -328,11 +330,11 @@ fn searching(play: PlayLoop) -> PlayLoop {
     }
 }
 
-fn finish_release(parts: &mut PlayParts<'_>, play: PlayLoop) -> PlayLoop {
+fn finish_release(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
     let _ = parts.session.clear(false);
     release_configured(parts.devices);
     if play.user_stopped {
-        println!("{}", games::MSG_STOPPED_MAPPING);
+        slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
     }
     searching(play)
 }
@@ -564,17 +566,21 @@ fn test_mode(parsed: &cli::Invocation) -> ExitCode {
         parsed.disable_audio,
     ) {
         testmode::Plan::MissingIndex => eprintln!("{}", testmode::MSG_NO_DEVICES),
-        testmode::Plan::Empty => println!("{}", testmode::preparing(0)),
+        testmode::Plan::Empty => slog(parsed, Level::Info, &testmode::preparing(0)),
         testmode::Plan::Ready {
             subjects,
             device_index,
-        } => print_test_script(&subjects, device_index),
+        } => print_test_script(parsed, &subjects, device_index),
     }
     let _ = io::stdout().flush();
     ExitCode::SUCCESS
 }
 
-fn print_test_script(subjects: &[testmode::TestSubject], device_index: Option<u32>) {
+fn print_test_script(
+    parsed: &cli::Invocation,
+    subjects: &[testmode::TestSubject],
+    device_index: Option<u32>,
+) {
     let options = testmode::RunOptions {
         subjects,
         device_index,
@@ -582,8 +588,18 @@ fn print_test_script(subjects: &[testmode::TestSubject], device_index: Option<u3
     };
     let script = testmode::run(&options, &mut |_| false);
     for line in script.lines {
-        println!("{line}");
+        slog(parsed, Level::Info, &line);
     }
+}
+
+fn slog(parsed: &cli::Invocation, level: Level, message: &str) {
+    let (dir, stem) = log::destination(parsed.log_file.as_deref());
+    let stamp = SystemClock::new().wall_stamp();
+    let Some(line) = log::emit(parsed.verbosity, level, message, &stamp) else {
+        return;
+    };
+    println!("{line}");
+    let _ = log::append(&dir, &stem, &line, &stamp);
 }
 
 fn config_tach(parsed: &cli::Invocation) -> ExitCode {
