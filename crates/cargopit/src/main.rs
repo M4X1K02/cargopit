@@ -12,7 +12,10 @@ use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
 use cargopit::simd::{self, EnsureStatus};
 use cargopit::tach;
 use cargopit::testmode;
+use cargopit::udp;
+use cargopit_devices::clock::{Clock, SystemClock};
 use simapi_sys::GameSession;
+use std::net::UdpSocket;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -51,6 +54,8 @@ struct PlayLoop {
 fn run_discovery(force_udp: bool, fps: i32) -> ExitCode {
     let mut session = GameSession::new();
     let mut snapshot = games::FrameSnapshot::new();
+    let mut socket: Option<UdpSocket> = None;
+    let clock = SystemClock::new();
     let mut play = PlayLoop {
         phase: PlayPhase::Searching,
         use_udp: force_udp,
@@ -58,7 +63,15 @@ fn run_discovery(force_udp: bool, fps: i32) -> ExitCode {
         wait_ms: games::CHECK_INTERVAL_MS,
     };
     loop {
-        play = poll_once(&mut session, &mut snapshot, play, force_udp, fps);
+        play = poll_once(
+            &mut session,
+            &mut snapshot,
+            &mut socket,
+            &clock,
+            play,
+            force_udp,
+            fps,
+        );
         if play.phase == PlayPhase::Exiting {
             return ExitCode::SUCCESS;
         }
@@ -69,6 +82,8 @@ fn run_discovery(force_udp: bool, fps: i32) -> ExitCode {
 fn poll_once(
     session: &mut GameSession,
     snapshot: &mut games::FrameSnapshot,
+    socket: &mut Option<UdpSocket>,
+    clock: &impl Clock,
     play: PlayLoop,
     force_udp: bool,
     fps: i32,
@@ -83,10 +98,12 @@ fn poll_once(
     let seen = bridge_if_needed(seen);
     match play.phase {
         PlayPhase::Searching => match games::search_tick(seen, force_udp) {
-            PlayAction::StartMapping { use_udp } => begin_mapping(session, seen, use_udp),
+            PlayAction::StartMapping { use_udp } => {
+                begin_mapping(session, snapshot, socket, seen, use_udp)
+            }
             PlayAction::Wait | PlayAction::Release => searching(play),
         },
-        PlayPhase::Mapping => map_or_release(session, snapshot, play, seen, fps),
+        PlayPhase::Mapping => map_or_release(session, snapshot, socket, clock, play, seen, fps),
         PlayPhase::Exiting => play,
     }
 }
@@ -99,9 +116,22 @@ fn searching(play: PlayLoop) -> PlayLoop {
     }
 }
 
-fn begin_mapping(session: &mut GameSession, seen: SeenSim, use_udp: bool) -> PlayLoop {
+fn begin_mapping(
+    session: &mut GameSession,
+    snapshot: &mut games::FrameSnapshot,
+    socket: &mut Option<UdpSocket>,
+    seen: SeenSim,
+    use_udp: bool,
+) -> PlayLoop {
     if seen.map_api != games::MAP_API_SIMD {
         session.open_publish_map();
+    }
+    if use_udp {
+        session.map_live(seen.map_api, true);
+        snapshot.publish(session.frame_bytes());
+        if socket.is_none() {
+            *socket = udp::bind_requested();
+        }
     }
     PlayLoop {
         phase: PlayPhase::Mapping,
@@ -118,6 +148,8 @@ fn begin_mapping(session: &mut GameSession, seen: SeenSim, use_udp: bool) -> Pla
 fn map_or_release(
     session: &mut GameSession,
     snapshot: &mut games::FrameSnapshot,
+    socket: &mut Option<UdpSocket>,
+    clock: &impl Clock,
     play: PlayLoop,
     seen: SeenSim,
     fps: i32,
@@ -127,6 +159,7 @@ fn map_or_release(
         return searching(play);
     }
     if play.use_udp {
+        recv_udp(session, snapshot, socket, clock, play.map_api);
         return PlayLoop {
             wait_ms: games::CHECK_INTERVAL_MS,
             ..play
@@ -152,8 +185,26 @@ fn bridge_if_needed(seen: SeenSim) -> SeenSim {
     seen
 }
 
+fn recv_udp(
+    session: &mut GameSession,
+    snapshot: &mut games::FrameSnapshot,
+    socket: &Option<UdpSocket>,
+    clock: &impl Clock,
+    map_api: i32,
+) {
+    let Some(socket) = socket else {
+        return;
+    };
+    let Some(mut packet) = udp::recv_packet(socket) else {
+        return;
+    };
+    if udp::ingest(session, &mut packet, map_api, clock) {
+        snapshot.publish(session.frame_bytes());
+    }
+}
+
 fn observe(session: &mut GameSession, force_udp: bool, direct: bool) -> SeenSim {
-    let info = session.detect(force_udp, direct);
+    let info = session.detect_with(force_udp, direct, Some(udp::setup_udp));
     SeenSim {
         is_sim_on: info.isSimOn,
         sim_status: session_status(session),

@@ -9,5 +9,6 @@ pub mod scheduler;
 pub mod simd;
 pub mod tach;
 pub mod testmode;
+pub mod udp;
 
 pub use cargopit_devices::clock::{Clock, VirtualClock};

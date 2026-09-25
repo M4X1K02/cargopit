@@ -24,6 +24,26 @@ pub enum TelemetrySource {
     Auto,
 }
 
+pub const UDP_BIND_ADDRESS: &str = "0.0.0.0";
+pub const UDP_RECV_BYTES: usize = 65536;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PacketRoute {
+    Ignore,
+    Acr,
+    Datamap,
+}
+
+pub fn route_udp(packet: &[u8]) -> PacketRoute {
+    if packet.is_empty() {
+        return PacketRoute::Ignore;
+    }
+    if acr::packet_ok(packet) {
+        return PacketRoute::Acr;
+    }
+    PacketRoute::Datamap
+}
+
 pub fn bind_port(requested: u16) -> u16 {
     if requested == DR2_GAME_PORT {
         return DR2_BIND_PORT;
@@ -151,6 +171,17 @@ pub fn use_acr_bridge(simexe: u64, source: TelemetrySource, physics: Option<&[u8
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn udp_packets_follow_the_c_routes() {
+        assert_eq!(route_udp(&[]), PacketRoute::Ignore);
+        assert_eq!(route_udp(&[0, 1]), PacketRoute::Datamap);
+        let mut acr = vec![0u8; 48];
+        acr[..4].copy_from_slice(b"ACRM");
+        assert_eq!(route_udp(&acr), PacketRoute::Acr);
+        assert_eq!(UDP_BIND_ADDRESS, "0.0.0.0");
+        assert_eq!(UDP_RECV_BYTES, 65536);
+    }
 
     #[test]
     fn dr2_bind_and_stale_mtick_match_the_c_host() {
