@@ -13,6 +13,8 @@ pub const STATUS_MENU: i32 = 1;
 pub const STATUS_ACTIVE_PLAY: i32 = 2;
 pub const CHECK_INTERVAL_MS: u64 = 1000;
 pub const QUIT_KEY: u8 = b'q';
+pub const MSG_USER_STOP: &str = "User requested stop, releasing devices";
+pub const MSG_STOPPED_MAPPING: &str = "stopped mapping data, press q again to quit";
 pub const MAPPING_START_MS: u64 = 2000;
 const MS_PER_SECOND: f64 = 1000.0;
 const HALF_MS: f64 = 0.5;
@@ -92,8 +94,8 @@ pub fn bridged_acr(seen: SeenSim) -> SeenSim {
     }
 }
 
-pub fn search_tick(seen: SeenSim, force_udp: bool) -> PlayAction {
-    if !seen.is_sim_on || seen.sim_status < STATUS_ACTIVE_PLAY {
+pub fn search_tick(seen: SeenSim, force_udp: bool, user_stopped: bool) -> PlayAction {
+    if user_stopped || !seen.is_sim_on || seen.sim_status < STATUS_ACTIVE_PLAY {
         return PlayAction::Wait;
     }
     PlayAction::StartMapping {
@@ -213,6 +215,11 @@ mod tests {
             QuitAction::Release
         );
         assert_eq!(quit_action(Some(QUIT_KEY), false, false), QuitAction::Exit);
+        assert_eq!(MSG_USER_STOP, "User requested stop, releasing devices");
+        assert_eq!(
+            MSG_STOPPED_MAPPING,
+            "stopped mapping data, press q again to quit"
+        );
     }
 
     #[test]
@@ -263,14 +270,15 @@ mod tests {
             sim_status: STATUS_MENU,
             ..live(MAP_API_SIMD, false)
         };
-        assert_eq!(search_tick(off, false), PlayAction::Wait);
-        assert_eq!(search_tick(menu, false), PlayAction::Wait);
+        assert_eq!(search_tick(off, false, false), PlayAction::Wait);
+        assert_eq!(search_tick(menu, false, false), PlayAction::Wait);
+        assert_eq!(search_tick(live(1, false), false, true), PlayAction::Wait);
         assert_eq!(
-            search_tick(live(1, false), false),
+            search_tick(live(1, false), false, false),
             PlayAction::StartMapping { use_udp: false }
         );
         assert_eq!(
-            search_tick(live(1, false), true),
+            search_tick(live(1, false), true, false),
             PlayAction::StartMapping { use_udp: true }
         );
     }
@@ -351,7 +359,7 @@ mod tests {
             sim_exe: acr::SIMEXE_ACR,
         });
         assert_eq!(
-            search_tick(seen, false),
+            search_tick(seen, false, false),
             PlayAction::StartMapping { use_udp: true }
         );
     }
