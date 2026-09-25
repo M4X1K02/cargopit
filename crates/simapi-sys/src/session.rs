@@ -44,7 +44,18 @@ impl GameSession {
     }
 
     pub fn detect(&mut self, force_udp: bool, simd: bool) -> bindings::SimInfo {
-        unsafe { bindings::simapi_get_sim(self.data.as_mut(), self.map, force_udp, None, simd) }
+        self.detect_with(force_udp, simd, None)
+    }
+
+    pub fn detect_with(
+        &mut self,
+        force_udp: bool,
+        simd: bool,
+        setup_udp: Option<unsafe extern "C" fn(i32) -> i32>,
+    ) -> bindings::SimInfo {
+        unsafe {
+            bindings::simapi_get_sim(self.data.as_mut(), self.map, force_udp, setup_udp, simd)
+        }
     }
 
     pub fn daemon_advancing(&mut self, probe: std::time::Duration) -> bool {
@@ -83,6 +94,36 @@ impl GameSession {
                 bindings::simapi_universalmap_open(self.map, self.data.as_mut());
             }
         }
+    }
+
+    pub fn map_packet(&mut self, map_api: i32, packet: &mut [u8]) {
+        if packet.is_empty() {
+            return;
+        }
+        unsafe {
+            bindings::simapi_datamap(
+                self.data.as_mut(),
+                self.map,
+                map_api as bindings::SimulatorAPI,
+                true,
+                packet.as_mut_ptr().cast(),
+            );
+        }
+    }
+
+    pub fn write_frame(&mut self, bytes: &[u8]) -> bool {
+        let len = std::mem::size_of::<bindings::SimData>();
+        if bytes.len() < len {
+            return false;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                (&mut *self.data as *mut bindings::SimData).cast(),
+                len,
+            );
+        }
+        true
     }
 
     pub fn frame_bytes(&self) -> &[u8] {

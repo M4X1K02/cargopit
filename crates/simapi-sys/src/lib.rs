@@ -95,6 +95,15 @@ impl SimDataBuf {
         }
     }
 
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != SIMDATA_SIZE {
+            return None;
+        }
+        let mut buf = Self::new();
+        buf.bytes.copy_from_slice(bytes);
+        Some(buf)
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
