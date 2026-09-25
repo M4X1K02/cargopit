@@ -25,7 +25,7 @@ Usage docs for sims, bridges, and hardware: [spacefreak18.github.io/simapi](http
 
 ## cargopit-tui
 
-`cargopit-tui` is the manager. It starts, tests, restarts, and stops the stack, edits one device profile shared across games, and follows the title that is actually running. Play and test flags, `simd.config`, Lua scripts, tachometer calibration, and tyre diameters are edited in the TUI. The on-disk config is shown read-only. Set `CARGOPIT_BIN` to the host the TUI should launch. A CMake build also copies the C host to `cargopit-legacy`.
+`cargopit-tui` is the manager. It starts, tests, restarts, and stops the stack, edits one device profile shared across games, and follows the title that is actually running. Play and test flags, `simd.config`, Lua scripts, tachometer calibration, and tyre diameters are edited in the TUI. The on-disk config is shown read-only. Set `CARGOPIT_BIN` to the host the TUI should launch. `./install.sh --from-source` installs the Rust host as `cargopit` and the C host as `cargopit-legacy`.
 
 The frames below are the current UI with a sample profile and a sample SIMAPI session (Assetto Corsa on track, devices present, simd and cargopit running).
 

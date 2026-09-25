@@ -38,10 +38,13 @@ cd $RPM_BUILD_DIR/cargopit
 cmake -B build
 cd build
 make
+cd ..
+cargo build --release -p cargopit --manifest-path Cargo.toml
 
 %install
 mkdir -p $RPM_BUILD_ROOT/usr/bin
-cp $RPM_BUILD_DIR/cargopit/build/cargopit $RPM_BUILD_ROOT/usr/bin/cargopit
+cp $RPM_BUILD_DIR/cargopit/target/release/cargopit $RPM_BUILD_ROOT/usr/bin/cargopit
+cp $RPM_BUILD_DIR/cargopit/build/cargopit-legacy $RPM_BUILD_ROOT/usr/bin/cargopit-legacy
 if [ -x $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui ]; then
     cp $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
 elif [ -x $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui ]; then
@@ -54,6 +57,7 @@ install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.svg \
 
 %files
 /usr/bin/cargopit
+/usr/bin/cargopit-legacy
 /usr/bin/cargopit-tui
 /usr/share/applications/cargopit.desktop
 /usr/share/icons/hicolor/scalable/apps/cargopit.svg

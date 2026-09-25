@@ -52,3 +52,4 @@ rustup default stable
 cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
 cmake --build build --config Debug -j"$(nproc)"
+cargo build --release -p cargopit --manifest-path Cargo.toml
