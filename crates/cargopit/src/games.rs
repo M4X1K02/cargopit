@@ -8,6 +8,10 @@ pub const DR2_BIND_PORT: u16 = 20777;
 pub const STATE_SEARCHING: &str = "searching";
 pub const STATE_MAPPING: &str = "mapping";
 pub const STATE_EXITING: &str = "exiting";
+pub const MAP_API_SIMD: i32 = 0;
+pub const STATUS_MENU: i32 = 1;
+pub const STATUS_ACTIVE_PLAY: i32 = 2;
+pub const CHECK_INTERVAL_MS: u64 = 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TelemetrySource {
@@ -25,6 +29,61 @@ pub fn bind_port(requested: u16) -> u16 {
 
 pub fn daemon_is_stale(before_mtick: u64, after_mtick: u64) -> bool {
     before_mtick == after_mtick
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SeenSim {
+    pub is_sim_on: bool,
+    pub sim_status: i32,
+    pub map_api: i32,
+    pub uses_udp: bool,
+    pub sim_exe: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayPhase {
+    Searching,
+    Mapping,
+    Exiting,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayAction {
+    Wait,
+    StartMapping { use_udp: bool },
+    Release,
+}
+
+pub fn simd_map_is_stale(map_api: i32, daemon_advancing: bool) -> bool {
+    map_api == MAP_API_SIMD && !daemon_advancing
+}
+
+pub fn bridged_acr(seen: SeenSim) -> SeenSim {
+    SeenSim {
+        is_sim_on: true,
+        sim_status: STATUS_ACTIVE_PLAY,
+        uses_udp: true,
+        ..seen
+    }
+}
+
+pub fn search_tick(seen: SeenSim, force_udp: bool) -> PlayAction {
+    if !seen.is_sim_on || seen.sim_status < STATUS_ACTIVE_PLAY {
+        return PlayAction::Wait;
+    }
+    PlayAction::StartMapping {
+        use_udp: force_udp || seen.uses_udp,
+    }
+}
+
+pub fn mapping_tick(seen: SeenSim) -> PlayAction {
+    if seen.map_api != MAP_API_SIMD {
+        return PlayAction::Wait;
+    }
+    if !seen.is_sim_on {
+        return PlayAction::Release;
+    }
+    PlayAction::Wait
 }
 
 pub fn use_acr_bridge(simexe: u64, source: TelemetrySource, physics: Option<&[u8]>) -> bool {
@@ -64,5 +123,82 @@ mod tests {
             TelemetrySource::Udp,
             Some(&[9])
         ));
+    }
+
+    fn live(map_api: i32, uses_udp: bool) -> SeenSim {
+        SeenSim {
+            is_sim_on: true,
+            sim_status: STATUS_ACTIVE_PLAY,
+            map_api,
+            uses_udp,
+            sim_exe: 0,
+        }
+    }
+
+    #[test]
+    fn search_waits_until_the_sim_is_in_active_play() {
+        let off = SeenSim {
+            is_sim_on: false,
+            sim_status: STATUS_ACTIVE_PLAY,
+            map_api: MAP_API_SIMD,
+            uses_udp: false,
+            sim_exe: 0,
+        };
+        let menu = SeenSim {
+            sim_status: STATUS_MENU,
+            ..live(MAP_API_SIMD, false)
+        };
+        assert_eq!(search_tick(off, false), PlayAction::Wait);
+        assert_eq!(search_tick(menu, false), PlayAction::Wait);
+        assert_eq!(
+            search_tick(live(1, false), false),
+            PlayAction::StartMapping { use_udp: false }
+        );
+        assert_eq!(
+            search_tick(live(1, false), true),
+            PlayAction::StartMapping { use_udp: true }
+        );
+    }
+
+    #[test]
+    fn stale_simd_map_asks_for_a_direct_remap() {
+        assert!(simd_map_is_stale(MAP_API_SIMD, false));
+        assert!(!simd_map_is_stale(MAP_API_SIMD, true));
+        assert!(!simd_map_is_stale(1, false));
+    }
+
+    #[test]
+    fn mapping_releases_only_a_stopped_simd_session() {
+        assert_eq!(mapping_tick(live(1, true)), PlayAction::Wait);
+        assert_eq!(
+            mapping_tick(SeenSim {
+                is_sim_on: false,
+                ..live(1, true)
+            }),
+            PlayAction::Wait
+        );
+        assert_eq!(mapping_tick(live(MAP_API_SIMD, false)), PlayAction::Wait);
+        assert_eq!(
+            mapping_tick(SeenSim {
+                is_sim_on: false,
+                ..live(MAP_API_SIMD, false)
+            }),
+            PlayAction::Release
+        );
+    }
+
+    #[test]
+    fn acr_bridge_starts_udp_mapping() {
+        let seen = bridged_acr(SeenSim {
+            is_sim_on: false,
+            sim_status: 0,
+            map_api: MAP_API_SIMD,
+            uses_udp: false,
+            sim_exe: acr::SIMEXE_ACR,
+        });
+        assert_eq!(
+            search_tick(seen, false),
+            PlayAction::StartMapping { use_udp: true }
+        );
     }
 }
