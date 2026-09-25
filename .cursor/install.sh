@@ -24,7 +24,7 @@ $SUDO apt-get install -y --no-install-recommends \
     cmake pkg-config build-essential \
     libuv1-dev libargtable2-dev libserialport-dev libconfig-dev \
     libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev \
-    libpulse-dev libproc2-dev libclang-dev
+    libpulse-dev libproc2-dev libclang-dev libudev-dev
 
 # --- Submodules -------------------------------------------------------------
 # simapi (shared-memory headers/mappers) is required to configure and build;
@@ -52,3 +52,4 @@ rustup default stable
 cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
 cmake --build build --config Debug -j"$(nproc)"
+cargo build --release -p cargopit --manifest-path Cargo.toml

@@ -38,9 +38,12 @@ package() {
   cd build
   cmake -Wno-dev -DUSE_PULSEAUDIO=yes ..
   make
+  cd ..
+  cargo build --release -p cargopit --manifest-path Cargo.toml
 
   mkdir -p "${pkgdir}/usr/bin/"
-  cp "$srcdir/$_reponame"/build/cargopit "${pkgdir}/usr/bin/cargopit"
+  cp "$srcdir/$_reponame"/target/release/cargopit "${pkgdir}/usr/bin/cargopit"
+  cp "$srcdir/$_reponame"/build/cargopit-legacy "${pkgdir}/usr/bin/cargopit-legacy"
   if [ -x "$srcdir/$_reponame"/build/tui/release/cargopit-tui ]; then
     cp "$srcdir/$_reponame"/build/tui/release/cargopit-tui "${pkgdir}/usr/bin/cargopit-tui"
   elif [ -x "$srcdir/$_reponame"/build/tui/debug/cargopit-tui ]; then

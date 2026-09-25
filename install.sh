@@ -262,8 +262,8 @@ Required build packages (names vary by distro):
   optional: mingw-w64 (only with --build-bridges), python3 (tests)
 
 Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 rust python yder clang
-Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3 clang-devel
-Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3 libclang-dev
+Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3 clang-devel libudev-devel
+Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3 libclang-dev libudev-dev
 EOF
 }
 
@@ -333,7 +333,7 @@ install_deps_fedora() {
         git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
-        pulseaudio-libs-devel procps-ng-devel clang-devel
+        pulseaudio-libs-devel procps-ng-devel clang-devel libudev-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)
@@ -357,6 +357,7 @@ install_deps_debian() {
         build-essential git cmake pkg-config python3 curl unzip ca-certificates cargo
         libuv1-dev libargtable2-dev libserialport-dev libconfig-dev
         libhidapi-dev libxdg-basedir-dev libxml2-dev libpulse-dev libclang-dev
+        libudev-dev
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw-w64)
@@ -384,7 +385,7 @@ install_deps_opensuse() {
         git cmake gcc gcc-c++ make pkg-config python3 curl unzip cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
-        libpulse-devel procps-devel clang-devel
+        libpulse-devel procps-devel clang-devel libudev-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)
@@ -529,9 +530,19 @@ build_cargopit() {
     mkdir -p "$CARGOPIT_SRC/build"
     cmake -S "$CARGOPIT_SRC" -B "$CARGOPIT_SRC/build"
     cmake --build "$CARGOPIT_SRC/build" -j"$(nproc)"
-    CARGOPIT_BIN="$CARGOPIT_SRC/build/cargopit"
+    if [ ! -x "$CARGOPIT_SRC/build/cargopit" ]; then
+        log_error "C host binary was not produced"
+        exit 1
+    fi
+    if [ -x "$CARGOPIT_SRC/build/cargopit-legacy" ]; then
+        CARGOPIT_LEGACY_BIN="$CARGOPIT_SRC/build/cargopit-legacy"
+    else
+        CARGOPIT_LEGACY_BIN="$CARGOPIT_SRC/build/cargopit"
+    fi
+    cargo build --release -p cargopit --manifest-path "$CARGOPIT_SRC/Cargo.toml"
+    CARGOPIT_BIN="$CARGOPIT_SRC/target/release/cargopit"
     if [ ! -x "$CARGOPIT_BIN" ]; then
-        log_error "cargopit binary was not produced"
+        log_error "Rust cargopit binary was not produced"
         exit 1
     fi
     if [ -x "$CARGOPIT_SRC/build/tui/release/cargopit-tui" ]; then
@@ -663,8 +674,11 @@ resolve_binaries() {
     if [ -z "${SIMD_BIN}" ] && have_cmd simd; then
         SIMD_BIN="$(command -v simd)"
     fi
-    if [ -z "${CARGOPIT_BIN}" ] && [ -x "$INSTALL_DIR/cargopit/build/cargopit" ]; then
-        CARGOPIT_BIN="$INSTALL_DIR/cargopit/build/cargopit"
+    if [ -z "${CARGOPIT_BIN}" ] && [ -x "$INSTALL_DIR/cargopit/target/release/cargopit" ]; then
+        CARGOPIT_BIN="$INSTALL_DIR/cargopit/target/release/cargopit"
+    fi
+    if [ -z "${CARGOPIT_LEGACY_BIN:-}" ] && [ -x "$INSTALL_DIR/cargopit/build/cargopit-legacy" ]; then
+        CARGOPIT_LEGACY_BIN="$INSTALL_DIR/cargopit/build/cargopit-legacy"
     fi
     if [ -z "${CARGOPIT_BIN}" ] && have_cmd cargopit; then
         CARGOPIT_BIN="$(command -v cargopit)"
@@ -698,6 +712,19 @@ fi
 exec "\$BIN" play "\$@"
 EOF
     chmod +x "$BIN_DIR/start-cargopit"
+    if [ -n "${CARGOPIT_BIN:-}" ] && [ -x "$CARGOPIT_BIN" ]; then
+        cp "$CARGOPIT_BIN" "$BIN_DIR/cargopit"
+        chmod +x "$BIN_DIR/cargopit"
+    fi
+    if [ -n "${CARGOPIT_LEGACY_BIN:-}" ] && [ -x "$CARGOPIT_LEGACY_BIN" ]; then
+        cp "$CARGOPIT_LEGACY_BIN" "$BIN_DIR/cargopit-legacy"
+        chmod +x "$BIN_DIR/cargopit-legacy"
+        cat > "$BIN_DIR/start-cargopit-legacy" << EOF
+#!/bin/bash
+exec "$BIN_DIR/cargopit-legacy" play "\$@"
+EOF
+        chmod +x "$BIN_DIR/start-cargopit-legacy"
+    fi
 
     cat > "$BIN_DIR/test-cargopit" << EOF
 #!/bin/bash

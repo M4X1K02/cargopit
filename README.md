@@ -25,7 +25,7 @@ Usage docs for sims, bridges, and hardware: [spacefreak18.github.io/simapi](http
 
 ## cargopit-tui
 
-`cargopit-tui` is the manager. It starts, tests, restarts, and stops the stack, edits one device profile shared across games, and follows the title that is actually running. Play and test flags, `simd.config`, Lua scripts, tachometer calibration, and tyre diameters are edited in the TUI. The on-disk config is shown read-only. Set `CARGOPIT_BIN` to the host the TUI should launch. A CMake build also copies the C host to `cargopit-legacy`.
+`cargopit-tui` is the manager. It starts, tests, restarts, and stops the stack, edits one device profile shared across games, and follows the title that is actually running. Play and test flags, `simd.config`, Lua scripts, tachometer calibration, and tyre diameters are edited in the TUI. The on-disk config is shown read-only. Set `CARGOPIT_BIN` to the host the TUI should launch. `./install.sh --from-source` installs the Rust host as `cargopit` and the C host as `cargopit-legacy`.
 
 The frames below are the current UI with a sample profile and a sample SIMAPI session (Assetto Corsa on track, devices present, simd and cargopit running).
 
@@ -168,7 +168,7 @@ pacman -S --needed git cmake base-devel curl libuv argtable libserialport libcon
 **Fedora / Nobara**
 
 ```bash
-dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel cargo clang-devel
+dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel cargo clang-devel libudev-devel
 ```
 
 `yder-devel` (needed to build simd) is often missing from Fedora repos. `install.sh` builds yder from source when the package is absent. Extra packages: https://repo.spacefreak18.xyz/Packages/Fedora/43/
@@ -176,7 +176,7 @@ dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argta
 **Debian / Ubuntu / Mint**
 
 ```bash
-apt install build-essential git cmake pkg-config cargo rustc libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev
+apt install build-essential git cmake pkg-config cargo rustc libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev libudev-dev
 ```
 
 Use `liblua5.3-dev` if 5.4 is not in the repo, and `libprocps-dev` if `libproc2-dev` is absent. `libyder-dev` is similarly optional; the installer can build yder.
@@ -186,7 +186,7 @@ Ubuntu 24.04's default `cargo` / `rustc` packages are 1.75 and cannot build `car
 **openSUSE**
 
 ```bash
-zypper install git cmake gcc gcc-c++ make pkg-config cargo rust libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel clang-devel
+zypper install git cmake gcc gcc-c++ make pkg-config cargo rust libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel clang-devel libudev-devel
 ```
 
 ## User Setup Guide

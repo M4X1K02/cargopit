@@ -203,7 +203,17 @@ PACMANCONF_EOF
         echo "cargopit binary was not produced" >&2
         exit 1
     fi
-    sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit" /usr/local/bin/cargopit
+    cargo build --release -p cargopit --manifest-path "$CARGOPIT_SRC/Cargo.toml"
+    if [ ! -x "$CARGOPIT_SRC/target/release/cargopit" ]; then
+        echo "Rust cargopit binary was not produced" >&2
+        exit 1
+    fi
+    sudo install -Dm755 "$CARGOPIT_SRC/target/release/cargopit" /usr/local/bin/cargopit
+    if [ -x "$CARGOPIT_SRC/build/cargopit-legacy" ]; then
+        sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit-legacy" /usr/local/bin/cargopit-legacy
+    else
+        sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit" /usr/local/bin/cargopit-legacy
+    fi
     if [ -x "$CARGOPIT_SRC/build/tui/release/cargopit-tui" ]; then
         sudo install -Dm755 "$CARGOPIT_SRC/build/tui/release/cargopit-tui" /usr/local/bin/cargopit-tui
     elif [ -x "$CARGOPIT_SRC/build/tui/debug/cargopit-tui" ]; then

@@ -190,7 +190,7 @@ jobs:
             rpm-build cmake gcc gcc-c++ make git curl \
             pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel \
             libserialport-devel lua-devel libuv-devel libxdg-basedir-devel \
-            libxml2-devel procps-ng-devel cargo && exit 0
+            libxml2-devel procps-ng-devel libudev-devel cargo && exit 0
           echo "dnf install failed (attempt $attempt), retrying in 15s..."
           sleep 15
         done
