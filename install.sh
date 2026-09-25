@@ -262,8 +262,8 @@ Required build packages (names vary by distro):
   optional: mingw-w64 (only with --build-bridges), python3 (tests)
 
 Arch:    pacman -S --needed git cmake base-devel libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 rust python yder clang
-Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3 clang-devel
-Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3 libclang-dev
+Fedora:  dnf install git cmake gcc gcc-c++ make libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel pkgconf-pkg-config cargo python3 clang-devel libudev-devel
+Debian:  apt install build-essential git cmake libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev pkg-config cargo python3 libclang-dev libudev-dev
 EOF
 }
 
@@ -333,7 +333,7 @@ install_deps_fedora() {
         git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
-        pulseaudio-libs-devel procps-ng-devel clang-devel
+        pulseaudio-libs-devel procps-ng-devel clang-devel libudev-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)
@@ -357,6 +357,7 @@ install_deps_debian() {
         build-essential git cmake pkg-config python3 curl unzip ca-certificates cargo
         libuv1-dev libargtable2-dev libserialport-dev libconfig-dev
         libhidapi-dev libxdg-basedir-dev libxml2-dev libpulse-dev libclang-dev
+        libudev-dev
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw-w64)
@@ -384,7 +385,7 @@ install_deps_opensuse() {
         git cmake gcc gcc-c++ make pkg-config python3 curl unzip cargo
         libuv-devel argtable-devel libserialport-devel libconfig-devel
         hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel
-        libpulse-devel procps-devel clang-devel
+        libpulse-devel procps-devel clang-devel libudev-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)
