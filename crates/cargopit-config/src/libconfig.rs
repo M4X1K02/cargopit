@@ -260,6 +260,7 @@ impl<'a> Parser<'a> {
                 column: start_col,
                 message: "invalid hex integer".into(),
             })?;
+            self.take_int64_suffix();
             return Ok(Value::Int(value));
         }
         let mut is_float = false;
@@ -301,7 +302,14 @@ impl<'a> Parser<'a> {
             column: start_col,
             message: format!("invalid integer '{token}'"),
         })?;
+        self.take_int64_suffix();
         Ok(Value::Int(value))
+    }
+
+    fn take_int64_suffix(&mut self) {
+        if matches!(self.peek(), Some('L') | Some('l')) {
+            self.bump();
+        }
     }
 
     fn parse_value(&mut self) -> Result<Value, ParseError> {
@@ -544,6 +552,16 @@ mod tests {
         assert_eq!(
             devices[0].lookup("effect").unwrap().as_str().unwrap(),
             "Gear"
+        );
+    }
+
+    #[test]
+    fn int64_suffix_stays_an_integer() {
+        const SAMPLE_SIMEXE: i64 = 3_917_090;
+        let root = parse("sim = 3917090L;").expect("parse");
+        assert_eq!(
+            root.lookup("sim").and_then(Value::strict_i64),
+            Some(SAMPLE_SIMEXE)
         );
     }
 

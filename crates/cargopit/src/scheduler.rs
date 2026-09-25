@@ -59,6 +59,10 @@ impl Scheduler {
         self.push(TimerKind::TyreDiameter, 0, self.now_ms, TYRE_CHECK_MS);
     }
 
+    pub fn clear(&mut self) {
+        self.timers.clear();
+    }
+
     pub fn add_mapping(&mut self, fps: i32) {
         let period = tick_interval_ms(clamp_fps(fps));
         self.push(
@@ -171,6 +175,17 @@ mod tests {
         assert_eq!(scheduler.poll(0)[0].kind, TimerKind::Discovery);
         assert!(scheduler.poll(999).is_empty());
         assert_eq!(scheduler.poll(1000)[0].kind, TimerKind::Discovery);
+    }
+
+    #[test]
+    fn tyre_check_fires_immediately_then_every_second() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add_tyre_check();
+        assert_eq!(scheduler.poll(0)[0].kind, TimerKind::TyreDiameter);
+        assert!(scheduler.poll(999).is_empty());
+        assert_eq!(scheduler.poll(1000)[0].kind, TimerKind::TyreDiameter);
+        scheduler.clear();
+        assert!(scheduler.poll(2000).is_empty());
     }
 
     #[test]

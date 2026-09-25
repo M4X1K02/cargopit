@@ -17,8 +17,10 @@ use cargopit::scheduler::{self, TimerKind};
 use cargopit::simd::{self, EnsureStatus};
 use cargopit::tach;
 use cargopit::testmode;
+use cargopit::tyres::{self, TyreSimFlags};
 use cargopit::udp;
 use cargopit_devices::clock::{Clock, SystemClock};
+use cargopit_devices::telemetry::Telemetry;
 use simapi_sys::GameSession;
 
 static STOP_SIGNAL: AtomicBool = AtomicBool::new(false);
@@ -96,6 +98,38 @@ struct DeviceLoop {
     loaded: LoadedDevices,
     scheduler: scheduler::Scheduler,
     pending: bool,
+    tyres: TyreWatch,
+}
+
+struct TyreWatch {
+    active: bool,
+    config_checked: bool,
+    calculates_diameter: bool,
+    supports_haptics: bool,
+    calculates_slip: bool,
+}
+
+impl TyreWatch {
+    fn new() -> Self {
+        Self {
+            active: false,
+            config_checked: false,
+            calculates_diameter: false,
+            supports_haptics: false,
+            calculates_slip: false,
+        }
+    }
+
+    fn note(&mut self, flags: TyreSimFlags) {
+        self.calculates_diameter = flags.calculates_diameter;
+        self.supports_haptics = flags.supports_haptics;
+        self.calculates_slip = flags.calculates_slip;
+    }
+}
+
+struct Observed {
+    seen: SeenSim,
+    flags: TyreSimFlags,
 }
 
 fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
@@ -113,6 +147,7 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
         loaded: LoadedDevices::empty(),
         scheduler: scheduler::Scheduler::new(),
         pending: false,
+        tyres: TyreWatch::new(),
     };
     let mut play = PlayLoop {
         phase: PlayPhase::Searching,
@@ -152,16 +187,18 @@ struct PlayParts<'a> {
 fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
     let force_udp = parsed.force_udp;
     let fps = parsed.fps;
-    let mut seen = observe(parts.session, force_udp, false);
-    if play.phase == PlayPhase::Searching && games::simd_map_is_stale(seen.map_api, false) {
+    let mut observed = observe(parts.session, force_udp, false);
+    if play.phase == PlayPhase::Searching && games::simd_map_is_stale(observed.seen.map_api, false)
+    {
         let advancing = parts
             .session
             .daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
-        if games::simd_map_is_stale(seen.map_api, advancing) {
-            seen = observe(parts.session, force_udp, true);
+        if games::simd_map_is_stale(observed.seen.map_api, advancing) {
+            observed = observe(parts.session, force_udp, true);
         }
     }
-    let seen = bridge_if_needed(seen);
+    parts.devices.tyres.note(observed.flags);
+    let seen = bridge_if_needed(observed.seen);
     let play = apply_quit(parts, play);
     if play.phase == PlayPhase::Exiting {
         return play;
@@ -189,7 +226,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
                 fps,
             );
             if next.phase == PlayPhase::Mapping {
-                tick_devices(parts.devices, parts.clock, parsed);
+                tick_devices(parts, parsed);
             }
             next
         }
@@ -335,23 +372,86 @@ fn bridge_if_needed(seen: SeenSim) -> SeenSim {
     seen
 }
 
-fn tick_devices(devices: &mut DeviceLoop, clock: &impl Clock, parsed: &cli::Invocation) {
-    if devices.pending {
-        devices.pending = false;
-        devices.loaded = load_configured(parsed);
-        for index in 0..devices.loaded.len() {
-            let fps = devices
+fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation) {
+    if parts.devices.pending {
+        parts.devices.pending = false;
+        parts.devices.scheduler.clear();
+        parts.devices.loaded = load_configured(parsed);
+        for index in 0..parts.devices.loaded.len() {
+            let fps = parts
+                .devices
                 .loaded
                 .device(index)
                 .map(cargopit_devices::SimDevice::fps);
-            devices.scheduler.add_device(index, fps.unwrap_or(0) as i32);
+            parts
+                .devices
+                .scheduler
+                .add_device(index, fps.unwrap_or(0) as i32);
+        }
+        arm_tyre_check(parts.devices);
+    }
+    let due = parts.devices.scheduler.poll(parts.clock.monotonic_ms());
+    for event in due {
+        match event.kind {
+            TimerKind::Device => parts.devices.loaded.tick(event.device_index),
+            TimerKind::TyreDiameter => run_tyre_check(parts),
+            TimerKind::Discovery | TimerKind::Mapping => {}
         }
     }
-    let due = devices.scheduler.poll(clock.monotonic_ms());
-    for event in due {
-        if event.kind == TimerKind::Device {
-            devices.loaded.tick(event.device_index);
-        }
+}
+
+fn arm_tyre_check(devices: &mut DeviceLoop) {
+    let path = cargopit_config::paths::diameters_path();
+    devices.tyres.config_checked = false;
+    devices.tyres.active = false;
+    let need = tyres::TyreSimNeed {
+        calculates_diameter: devices.tyres.calculates_diameter,
+        supports_haptics: devices.tyres.supports_haptics,
+        calculates_slip: devices.tyres.calculates_slip,
+        use_config: tyres::USECONFIG_PLAY,
+        has_config_path: tyres::config_path_present(&path),
+    };
+    if !devices.loaded.needs_tyre_diameter() || !tyres::sim_needs_tyre_diameter(&need) {
+        return;
+    }
+    devices.scheduler.add_tyre_check();
+    devices.tyres.active = true;
+}
+
+fn run_tyre_check(parts: &mut PlayParts<'_>) {
+    if !parts.devices.tyres.active {
+        return;
+    }
+    let path = cargopit_config::paths::diameters_path();
+    let car = tyres::car_bytes(parts.session.frame_bytes()).to_vec();
+    let Some(buf) = simapi_sys::SimDataBuf::from_bytes(parts.session.frame_bytes()) else {
+        return;
+    };
+    let mut sim = Telemetry::from_buf(buf);
+    let result = tyres::check_tyres(
+        &mut sim,
+        &tyres::TyreCheckRequest {
+            car: &car,
+            path: &path,
+            config_checked: parts.devices.tyres.config_checked,
+        },
+    );
+    parts.devices.tyres.config_checked = result.config_checked;
+    if result.updated {
+        publish_tyres(parts.session, parts.snapshot, &sim);
+    }
+    if result.stop_timer {
+        parts.devices.tyres.active = false;
+    }
+}
+
+fn publish_tyres(session: &mut GameSession, snapshot: &mut games::FrameSnapshot, sim: &Telemetry) {
+    let mut bytes = vec![0u8; sim.byte_len()];
+    if !sim.copy_into(&mut bytes) {
+        return;
+    }
+    if session.write_frame(&bytes) {
+        snapshot.publish(session.frame_bytes());
     }
 }
 
@@ -385,14 +485,21 @@ fn recv_udp(
     }
 }
 
-fn observe(session: &mut GameSession, force_udp: bool, direct: bool) -> SeenSim {
+fn observe(session: &mut GameSession, force_udp: bool, direct: bool) -> Observed {
     let info = session.detect_with(force_udp, direct, Some(udp::setup_udp));
-    SeenSim {
-        is_sim_on: info.isSimOn,
-        sim_status: session_status(session),
-        map_api: info.mapapi as i32,
-        uses_udp: info.SimUsesUDP,
-        sim_exe: info.simulatorexe as u64,
+    Observed {
+        seen: SeenSim {
+            is_sim_on: info.isSimOn,
+            sim_status: session_status(session),
+            map_api: info.mapapi as i32,
+            uses_udp: info.SimUsesUDP,
+            sim_exe: info.simulatorexe as u64,
+        },
+        flags: TyreSimFlags {
+            calculates_diameter: info.SimCalculatesTyreDiameter,
+            supports_haptics: info.SimSupportsHapticEffects,
+            calculates_slip: info.SimCalculatesSlipRatio,
+        },
     }
 }
 
