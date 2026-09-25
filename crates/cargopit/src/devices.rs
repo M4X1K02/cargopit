@@ -2,15 +2,18 @@
 
 use cargopit_config::config::{CargopitConfig, DeviceEntry};
 use cargopit_config::keys::{self, CLASS_SERIAL, CLASS_SOUND, CLASS_USB};
+use cargopit_config::names;
 use cargopit_devices::{tick_interval_ms, DeviceKind, SimDevice, DEFAULT_DEVICE_FPS};
 
 use crate::scheduler;
+use crate::tyres;
 
 const CONFIG_INDEX_FIRST: i32 = 0;
 
 pub struct LoadedDevices {
     devices: Vec<SimDevice>,
     updates: Vec<u64>,
+    effects: Vec<Option<i32>>,
 }
 
 impl LoadedDevices {
@@ -19,19 +22,26 @@ impl LoadedDevices {
             return Self::empty();
         };
         let mut devices = Vec::new();
+        let mut effects = Vec::new();
         for entry in &config.profiles[index].devices {
-            if let Some(device) = device_from_entry(entry, devices.len() as i32, disable_audio) {
-                devices.push(device);
+            if let Some(prepared) = device_from_entry(entry, devices.len() as i32, disable_audio) {
+                devices.push(prepared.device);
+                effects.push(prepared.effect);
             }
         }
         let updates = vec![0; devices.len()];
-        Self { devices, updates }
+        Self {
+            devices,
+            updates,
+            effects,
+        }
     }
 
     pub fn empty() -> Self {
         Self {
             devices: Vec::new(),
             updates: Vec::new(),
+            effects: Vec::new(),
         }
     }
 
@@ -57,6 +67,17 @@ impl LoadedDevices {
         }
     }
 
+    pub fn effect(&self, index: usize) -> Option<i32> {
+        self.effects.get(index).copied().flatten()
+    }
+
+    pub fn needs_tyre_diameter(&self) -> bool {
+        self.effects
+            .iter()
+            .flatten()
+            .any(|effect| tyres::device_needs_tyre_diameter(*effect))
+    }
+
     pub fn interval_ms(&self, index: usize) -> u64 {
         self.devices
             .get(index)
@@ -78,7 +99,12 @@ pub fn profile_index(profile_count: usize, requested: i32) -> Option<usize> {
     Some(requested as usize)
 }
 
-fn device_from_entry(entry: &DeviceEntry, id: i32, disable_audio: bool) -> Option<SimDevice> {
+struct PreparedDevice {
+    device: SimDevice,
+    effect: Option<i32>,
+}
+
+fn device_from_entry(entry: &DeviceEntry, id: i32, disable_audio: bool) -> Option<PreparedDevice> {
     if entry.get_bool(keys::KEY_ENABLED) == Some(false) {
         return None;
     }
@@ -90,7 +116,15 @@ fn device_from_entry(entry: &DeviceEntry, id: i32, disable_audio: bool) -> Optio
     let mut device = SimDevice::new(id, fps, kind);
     device.set_initialized(true);
     device.set_config_file(entry.get_str(keys::KEY_CONFIG).map(str::to_string));
-    Some(device)
+    Some(PreparedDevice {
+        device,
+        effect: effect_id(entry),
+    })
+}
+
+fn effect_id(entry: &DeviceEntry) -> Option<i32> {
+    let name = entry.get_str(keys::KEY_EFFECT)?;
+    names::lookup(names::EFFECTS, name)
 }
 
 fn kind_from_type(name: &str) -> DeviceKind {
@@ -154,5 +188,24 @@ mod tests {
         let mut loaded = LoadedDevices::from_config(&config, 0, false);
         loaded.tick(0);
         assert_eq!(loaded.updates(0), 1);
+    }
+
+    #[test]
+    fn slip_alias_marks_the_profile_for_tyre_diameter() {
+        let mut slip = entry("usb", 60, true);
+        slip.set_str(keys::KEY_EFFECT, "Slip");
+        let mut engine = entry("serial", 60, true);
+        engine.set_str(keys::KEY_EFFECT, "Engine");
+        let config = CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![slip, engine],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        };
+        let loaded = LoadedDevices::from_config(&config, 0, false);
+        assert_eq!(loaded.effect(0), Some(names::EFFECT_TYRE_SLIP));
+        assert_eq!(loaded.effect(1), Some(names::EFFECT_ENGINE));
+        assert!(loaded.needs_tyre_diameter());
     }
 }
