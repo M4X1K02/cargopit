@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use cargopit::acr;
 use cargopit::cli::{self, ProgramAction};
+use cargopit::devices::LoadedDevices;
 use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
+use cargopit::scheduler::{self, TimerKind};
 use cargopit::simd::{self, EnsureStatus};
 use cargopit::tach;
 use cargopit::testmode;
@@ -39,7 +41,7 @@ fn main() -> ExitCode {
 fn play(parsed: &cli::Invocation) -> ExitCode {
     let _ = parsed.disable_audio;
     match simd::ensure() {
-        EnsureStatus::Ok => run_discovery(parsed.force_udp, parsed.fps),
+        EnsureStatus::Ok => run_discovery(parsed),
         EnsureStatus::NotInstalled | EnsureStatus::StartFailed => ExitCode::SUCCESS,
     }
 }
@@ -51,14 +53,25 @@ struct PlayLoop {
     wait_ms: u64,
 }
 
-fn run_discovery(force_udp: bool, fps: i32) -> ExitCode {
+struct DeviceLoop {
+    loaded: LoadedDevices,
+    scheduler: scheduler::Scheduler,
+    pending: bool,
+}
+
+fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
     let mut session = GameSession::new();
     let mut snapshot = games::FrameSnapshot::new();
     let mut socket: Option<UdpSocket> = None;
     let clock = SystemClock::new();
+    let mut devices = DeviceLoop {
+        loaded: LoadedDevices::empty(),
+        scheduler: scheduler::Scheduler::new(),
+        pending: false,
+    };
     let mut play = PlayLoop {
         phase: PlayPhase::Searching,
-        use_udp: force_udp,
+        use_udp: parsed.force_udp,
         map_api: games::MAP_API_SIMD,
         wait_ms: games::CHECK_INTERVAL_MS,
     };
@@ -68,9 +81,9 @@ fn run_discovery(force_udp: bool, fps: i32) -> ExitCode {
             &mut snapshot,
             &mut socket,
             &clock,
+            &mut devices,
             play,
-            force_udp,
-            fps,
+            parsed,
         );
         if play.phase == PlayPhase::Exiting {
             return ExitCode::SUCCESS;
@@ -84,10 +97,12 @@ fn poll_once(
     snapshot: &mut games::FrameSnapshot,
     socket: &mut Option<UdpSocket>,
     clock: &impl Clock,
+    devices: &mut DeviceLoop,
     play: PlayLoop,
-    force_udp: bool,
-    fps: i32,
+    parsed: &cli::Invocation,
 ) -> PlayLoop {
+    let force_udp = parsed.force_udp;
+    let fps = parsed.fps;
     let mut seen = observe(session, force_udp, false);
     if play.phase == PlayPhase::Searching && games::simd_map_is_stale(seen.map_api, false) {
         let advancing = session.daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
@@ -99,11 +114,18 @@ fn poll_once(
     match play.phase {
         PlayPhase::Searching => match games::search_tick(seen, force_udp) {
             PlayAction::StartMapping { use_udp } => {
+                devices.pending = true;
                 begin_mapping(session, snapshot, socket, seen, use_udp)
             }
             PlayAction::Wait | PlayAction::Release => searching(play),
         },
-        PlayPhase::Mapping => map_or_release(session, snapshot, socket, clock, play, seen, fps),
+        PlayPhase::Mapping => {
+            let next = map_or_release(session, snapshot, socket, clock, play, seen, fps);
+            if next.phase == PlayPhase::Mapping {
+                tick_devices(devices, clock, parsed);
+            }
+            next
+        }
         PlayPhase::Exiting => play,
     }
 }
@@ -183,6 +205,38 @@ fn bridge_if_needed(seen: SeenSim) -> SeenSim {
         return games::bridged_acr(seen);
     }
     seen
+}
+
+fn tick_devices(devices: &mut DeviceLoop, clock: &impl Clock, parsed: &cli::Invocation) {
+    if devices.pending {
+        devices.pending = false;
+        devices.loaded = load_configured(parsed);
+        for index in 0..devices.loaded.len() {
+            let fps = devices
+                .loaded
+                .device(index)
+                .map(cargopit_devices::SimDevice::fps);
+            devices.scheduler.add_device(index, fps.unwrap_or(0) as i32);
+        }
+    }
+    let due = devices.scheduler.poll(clock.monotonic_ms());
+    for event in due {
+        if event.kind == TimerKind::Device {
+            devices.loaded.tick(event.device_index);
+        }
+    }
+}
+
+fn load_configured(parsed: &cli::Invocation) -> LoadedDevices {
+    let path = parsed
+        .config_file
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(cargopit_config::paths::default_config_path);
+    let Ok(config) = cargopit_config::config::load_file(&path) else {
+        return LoadedDevices::empty();
+    };
+    LoadedDevices::from_config(&config, parsed.config_index, parsed.disable_audio)
 }
 
 fn recv_udp(

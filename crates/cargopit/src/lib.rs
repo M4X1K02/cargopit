@@ -3,6 +3,7 @@
 pub mod acr;
 pub mod cli;
 pub mod control;
+pub mod devices;
 pub mod games;
 pub mod log;
 pub mod scheduler;
