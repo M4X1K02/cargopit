@@ -57,6 +57,8 @@ jobs:
         run: ./build/tests/parity/uhid_probe
       - name: Scenario and layout tests
         run: cargo test --workspace --exclude cargopit-tui
+      - name: Shadow virtual jobs
+        run: bash tests/shadow/virtual-jobs.sh
       - name: C capture self-check
         run: ctest --test-dir build -R 'parity_self_check|uhid_probe' --output-on-failure --timeout 120
       - name: Golden files match a fresh C capture

@@ -47,6 +47,11 @@ impl SessionKind {
 }
 
 pub fn find_binary(name: &str) -> Option<PathBuf> {
+    if name == consts::BINARY_CARGOPIT {
+        if let Some(path) = env_binary(consts::ENV_CARGOPIT_BIN) {
+            return Some(path);
+        }
+    }
     if let Some(path) = which(name) {
         if !is_managed_binary(&path, name) {
             return Some(path);
@@ -71,6 +76,14 @@ fn managed_binaries(name: &str) -> [PathBuf; 3] {
 
 fn is_managed_binary(path: &Path, name: &str) -> bool {
     managed_binaries(name).iter().any(|managed| managed == path)
+}
+
+fn env_binary(key: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os(key)?);
+    if is_executable(&path) {
+        return Some(path);
+    }
+    None
 }
 
 fn which(name: &str) -> Option<PathBuf> {
@@ -99,7 +112,8 @@ pub fn check_processes_from(listing: &str) -> ProcessStatus {
     let mut status = ProcessStatus::default();
     let self_pid = std::process::id();
     status.simd_running = service_running(listing, consts::BINARY_SIMD, self_pid);
-    status.cargopit_running = service_running(listing, consts::BINARY_CARGOPIT, self_pid);
+    status.cargopit_running = service_running(listing, consts::BINARY_CARGOPIT, self_pid)
+        || service_running(listing, consts::BINARY_CARGOPIT_LEGACY, self_pid);
     status.cleaned_pid_files = cleanup_stale_pid_files(&status);
     status
 }
@@ -649,6 +663,33 @@ mod tests {
             consts::BINARY_TUI,
             "/opt/build/cargopit-tui",
         ));
+    }
+
+    #[test]
+    fn cargopit_bin_overrides_path_lookup() {
+        let dir = std::env::temp_dir().join("cargopit-bin-override");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("dir");
+        let bin = dir.join(consts::BINARY_CARGOPIT);
+        fs::write(&bin, "#!/bin/sh\nexit 0\n").expect("write");
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).expect("mode");
+        let previous = std::env::var_os(consts::ENV_CARGOPIT_BIN);
+        std::env::set_var(consts::ENV_CARGOPIT_BIN, &bin);
+        assert_eq!(
+            find_binary(consts::BINARY_CARGOPIT).as_deref(),
+            Some(bin.as_path())
+        );
+        match previous {
+            Some(value) => std::env::set_var(consts::ENV_CARGOPIT_BIN, value),
+            None => std::env::remove_var(consts::ENV_CARGOPIT_BIN),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_play_counts_as_cargopit_running() {
+        let listing = "PID COMMAND ARGS\n7 cargopit-legacy /opt/bin/cargopit-legacy play\n";
+        assert!(check_processes_from(listing).cargopit_running);
     }
 
     #[test]
