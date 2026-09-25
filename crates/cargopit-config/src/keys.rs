@@ -42,6 +42,7 @@ pub const KEY_SUBTYPE: &str = "subtype";
 pub const KEY_DEVID: &str = "devid";
 pub const KEY_DEVPATH: &str = "devpath";
 pub const KEY_ENABLED: &str = "enabled";
+pub const KEY_FPS: &str = "fps";
 pub const KEY_CONFIG: &str = "config";
 pub const KEY_EFFECT: &str = "effect";
 pub const KEY_BAUD: &str = "baud";
