@@ -8,4 +8,5 @@ repository.workspace = true
 version.workspace = true
 
 [dependencies]
+cargopit-config = { path = "../cargopit-config" }
 cargopit-devices = { path = "../cargopit-devices" }
