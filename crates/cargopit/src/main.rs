@@ -92,6 +92,8 @@ struct PlayLoop {
     use_udp: bool,
     map_api: i32,
     wait_ms: u64,
+    user_stopped: bool,
+    releasing: bool,
 }
 
 struct DeviceLoop {
@@ -154,6 +156,8 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
         use_udp: parsed.force_udp,
         map_api: games::MAP_API_SIMD,
         wait_ms: games::CHECK_INTERVAL_MS,
+        user_stopped: false,
+        releasing: false,
     };
     loop {
         play = poll_once(
@@ -199,7 +203,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     }
     parts.devices.tyres.note(observed.flags);
     let seen = bridge_if_needed(observed.seen);
-    let play = apply_quit(parts, play);
+    let play = apply_quit(play);
     if play.phase == PlayPhase::Exiting {
         return play;
     }
@@ -207,8 +211,11 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     if play.phase == PlayPhase::Exiting {
         return play;
     }
+    if play.releasing {
+        return finish_release(parts, play);
+    }
     match play.phase {
-        PlayPhase::Searching => match games::search_tick(seen, force_udp) {
+        PlayPhase::Searching => match games::search_tick(seen, force_udp, play.user_stopped) {
             PlayAction::StartMapping { use_udp } => {
                 parts.devices.pending = true;
                 begin_mapping(parts.session, parts.snapshot, parts.socket, seen, use_udp)
@@ -225,6 +232,9 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
                 seen,
                 fps,
             );
+            if next.phase != PlayPhase::Mapping {
+                release_configured(parts.devices);
+            }
             if next.phase == PlayPhase::Mapping {
                 tick_devices(parts, parsed);
             }
@@ -234,7 +244,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     }
 }
 
-fn apply_quit(parts: &mut PlayParts<'_>, play: PlayLoop) -> PlayLoop {
+fn apply_quit(play: PlayLoop) -> PlayLoop {
     let mapping = play.phase == PlayPhase::Mapping;
     let signalled = STOP_SIGNAL.swap(false, Ordering::Relaxed);
     match games::quit_action(read_quit_key(), signalled, mapping) {
@@ -244,9 +254,12 @@ fn apply_quit(parts: &mut PlayParts<'_>, play: PlayLoop) -> PlayLoop {
             ..play
         },
         games::QuitAction::Release => {
-            let _ = parts.session.clear(false);
-            println!("User requested stop, releasing devices");
-            searching(play)
+            println!("{}", games::MSG_USER_STOP);
+            PlayLoop {
+                user_stopped: true,
+                releasing: true,
+                ..play
+            }
         }
     }
 }
@@ -267,8 +280,12 @@ fn apply_control(
             ..play
         },
         Some(ControlEffect::Reload) => {
+            release_configured(devices);
             devices.pending = true;
-            searching(play)
+            searching(PlayLoop {
+                user_stopped: false,
+                ..play
+            })
         }
         Some(ControlEffect::None) | None => play,
     }
@@ -285,8 +302,8 @@ fn session_view(play: &PlayLoop, devices: &DeviceLoop, parsed: &cli::Invocation)
     };
     SessionStatus {
         state: state.to_string(),
-        releasing: false,
-        paused: false,
+        releasing: play.releasing,
+        paused: play.user_stopped,
         config_index: parsed.config_index,
         sim: control::SIM_NONE.to_string(),
         devices: devices.loaded.len() as u64,
@@ -299,8 +316,26 @@ fn searching(play: PlayLoop) -> PlayLoop {
     PlayLoop {
         phase: PlayPhase::Searching,
         wait_ms: games::CHECK_INTERVAL_MS,
+        releasing: false,
         ..play
     }
+}
+
+fn finish_release(parts: &mut PlayParts<'_>, play: PlayLoop) -> PlayLoop {
+    let _ = parts.session.clear(false);
+    release_configured(parts.devices);
+    if play.user_stopped {
+        println!("{}", games::MSG_STOPPED_MAPPING);
+    }
+    searching(play)
+}
+
+fn release_configured(devices: &mut DeviceLoop) {
+    devices.loaded = LoadedDevices::empty();
+    devices.scheduler.clear();
+    devices.pending = false;
+    devices.tyres.active = false;
+    devices.tyres.config_checked = false;
 }
 
 fn begin_mapping(
@@ -329,6 +364,8 @@ fn begin_mapping(
         } else {
             games::MAPPING_START_MS
         },
+        user_stopped: false,
+        releasing: false,
     }
 }
 
