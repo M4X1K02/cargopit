@@ -37,12 +37,19 @@ const G29_LED4: f32 = 0.69;
 const G29_LED3: f32 = 0.39;
 const G29_LED2: f32 = 0.19;
 const G29_LED1: f32 = 0.4;
-const C5_LEN: usize = 14;
-const C5_VID: u16 = 0x3416;
-const C5_PID: u16 = 0x1021;
+pub const C5_LEN: usize = 14;
+pub const C5_VID: u16 = 0x3416;
+pub const C5_PID: u16 = 0x1021;
+pub const C5_BYTE_REPORT: usize = 0;
+pub const C5_BYTE_LEDS: usize = 1;
+pub const C5_BYTE_VELOCITY_HIGH: usize = 2;
+pub const C5_BYTE_VELOCITY_LOW: usize = 3;
+pub const C5_BYTE_GEAR: usize = 4;
 const C5_REPORT: u8 = 0xfc;
 const C5_LEDS: i32 = 9;
 const C5_LED_STEPS: i32 = C5_LEDS + 1;
+const C5_VELOCITY_SHIFT: u32 = 8;
+const C5_BYTE_MASK: u32 = 0xff;
 const C12_LEN: usize = 16;
 const C12_VID: u16 = 0x3416;
 const C12_PID: u16 = 0x1023;
@@ -371,15 +378,15 @@ fn revlights_lit(rpm: i32, maxrpm: i32, steps: i32) -> i32 {
     lit
 }
 
-fn c5_bytes(rpm: u32, maxrpm: u32, gear: u32, velocity: u32) -> [u8; C5_LEN] {
+pub fn c5_report(rpm: u32, maxrpm: u32, gear: u32, velocity: u32) -> [u8; C5_LEN] {
     let mut bytes = [0; C5_LEN];
-    bytes[0] = C5_REPORT;
-    bytes[1] = revlights_lit(rpm as i32, maxrpm as i32, C5_LED_STEPS) as u8;
+    bytes[C5_BYTE_REPORT] = C5_REPORT;
+    bytes[C5_BYTE_LEDS] = revlights_lit(rpm as i32, maxrpm as i32, C5_LED_STEPS) as u8;
     if velocity > 0 {
-        bytes[2] = ((velocity >> 8) & 0xff) as u8;
-        bytes[3] = (velocity & 0xff) as u8;
+        bytes[C5_BYTE_VELOCITY_HIGH] = ((velocity >> C5_VELOCITY_SHIFT) & C5_BYTE_MASK) as u8;
+        bytes[C5_BYTE_VELOCITY_LOW] = (velocity & C5_BYTE_MASK) as u8;
     }
-    bytes[4] = (gear as u8).wrapping_sub(1);
+    bytes[C5_BYTE_GEAR] = (gear as u8).wrapping_sub(1);
     bytes
 }
 
@@ -388,10 +395,10 @@ fn run_c5(log: &Log, frames: &[Telemetry]) {
     each_frame(log, frames, |log, frame| {
         log.hid_write(
             id,
-            &c5_bytes(frame.rpms(), frame.maxrpm(), frame.gear(), frame.velocity()),
+            &c5_report(frame.rpms(), frame.maxrpm(), frame.gear(), frame.velocity()),
         );
     });
-    log.hid_write(id, &c5_bytes(0, 0, 0, 0));
+    log.hid_write(id, &c5_report(0, 0, 0, 0));
     log.hid_close(id);
 }
 
