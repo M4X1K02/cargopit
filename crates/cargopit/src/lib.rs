@@ -8,6 +8,7 @@ pub mod games;
 pub mod log;
 pub mod scheduler;
 pub mod simd;
+pub mod sound_host;
 pub mod tach;
 pub mod testmode;
 pub mod tyres;

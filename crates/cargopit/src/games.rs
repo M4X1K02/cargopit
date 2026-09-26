@@ -321,6 +321,80 @@ pub fn moza_arm_retry_message(path: &str) -> String {
     format!("Moza R9 opened on {path} but telemetry arm will retry")
 }
 
+pub const VIBRATION_ENGINE: &str = "engine vibrations.";
+pub const VIBRATION_GEAR: &str = "gear shift vibrations.";
+pub const VIBRATION_SLIP: &str = "tyre slip vibrations.";
+pub const VIBRATION_LOCK: &str = "tyre lock vibrations.";
+pub const VIBRATION_ABS: &str = "abs vibrations.";
+pub const VIBRATION_SUSPENSION: &str = "suspension vibrations.";
+pub const MSG_SOUND_SKIP_HAPTICS: &str =
+    "Skipping sound effect setup because sim does not support haptic effects";
+pub const MSG_SOUND_STANDALONE: &str = "initializing standalone sound device...";
+
+pub fn haptic_effect_message(phrase: &str) -> String {
+    format!("Initializing haptic effect for {phrase}")
+}
+
+pub fn unknown_haptic_message(effect: i32) -> String {
+    format!("Initializing unknown haptic effect type {effect}.")
+}
+
+pub fn haptic_summary_message(effect: i32, tyre: i32) -> String {
+    format!("Haptic effect: {effect} {effect}, tyre {tyre} {tyre}")
+}
+
+pub fn haptic_duration_message(duration: f64) -> String {
+    format!("haptic duration: {duration:.6}")
+}
+
+pub fn haptic_frequency_message(frequency: i64) -> String {
+    format!("haptic base frequency: {frequency}")
+}
+
+pub fn haptic_amplitude_message(amplitude: i64) -> String {
+    format!("haptic base amplitude: {amplitude}")
+}
+
+pub fn haptic_motor_message(motor: i64) -> String {
+    format!("haptic motorposition: {motor}")
+}
+
+pub fn sound_subtype_message(effect: i32) -> String {
+    format!("Attempting to configure sound device with subtype: {effect}")
+}
+
+pub fn sound_effect_message(phrase: &str) -> String {
+    format!("Initializing sound device for {phrase}")
+}
+
+pub fn sound_use_message(path: &str) -> String {
+    format!("Attempting to use sound device {path}")
+}
+
+pub fn sound_volume_message(volume: i64) -> String {
+    format!("pipewire stream volume is: {volume}")
+}
+
+pub fn sound_channel_mask_message(mask: u32) -> String {
+    format!("channel mask is: {mask}")
+}
+
+pub fn sound_channels_message(channels: i64) -> String {
+    format!("channels is: {channels}")
+}
+
+pub fn sound_noise_message(noise: i64) -> String {
+    format!("noise is: {noise}")
+}
+
+pub fn sound_node_message(name: &str) -> String {
+    format!("sound stream node name is: {name}")
+}
+
+pub fn sound_describe_error(effect: i32) -> String {
+    format!("could not describe sound stream for effect {effect}")
+}
+
 pub fn serial_free_message(path: &str) -> String {
     format!("freeing physical device {path}")
 }
@@ -747,6 +821,57 @@ mod tests {
         assert_eq!(
             moza_arm_retry_message("/dev/ttyACM0"),
             "Moza R9 opened on /dev/ttyACM0 but telemetry arm will retry"
+        );
+        assert_eq!(
+            haptic_effect_message(VIBRATION_GEAR),
+            "Initializing haptic effect for gear shift vibrations."
+        );
+        assert_eq!(
+            sound_effect_message(VIBRATION_LOCK),
+            "Initializing sound device for tyre lock vibrations."
+        );
+        assert_eq!(
+            haptic_summary_message(
+                cargopit_config::names::EFFECT_GEAR,
+                cargopit_config::names::TYRE_FRONT_LEFT,
+            ),
+            "Haptic effect: 1 1, tyre 0 0"
+        );
+        assert_eq!(haptic_duration_message(0.1), "haptic duration: 0.100000");
+        assert_eq!(haptic_frequency_message(50), "haptic base frequency: 50");
+        assert_eq!(haptic_amplitude_message(100), "haptic base amplitude: 100");
+        assert_eq!(haptic_motor_message(1), "haptic motorposition: 1");
+        assert_eq!(
+            sound_subtype_message(cargopit_config::names::EFFECT_TYRE_LOCK),
+            "Attempting to configure sound device with subtype: 4"
+        );
+        assert_eq!(
+            sound_use_message("alsa_output.test"),
+            "Attempting to use sound device alsa_output.test"
+        );
+        assert_eq!(
+            MSG_SOUND_STANDALONE,
+            "initializing standalone sound device..."
+        );
+        assert_eq!(sound_volume_message(40), "pipewire stream volume is: 40");
+        assert_eq!(sound_channel_mask_message(3), "channel mask is: 3");
+        assert_eq!(sound_channels_message(2), "channels is: 2");
+        assert_eq!(sound_noise_message(0), "noise is: 0");
+        assert_eq!(
+            sound_node_message("cargopit.TyreLock.All"),
+            "sound stream node name is: cargopit.TyreLock.All"
+        );
+        assert_eq!(
+            MSG_SOUND_SKIP_HAPTICS,
+            "Skipping sound effect setup because sim does not support haptic effects"
+        );
+        assert_eq!(
+            sound_describe_error(cargopit_config::names::EFFECT_ENGINE),
+            "could not describe sound stream for effect 0"
+        );
+        assert_eq!(
+            unknown_haptic_message(9),
+            "Initializing unknown haptic effect type 9."
         );
         assert_eq!(MSG_MOZA_ARM_FAILED, "Moza R9 telemetry arm failed");
         assert_eq!(MSG_MOZA_ARMED, "Moza R9 telemetry mode armed");
