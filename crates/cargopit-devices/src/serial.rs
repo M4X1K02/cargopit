@@ -11,6 +11,7 @@ const ORIGIN_US: u64 = 1_000_000;
 const TICK_US: u64 = 16_000;
 const CLOCK_MONOTONIC: i32 = 1;
 const NS_PER_MS: u64 = 1_000_000;
+const NS_PER_US: u64 = 1_000;
 const CAPTURE_PORT: &str = "/dev/ttyPARITY0";
 const BAUD_DEFAULT: i32 = 115_200;
 const BAUD_FIRST_OPEN: i32 = 9_600;
@@ -760,7 +761,72 @@ fn byte_stuff(frame: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn write_frame(log: &Log, id: usize, cmd: &[u8], payload: &[u8]) -> bool {
+trait FrameSink {
+    fn push_frame(&mut self, data: &[u8]) -> bool;
+}
+
+struct LogSink<'a> {
+    log: &'a Log,
+    id: usize,
+}
+
+impl FrameSink for LogSink<'_> {
+    fn push_frame(&mut self, data: &[u8]) -> bool {
+        self.log.write_port(self.id, data);
+        true
+    }
+}
+
+struct VecSink<'a> {
+    frames: &'a mut Vec<Vec<u8>>,
+}
+
+impl FrameSink for VecSink<'_> {
+    fn push_frame(&mut self, data: &[u8]) -> bool {
+        self.frames.push(data.to_vec());
+        true
+    }
+}
+
+struct FixedNs(u64);
+
+impl Clock for FixedNs {
+    fn monotonic_ms(&self) -> u64 {
+        self.0 / NS_PER_MS
+    }
+
+    fn monotonic_us(&self) -> u64 {
+        self.0 / NS_PER_US
+    }
+
+    fn monotonic_ns(&self) -> u64 {
+        self.0
+    }
+
+    fn wall_ms(&self) -> u64 {
+        0
+    }
+}
+
+struct MozaSignals {
+    arm_failed: bool,
+    just_armed: bool,
+    rpm_failed: bool,
+    rpm_sent: bool,
+}
+
+impl MozaSignals {
+    fn none() -> Self {
+        Self {
+            arm_failed: false,
+            just_armed: false,
+            rpm_failed: false,
+            rpm_sent: false,
+        }
+    }
+}
+
+fn write_frame(out: &mut dyn FrameSink, cmd: &[u8], payload: &[u8]) -> bool {
     let body = cmd.len() + payload.len();
     if body > 255 || 5 + body > MOZA_MAX_FRAME {
         return false;
@@ -777,26 +843,25 @@ fn write_frame(log: &Log, id: usize, cmd: &[u8], payload: &[u8]) -> bool {
     let Some(stuffed) = byte_stuff(&decoded) else {
         return false;
     };
-    log.write_port(id, &stuffed);
-    true
+    out.push_frame(&stuffed)
 }
 
-fn send_rpm_mask(log: &Log, id: usize, active: u32) -> bool {
+fn send_rpm_mask(out: &mut dyn FrameSink, active: u32) -> bool {
     let window = (1u32 << MOZA_LED_COUNT) - 1;
     let mut payload = [0; 8];
     payload[..4].copy_from_slice(&active.to_le_bytes());
     payload[4..].copy_from_slice(&window.to_le_bytes());
-    write_frame(log, id, &[0x1a, 0x00], &payload)
+    write_frame(out, &[0x1a, 0x00], &payload)
 }
 
-fn send_buttons(log: &Log, id: usize, mask: u16) -> bool {
-    write_frame(log, id, &[0x1a, 0x01], &mask.to_le_bytes())
+fn send_buttons(out: &mut dyn FrameSink, mask: u16) -> bool {
+    write_frame(out, &[0x1a, 0x01], &mask.to_le_bytes())
 }
 
-fn send_colours(log: &Log, id: usize, group: u8, table: &[u8; MOZA_COLOUR_BYTES]) -> bool {
+fn send_colours(out: &mut dyn FrameSink, group: u8, table: &[u8; MOZA_COLOUR_BYTES]) -> bool {
     let cmd = [0x19, group];
-    write_frame(log, id, &cmd, &table[..MOZA_COLOUR_CHUNK])
-        && write_frame(log, id, &cmd, &table[MOZA_COLOUR_CHUNK..])
+    write_frame(out, &cmd, &table[..MOZA_COLOUR_CHUNK])
+        && write_frame(out, &cmd, &table[MOZA_COLOUR_CHUNK..])
 }
 
 fn fill_solid(table: &mut [u8; MOZA_COLOUR_BYTES], rgb: [u8; 3]) {
@@ -819,23 +884,23 @@ fn fill_rpm(table: &mut [u8; MOZA_COLOUR_BYTES]) {
     }
 }
 
-fn arm_telemetry(log: &Log, id: usize) -> bool {
+fn arm_telemetry(out: &mut dyn FrameSink) -> bool {
     let bright = [MOZA_BRIGHTNESS];
-    if !write_frame(log, id, &[0x1c, 0x00], &[1]) {
+    if !write_frame(out, &[0x1c, 0x00], &[1]) {
         return false;
     }
-    if !write_frame(log, id, &[0x1b, 0x00, 0xff], &bright) {
+    if !write_frame(out, &[0x1b, 0x00, 0xff], &bright) {
         return false;
     }
     let mut rpm = [0; MOZA_COLOUR_BYTES];
     fill_rpm(&mut rpm);
-    if !send_colours(log, id, 0x00, &rpm) {
+    if !send_colours(out, 0x00, &rpm) {
         return false;
     }
-    if !write_frame(log, id, &[0x1b, 0x01, 0xff], &bright) {
+    if !write_frame(out, &[0x1b, 0x01, 0xff], &bright) {
         return false;
     }
-    write_frame(log, id, &[0x1d, 0x00], &[0])
+    write_frame(out, &[0x1d, 0x00], &[0])
 }
 
 impl MozaNew {
@@ -1059,14 +1124,14 @@ fn corners_same(left: &[Rgb; MOZA_CORNERS], right: &[Rgb; MOZA_CORNERS]) -> bool
         .all(|(a, b)| a.r == b.r && a.g == b.g && a.b == b.b)
 }
 
-fn apply_bar_colours(log: &Log, id: usize, mode: Bar) -> bool {
+fn apply_bar_colours(out: &mut dyn FrameSink, mode: Bar) -> bool {
     let mut table = [0; MOZA_COLOUR_BYTES];
     match mode {
         Bar::Brake | Bar::Lock => fill_solid(&mut table, PURPLE),
         Bar::Abs => fill_solid(&mut table, BLUE_ALERT),
         Bar::Rpm => fill_rpm(&mut table),
     }
-    send_colours(log, id, 0x00, &table)
+    send_colours(out, 0x00, &table)
 }
 
 fn elapsed_ms(clock: &impl Clock, start_ns: u64) -> u64 {
@@ -1078,17 +1143,17 @@ fn blink_on(clock: &impl Clock, state: &MozaNew) -> bool {
     periods.is_multiple_of(2)
 }
 
-fn write_brake_buttons(log: &Log, id: usize, corners: &[Rgb; MOZA_CORNERS]) -> bool {
+fn write_brake_buttons(out: &mut dyn FrameSink, corners: &[Rgb; MOZA_CORNERS]) -> bool {
     let table = corners_table(corners);
-    send_colours(log, id, 0x01, &table) && send_buttons(log, id, corners_mask(corners))
+    send_colours(out, 0x01, &table) && send_buttons(out, corners_mask(corners))
 }
 
-fn blank_wheel(log: &Log, id: usize, state: &mut MozaNew, clock: &impl Clock) {
+fn blank_wheel(out: &mut dyn FrameSink, state: &mut MozaNew, clock: &impl Clock) {
     let off = [Rgb { r: 0, g: 0, b: 0 }; MOZA_CORNERS];
-    let _ = write_brake_buttons(log, id, &off);
-    let _ = send_rpm_mask(log, id, 0);
+    let _ = write_brake_buttons(out, &off);
+    let _ = send_rpm_mask(out, 0);
     if state.bar != Bar::Rpm {
-        let _ = apply_bar_colours(log, id, Bar::Rpm);
+        let _ = apply_bar_colours(out, Bar::Rpm);
     }
     state.reset(clock);
     state.armed = true;
@@ -1146,26 +1211,28 @@ fn bar_mask(state: &mut MozaNew, frame: &Telemetry, bar: Bar, clock: &impl Clock
 }
 
 fn update_moza_new(
-    log: &Log,
-    id: usize,
+    out: &mut dyn FrameSink,
     state: &mut MozaNew,
     frame: &Telemetry,
     clock: &impl Clock,
-) {
+) -> MozaSignals {
+    let mut signals = MozaSignals::none();
     if !state.armed {
-        if !arm_telemetry(log, id) {
-            return;
+        if !arm_telemetry(out) {
+            signals.arm_failed = true;
+            return signals;
         }
         state.reset(clock);
         state.armed = true;
+        signals.just_armed = true;
     }
     if frame.simstatus() != STATUS_ACTIVE {
-        blank_wheel(log, id, state, clock);
-        return;
+        blank_wheel(out, state, clock);
+        return signals;
     }
     let alert = alert_mode(state, frame);
     let bar = desired_bar(state, frame, alert);
-    if bar != state.bar && apply_bar_colours(log, id, bar) {
+    if bar != state.bar && apply_bar_colours(out, bar) {
         if bar == Bar::Rpm {
             state.last_brake_lit = 0;
         }
@@ -1175,15 +1242,19 @@ fn update_moza_new(
     let changed = !corners_same(&corners, &state.last_corners);
     let on_off = corners_mask(&corners) != corners_mask(&state.last_corners);
     let due = !state.has_button_write || elapsed_ms(clock, state.last_button_ns) >= MOZA_BUTTON_MS;
-    if changed && (on_off || due) && write_brake_buttons(log, id, &corners) {
+    if changed && (on_off || due) && write_brake_buttons(out, &corners) {
         state.last_corners = corners;
         state.last_button_ns = clock.monotonic_ns();
         state.has_button_write = true;
     }
     let bits = bar_mask(state, frame, state.bar, clock);
-    if !send_rpm_mask(log, id, bits) {
+    if !send_rpm_mask(out, bits) {
         state.armed = false;
+        signals.rpm_failed = true;
+        return signals;
     }
+    signals.rpm_sent = true;
+    signals
 }
 
 fn run_moza_new(log: &Log, frames: &[Telemetry]) {
@@ -1192,13 +1263,85 @@ fn run_moza_new(log: &Log, frames: &[Telemetry]) {
     let clock = Trace { log };
     let mut state = MozaNew::new();
     state.reset(&clock);
-    if arm_telemetry(log, id) {
+    let mut sink = LogSink { log, id };
+    if arm_telemetry(&mut sink) {
         state.armed = true;
     }
     for (index, frame) in frames.iter().enumerate() {
         log.set_tick(index as u32);
-        update_moza_new(log, id, &mut state, frame, &clock);
+        let _ = update_moza_new(&mut sink, &mut state, frame, &clock);
         log.advance_tick();
     }
     log.close_port(id);
+}
+
+/// Moza R9 / new-firmware wheel. `prepare` arms telemetry; `tick` emits the C frames.
+pub struct MozaNewWheel {
+    state: MozaNew,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct MozaNewStep {
+    pub frames: Vec<Vec<u8>>,
+    pub arm_failed: bool,
+    pub just_armed: bool,
+    pub rpm_failed: bool,
+    pub rpm_sent: bool,
+}
+
+impl MozaNewWheel {
+    pub fn new() -> Self {
+        Self {
+            state: MozaNew::new(),
+        }
+    }
+
+    pub fn armed(&self) -> bool {
+        self.state.armed
+    }
+
+    pub fn disarm(&mut self) {
+        self.state.armed = false;
+    }
+
+    pub fn prepare(&mut self, now_ns: u64) -> MozaNewStep {
+        let clock = FixedNs(now_ns);
+        self.state.reset(&clock);
+        let mut frames = Vec::new();
+        let armed = {
+            let mut sink = VecSink {
+                frames: &mut frames,
+            };
+            arm_telemetry(&mut sink)
+        };
+        self.state.armed = armed;
+        MozaNewStep {
+            frames,
+            ..MozaNewStep::default()
+        }
+    }
+
+    pub fn tick(&mut self, frame: &Telemetry, now_ns: u64) -> MozaNewStep {
+        let clock = FixedNs(now_ns);
+        let mut frames = Vec::new();
+        let signals = {
+            let mut sink = VecSink {
+                frames: &mut frames,
+            };
+            update_moza_new(&mut sink, &mut self.state, frame, &clock)
+        };
+        MozaNewStep {
+            frames,
+            arm_failed: signals.arm_failed,
+            just_armed: signals.just_armed,
+            rpm_failed: signals.rpm_failed,
+            rpm_sent: signals.rpm_sent,
+        }
+    }
+}
+
+pub fn moza_r9_open_baud(configured: i64) -> u32 {
+    let configured = u32::try_from(configured).unwrap_or(0);
+    let floor = u32::try_from(BAUD_R9_FLOOR).unwrap_or(0);
+    configured.max(floor)
 }

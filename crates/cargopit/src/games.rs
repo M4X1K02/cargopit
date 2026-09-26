@@ -274,6 +274,56 @@ pub const MSG_TACH_GRANULARITY_INVALID: &str =
     "No or invalid valid set for tachometer granularity, setting to 1";
 pub const MSG_TACH_GETTING_PULSES: &str = "Getting pulses for current tachometer revs";
 pub const MSG_REVBURNER_NO_HANDLE: &str = "no handle";
+pub const SERIAL_OPEN_ERROR: i32 = -1;
+pub const MSG_MOZA_NEW_INIT: &str = "Initializing new firmware Moza serial wheel device.";
+pub const MSG_SERIAL_START: &str = "Starting serial device initialization";
+pub const MSG_SERIAL_NO_EXISTING: &str = "no existing connections found, looking to create new";
+pub const MSG_SERIAL_OPENING: &str = "opening physical serial device...";
+pub const MSG_SERIAL_OPEN_ERROR: &str = "Error opening serial port";
+pub const MSG_SERIAL_PORT_OPENED: &str = "Opening port";
+pub const MSG_SERIAL_SETUP_OK: &str = "Successfully setup cargopit serial device...";
+pub const MSG_MOZA_ARM_FAILED: &str = "Moza R9 telemetry arm failed";
+pub const MSG_MOZA_ARMED: &str = "Moza R9 telemetry mode armed";
+pub const MSG_MOZA_RPM_FAILED: &str = "Moza R9 RPM bitmask write failed";
+pub const MSG_SHARE_HANDLE: &str = "could not get native serial handle to share port";
+pub const MSG_SHARE_EXCLUSIVE: &str = "TIOCNXCL failed; Boxflat may still contend for the wheel";
+pub const MSG_SHARE_HUPCL: &str = "could not clear HUPCL on Moza serial";
+
+pub fn serial_init_error_message(code: i32) -> String {
+    format!("Did not initialize serial device due to error code {code}")
+}
+
+pub fn serial_subtype_message(subtype: i32) -> String {
+    format!("Attempting to configure arduino device with subtype: {subtype}")
+}
+
+pub fn serial_init_port_message(path: &str, baud: i64) -> String {
+    format!("initializing serial device on port {path} to {baud}...")
+}
+
+pub fn serial_looking_message(path: &str) -> String {
+    format!("looking to open physical serialdevice {path}")
+}
+
+pub fn serial_looking_for_port_message(path: &str) -> String {
+    format!("Looking for port {path}")
+}
+
+pub fn serial_baud_message(baud: u32) -> String {
+    format!("Setting port to {baud} 8N1, no flow control")
+}
+
+pub fn moza_opened_message(path: &str) -> String {
+    format!("Moza R9 wheel opened on {path}")
+}
+
+pub fn moza_arm_retry_message(path: &str) -> String {
+    format!("Moza R9 opened on {path} but telemetry arm will retry")
+}
+
+pub fn serial_free_message(path: &str) -> String {
+    format!("freeing physical device {path}")
+}
 
 pub fn tach_config_load_message(path: &str) -> String {
     format!("will try to load config file at {path}")
@@ -652,6 +702,59 @@ mod tests {
             "Getting pulses for current tachometer revs"
         );
         assert_eq!(MSG_REVBURNER_NO_HANDLE, "no handle");
+        assert_eq!(SERIAL_OPEN_ERROR, -1);
+        assert_eq!(
+            serial_init_error_message(SERIAL_OPEN_ERROR),
+            "Did not initialize serial device due to error code -1"
+        );
+        assert_eq!(
+            serial_subtype_message(cargopit_config::names::SUBTYPE_SERIAL_WHEEL),
+            "Attempting to configure arduino device with subtype: 8"
+        );
+        assert_eq!(
+            serial_init_port_message("/dev/ttyACM0", cargopit_config::keys::BAUD_DEFAULT),
+            "initializing serial device on port /dev/ttyACM0 to 9600..."
+        );
+        assert_eq!(
+            serial_looking_message("/dev/ttyACM0"),
+            "looking to open physical serialdevice /dev/ttyACM0"
+        );
+        assert_eq!(
+            MSG_SERIAL_NO_EXISTING,
+            "no existing connections found, looking to create new"
+        );
+        assert_eq!(MSG_SERIAL_OPENING, "opening physical serial device...");
+        assert_eq!(
+            serial_looking_for_port_message("/dev/ttyACM0"),
+            "Looking for port /dev/ttyACM0"
+        );
+        assert_eq!(MSG_SERIAL_OPEN_ERROR, "Error opening serial port");
+        assert_eq!(MSG_SERIAL_PORT_OPENED, "Opening port");
+        assert_eq!(
+            serial_baud_message(cargopit_devices::serial::moza_r9_open_baud(
+                cargopit_config::keys::BAUD_DEFAULT,
+            )),
+            "Setting port to 115200 8N1, no flow control"
+        );
+        assert_eq!(
+            MSG_SERIAL_SETUP_OK,
+            "Successfully setup cargopit serial device..."
+        );
+        assert_eq!(
+            moza_opened_message("/dev/ttyACM0"),
+            "Moza R9 wheel opened on /dev/ttyACM0"
+        );
+        assert_eq!(
+            moza_arm_retry_message("/dev/ttyACM0"),
+            "Moza R9 opened on /dev/ttyACM0 but telemetry arm will retry"
+        );
+        assert_eq!(MSG_MOZA_ARM_FAILED, "Moza R9 telemetry arm failed");
+        assert_eq!(MSG_MOZA_ARMED, "Moza R9 telemetry mode armed");
+        assert_eq!(MSG_MOZA_RPM_FAILED, "Moza R9 RPM bitmask write failed");
+        assert_eq!(
+            serial_free_message("/dev/ttyACM0"),
+            "freeing physical device /dev/ttyACM0"
+        );
         assert_eq!(
             starting_device_message(cargopit_config::names::DEVICE_USB, 0, 60),
             "starting device type 0 at id 0 on its own thread at 60 fps"

@@ -1,5 +1,6 @@
 //! Configured devices for one play session. A USB tachometer opens the RevBurner
-//! and writes its pulse report on each tick.
+//! and writes its pulse report on each tick. A Moza R9 serial wheel opens its
+//! port and writes the new-firmware LED frames.
 
 use std::path::{Path, PathBuf};
 
@@ -8,8 +9,9 @@ use cargopit_config::keys::{self, CLASS_SERIAL, CLASS_SOUND, CLASS_USB};
 use cargopit_config::names;
 use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
+use cargopit_devices::serial::{self, MozaNewWheel};
 use cargopit_devices::telemetry::Telemetry;
-use cargopit_devices::transport::RealHid;
+use cargopit_devices::transport::{RealHid, RealSerial, ShareWarning};
 use cargopit_devices::usb::{self, TachPulses};
 use cargopit_devices::{tick_interval_ms, DeviceKind, SimDevice, DEFAULT_DEVICE_FPS};
 
@@ -28,6 +30,7 @@ const GRANULARITY_MIN: i64 = 0;
 const GRANULARITY_MAX: i64 = 4;
 const GRANULARITY_REJECTED: i64 = 3;
 const GRANULARITY_FALLBACK: i64 = 1;
+const PROBE_OPEN_NS: u64 = 0;
 
 pub struct LoadedDevices {
     devices: Vec<SimDevice>,
@@ -35,6 +38,8 @@ pub struct LoadedDevices {
     effects: Vec<Option<i32>>,
     ports: Vec<HidPort>,
     tables: Vec<TachMap>,
+    serials: Vec<SerialPort>,
+    wheels: Vec<Option<MozaNewWheel>>,
 }
 
 pub struct InitNotice {
@@ -53,7 +58,7 @@ impl LoadedDevices {
         let Some(index) = profile_index(config.profiles.len(), requested_index) else {
             return Self::empty();
         };
-        open_profile_at(config, index, disable_audio).devices
+        open_profile_at(config, index, disable_audio, PROBE_OPEN_NS).devices
     }
 
     pub fn empty() -> Self {
@@ -63,6 +68,8 @@ impl LoadedDevices {
             effects: Vec::new(),
             ports: Vec::new(),
             tables: Vec::new(),
+            serials: Vec::new(),
+            wheels: Vec::new(),
         }
     }
 
@@ -76,6 +83,13 @@ impl LoadedDevices {
     pub fn captured_reports(&self, index: usize) -> Option<&[Vec<u8>]> {
         match self.ports.get(index) {
             Some(HidPort::Captured(log)) => Some(log),
+            _ => None,
+        }
+    }
+
+    pub fn captured_serial(&self, index: usize) -> Option<&[Vec<u8>]> {
+        match self.serials.get(index) {
+            Some(SerialPort::Captured { frames, .. }) => Some(frames),
             _ => None,
         }
     }
@@ -96,14 +110,16 @@ impl LoadedDevices {
         self.updates.get(index).copied().unwrap_or(0)
     }
 
-    pub fn tick(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+    pub fn tick(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
         if let Some(count) = self.updates.get_mut(index) {
             *count = count.wrapping_add(1);
         }
-        self.write_tach(index, frame)
+        let mut notices = self.write_tach(index, frame);
+        notices.extend(self.write_moza(index, frame, now_ns));
+        notices
     }
 
-    pub fn release(&mut self) -> Vec<InitNotice> {
+    pub fn release(&mut self, now_ns: u64) -> Vec<InitNotice> {
         if self.devices.is_empty() {
             return Vec::new();
         }
@@ -116,7 +132,8 @@ impl LoadedDevices {
             ));
         }
         self.write_release_zeros(&mut notices);
-        self.close_live_ports();
+        self.blank_moza(now_ns, &mut notices);
+        self.close_ports(&mut notices);
         notices
     }
 
@@ -184,12 +201,102 @@ impl LoadedDevices {
         write_port(port, report, notices);
     }
 
-    fn close_live_ports(&mut self) {
+    fn write_moza(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
+        let step = {
+            let Some(wheel) = self.wheels.get_mut(index).and_then(Option::as_mut) else {
+                return Vec::new();
+            };
+            wheel.tick(frame, now_ns)
+        };
+        let mut notices = moza_step_notices(&step);
+        let wrote = write_serial_frames(self.serials.get_mut(index), &step.frames);
+        if step.rpm_sent && !wrote {
+            disarm_wheel(&mut self.wheels, index);
+            notices.push(notice(Level::Warn, games::MSG_MOZA_RPM_FAILED));
+        }
+        notices
+    }
+
+    fn blank_moza(&mut self, now_ns: u64, notices: &mut Vec<InitNotice>) {
+        let indexes: Vec<usize> = self
+            .wheels
+            .iter()
+            .enumerate()
+            .filter_map(|(index, wheel)| wheel.as_ref().map(|_| index))
+            .collect();
+        for index in indexes {
+            let off = Telemetry::new();
+            notices.extend(self.write_moza(index, &off, now_ns));
+        }
+    }
+
+    fn close_ports(&mut self, notices: &mut Vec<InitNotice>) {
         for port in &mut self.ports {
             if matches!(port, HidPort::Live(_)) {
                 *port = HidPort::Closed;
             }
         }
+        for port in &mut self.serials {
+            let path = serial_path_of(port);
+            if path.is_empty() {
+                *port = SerialPort::Closed;
+                continue;
+            }
+            notices.push(notice(Level::Debug, games::serial_free_message(&path)));
+            *port = SerialPort::Closed;
+        }
+    }
+}
+
+fn disarm_wheel(wheels: &mut [Option<MozaNewWheel>], index: usize) {
+    if let Some(wheel) = wheels.get_mut(index).and_then(Option::as_mut) {
+        wheel.disarm();
+    }
+}
+
+fn serial_path_of(port: &SerialPort) -> String {
+    match port {
+        SerialPort::Captured { path, .. } | SerialPort::Live { path, .. } => path.clone(),
+        SerialPort::Closed => String::new(),
+    }
+}
+
+fn moza_step_notices(step: &cargopit_devices::serial::MozaNewStep) -> Vec<InitNotice> {
+    let mut notices = Vec::new();
+    if step.arm_failed {
+        notices.push(notice(Level::Warn, games::MSG_MOZA_ARM_FAILED));
+    }
+    if step.just_armed {
+        notices.push(notice(Level::Info, games::MSG_MOZA_ARMED));
+    }
+    if step.rpm_failed {
+        notices.push(notice(Level::Warn, games::MSG_MOZA_RPM_FAILED));
+    }
+    notices
+}
+
+fn write_serial_frames(port: Option<&mut SerialPort>, frames: &[Vec<u8>]) -> bool {
+    let Some(port) = port else {
+        return false;
+    };
+    if frames.is_empty() {
+        return true;
+    }
+    let mut last_ok = true;
+    for frame in frames {
+        last_ok = write_serial_frame(port, frame);
+    }
+    last_ok
+}
+
+fn write_serial_frame(port: &mut SerialPort, frame: &[u8]) -> bool {
+    match port {
+        SerialPort::Live { port, .. } => port.write(frame).is_ok(),
+        SerialPort::Captured { frames, .. } => {
+            frames.push(frame.to_vec());
+            true
+        }
+        SerialPort::Closed => false,
     }
 }
 
@@ -252,13 +359,18 @@ pub fn device_skip(entry: &DeviceEntry, disable_audio: bool) -> Option<DeviceSki
     None
 }
 
-pub fn open_profile_at(config: &CargopitConfig, index: usize, disable_audio: bool) -> ProfileLoad {
+pub fn open_profile_at(
+    config: &CargopitConfig,
+    index: usize,
+    disable_audio: bool,
+    now_ns: u64,
+) -> ProfileLoad {
     open_profile_with(
         config,
         index,
         disable_audio,
         USE_PULSES_DURING_PLAY,
-        &mut HidAttempt::Live,
+        &mut HidAttempt::Live { now_ns },
     )
 }
 
@@ -267,17 +379,45 @@ pub fn open_profile_probed<F>(
     index: usize,
     disable_audio: bool,
     use_pulses: bool,
-    mut probe: F,
+    probe: F,
 ) -> ProfileLoad
 where
     F: FnMut(u16, u16) -> bool,
+{
+    open_profile_ports(
+        config,
+        index,
+        disable_audio,
+        use_pulses,
+        PROBE_OPEN_NS,
+        probe,
+        |_path| true,
+    )
+}
+
+pub fn open_profile_ports<H, S>(
+    config: &CargopitConfig,
+    index: usize,
+    disable_audio: bool,
+    use_pulses: bool,
+    now_ns: u64,
+    mut hid: H,
+    mut serial: S,
+) -> ProfileLoad
+where
+    H: FnMut(u16, u16) -> bool,
+    S: FnMut(&str) -> bool,
 {
     open_profile_with(
         config,
         index,
         disable_audio,
         use_pulses,
-        &mut HidAttempt::Probe(&mut probe),
+        &mut HidAttempt::Probe {
+            hid: &mut hid,
+            serial: &mut serial,
+            now_ns,
+        },
     )
 }
 
@@ -299,6 +439,8 @@ fn open_profile_with(
     let mut effects = Vec::new();
     let mut ports = Vec::new();
     let mut tables = Vec::new();
+    let mut serials = Vec::new();
+    let mut wheels = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
     let mut initialized = 0i32;
@@ -319,6 +461,8 @@ fn open_profile_with(
         };
         ports.push(considered.port);
         tables.push(considered.tach);
+        serials.push(considered.serial);
+        wheels.push(considered.wheel);
         devices.push(prepared.device);
         effects.push(prepared.effect);
         initialized = initialized.saturating_add(1);
@@ -341,6 +485,8 @@ fn open_profile_with(
             effects,
             ports,
             tables,
+            serials,
+            wheels,
         },
         setup_notices,
         notices,
@@ -348,8 +494,14 @@ fn open_profile_with(
 }
 
 enum HidAttempt<'a> {
-    Live,
-    Probe(&'a mut dyn FnMut(u16, u16) -> bool),
+    Live {
+        now_ns: u64,
+    },
+    Probe {
+        hid: &'a mut dyn FnMut(u16, u16) -> bool,
+        serial: &'a mut dyn FnMut(&str) -> bool,
+        now_ns: u64,
+    },
 }
 
 enum OpenedHid {
@@ -364,6 +516,14 @@ struct Considered {
     prepared: Option<PreparedDevice>,
     port: HidPort,
     tach: TachMap,
+    serial: SerialPort,
+    wheel: Option<MozaNewWheel>,
+}
+
+enum SerialPort {
+    Closed,
+    Captured { path: String, frames: Vec<Vec<u8>> },
+    Live { path: String, port: RealSerial },
 }
 
 fn consider_entry(
@@ -376,6 +536,9 @@ fn consider_entry(
 ) -> Considered {
     if let Some(prep) = revburner_prep(entry, use_pulses) {
         return consider_tach(entry, slot, id, disable_audio, attempt, prep);
+    }
+    if moza_new_entry(entry) {
+        return consider_moza(entry, slot, id, disable_audio, attempt);
     }
     consider_closed(entry, slot, disable_audio)
 }
@@ -410,6 +573,8 @@ fn consider_closed(entry: &DeviceEntry, slot: i32, disable_audio: bool) -> Consi
         prepared: None,
         port: HidPort::Closed,
         tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
     }
 }
 
@@ -420,6 +585,8 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         prepared: None,
         port: HidPort::Closed,
         tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
     }
 }
 
@@ -430,6 +597,8 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         prepared: None,
         port: HidPort::Closed,
         tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
     }
 }
 
@@ -560,6 +729,8 @@ fn revburner_attempt(
                 prepared: None,
                 port: HidPort::Closed,
                 tach: inactive_tach(),
+                serial: SerialPort::Closed,
+                wheel: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -568,6 +739,8 @@ fn revburner_attempt(
             prepared: Some(build_device(entry, id)),
             port: HidPort::Live(hid),
             tach: prep.map,
+            serial: SerialPort::Closed,
+            wheel: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -575,23 +748,200 @@ fn revburner_attempt(
             prepared: Some(build_device(entry, id)),
             port: HidPort::Captured(Vec::new()),
             tach: prep.map,
+            serial: SerialPort::Closed,
+            wheel: None,
         },
     }
 }
 
 fn open_revburner(attempt: &mut HidAttempt<'_>) -> OpenedHid {
     match attempt {
-        HidAttempt::Live => match RealHid::open(REVBURNER_VENDOR_ID, REVBURNER_PRODUCT_ID) {
+        HidAttempt::Live { .. } => match RealHid::open(REVBURNER_VENDOR_ID, REVBURNER_PRODUCT_ID) {
             Ok(hid) => OpenedHid::Live(hid),
             Err(_) => OpenedHid::Missing,
         },
-        HidAttempt::Probe(probe) => {
-            if probe(REVBURNER_VENDOR_ID, REVBURNER_PRODUCT_ID) {
+        HidAttempt::Probe { hid, .. } => {
+            if hid(REVBURNER_VENDOR_ID, REVBURNER_PRODUCT_ID) {
                 return OpenedHid::Simulated;
             }
             OpenedHid::Missing
         }
     }
+}
+
+fn consider_moza(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    open_moza_new(entry, id, attempt)
+}
+
+fn moza_new_entry(entry: &DeviceEntry) -> bool {
+    if entry_kind(entry) != DeviceKind::Serial {
+        return false;
+    }
+    let kind = entry.get_str(keys::KEY_TYPE).unwrap_or("");
+    if names::lookup(names::SERIAL_TYPES, kind) != Some(names::SUBTYPE_SERIAL_WHEEL) {
+        return false;
+    }
+    let hardware = entry.get_str(keys::KEY_SUBTYPE).unwrap_or("");
+    names::lookup(names::HARDWARE, hardware) == Some(names::HARDWARE_MOZA_NEW)
+}
+
+fn open_moza_new(entry: &DeviceEntry, id: i32, attempt: &mut HidAttempt<'_>) -> Considered {
+    let path = device_port(entry);
+    let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
+    let baud = serial::moza_r9_open_baud(configured);
+    let mut notices = moza_lookup_notices(&path, configured);
+    match open_serial(attempt, &path, baud) {
+        OpenedSerial::Missing => moza_open_failed(notices),
+        OpenedSerial::Ready(port) => {
+            notices.extend(moza_ready_notices(baud));
+            finish_moza(entry, id, path, port, notices, attempt_now(attempt))
+        }
+    }
+}
+
+fn device_port(entry: &DeviceEntry) -> String {
+    entry
+        .get_str(keys::KEY_DEVID)
+        .or_else(|| entry.get_str(keys::KEY_DEVPATH))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn moza_lookup_notices(path: &str, configured: i64) -> Vec<InitNotice> {
+    vec![
+        notice(
+            Level::Trace,
+            games::serial_subtype_message(names::SUBTYPE_SERIAL_WHEEL),
+        ),
+        notice(Level::Info, games::MSG_MOZA_NEW_INIT),
+        notice(Level::Info, games::MSG_SERIAL_START),
+        notice(
+            Level::Info,
+            games::serial_init_port_message(path, configured),
+        ),
+        notice(Level::Info, games::serial_looking_message(path)),
+        notice(Level::Debug, games::MSG_SERIAL_NO_EXISTING),
+        notice(Level::Info, games::MSG_SERIAL_OPENING),
+        notice(Level::Debug, games::serial_looking_for_port_message(path)),
+    ]
+}
+
+fn moza_ready_notices(baud: u32) -> Vec<InitNotice> {
+    vec![
+        notice(Level::Debug, games::MSG_SERIAL_PORT_OPENED),
+        notice(Level::Debug, games::serial_baud_message(baud)),
+        notice(Level::Debug, games::MSG_SERIAL_SETUP_OK),
+    ]
+}
+
+fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
+    notices.push(notice(Level::Error, games::MSG_SERIAL_OPEN_ERROR));
+    notices.push(notice(
+        Level::Warn,
+        games::serial_init_error_message(games::SERIAL_OPEN_ERROR),
+    ));
+    notices.push(notice(
+        Level::Warn,
+        games::could_not_initialize_message(CLASS_SERIAL),
+    ));
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: None,
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
+    }
+}
+
+enum OpenedSerial {
+    Missing,
+    Ready(SerialPort),
+}
+
+fn open_serial(attempt: &mut HidAttempt<'_>, path: &str, baud: u32) -> OpenedSerial {
+    if path.is_empty() {
+        return OpenedSerial::Missing;
+    }
+    match attempt {
+        HidAttempt::Live { .. } => match RealSerial::open(path, baud) {
+            Ok(port) => OpenedSerial::Ready(SerialPort::Live {
+                path: path.to_string(),
+                port,
+            }),
+            Err(_) => OpenedSerial::Missing,
+        },
+        HidAttempt::Probe { serial, .. } => {
+            if serial(path) {
+                return OpenedSerial::Ready(SerialPort::Captured {
+                    path: path.to_string(),
+                    frames: Vec::new(),
+                });
+            }
+            OpenedSerial::Missing
+        }
+    }
+}
+
+fn attempt_now(attempt: &HidAttempt<'_>) -> u64 {
+    match attempt {
+        HidAttempt::Live { now_ns } | HidAttempt::Probe { now_ns, .. } => *now_ns,
+    }
+}
+
+fn finish_moza(
+    entry: &DeviceEntry,
+    id: i32,
+    path: String,
+    mut port: SerialPort,
+    mut notices: Vec<InitNotice>,
+    now_ns: u64,
+) -> Considered {
+    notices.extend(share_notices(&mut port));
+    let mut wheel = MozaNewWheel::new();
+    let step = wheel.prepare(now_ns);
+    let wrote = write_serial_frames(Some(&mut port), &step.frames);
+    if wheel.armed() && wrote {
+        notices.push(notice(Level::Info, games::moza_opened_message(&path)));
+    } else {
+        wheel.disarm();
+        notices.push(notice(Level::Warn, games::moza_arm_retry_message(&path)));
+    }
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: port,
+        wheel: Some(wheel),
+    }
+}
+
+fn share_notices(port: &mut SerialPort) -> Vec<InitNotice> {
+    let SerialPort::Live { port, .. } = port else {
+        return Vec::new();
+    };
+    port.share().into_iter().map(share_notice).collect()
+}
+
+fn share_notice(warning: ShareWarning) -> InitNotice {
+    let message = match warning {
+        ShareWarning::NativeHandle => games::MSG_SHARE_HANDLE,
+        ShareWarning::Exclusive => games::MSG_SHARE_EXCLUSIVE,
+        ShareWarning::Hupcl => games::MSG_SHARE_HUPCL,
+    };
+    notice(Level::Warn, message)
 }
 
 fn usb_uses_revburner(entry: &DeviceEntry) -> bool {
@@ -834,7 +1184,7 @@ mod tests {
             .devices;
         let points = sample_points();
         let mut frame = Telemetry::new();
-        let notices = loaded.tick(0, &frame);
+        let notices = loaded.tick(0, &frame, PROBE_OPEN_NS);
         assert_eq!(loaded.updates(0), 1);
         assert!(notices
             .iter()
@@ -844,7 +1194,7 @@ mod tests {
             Some(usb::revburner_report(points[0].pulses).to_vec())
         );
         frame.set_rpms(RPM_TABLE);
-        let indexed = loaded.tick(0, &frame);
+        let indexed = loaded.tick(0, &frame, PROBE_OPEN_NS);
         assert!(indexed
             .iter()
             .any(|notice| notice.message == games::tach_element_message(ELEMENT_AT_1000)));
@@ -853,7 +1203,7 @@ mod tests {
             reports[1],
             usb::revburner_report(points[ELEMENT_AT_1000 as usize].pulses).to_vec()
         );
-        let released = loaded.release();
+        let released = loaded.release(PROBE_OPEN_NS);
         assert!(released.iter().any(|notice| {
             notice.message == games::device_runner_message(0, loaded.updates(0), 0)
         }));
@@ -878,7 +1228,7 @@ mod tests {
         let mut frame = Telemetry::new();
         frame.set_rpms(RPM_TABLE);
         frame.set_pulses(FRAME_PULSES);
-        let notices = loaded.tick(0, &frame);
+        let notices = loaded.tick(0, &frame, PROBE_OPEN_NS);
         assert!(notices
             .iter()
             .all(|notice| notice.message != games::MSG_TACH_GETTING_PULSES));
@@ -981,5 +1331,90 @@ mod tests {
             .devices;
         assert_eq!(loaded.effect(0), Some(names::EFFECT_TYRE_SLIP));
         assert!(loaded.needs_tyre_diameter());
+    }
+
+    fn moza_config(path: &str, baud: i64) -> CargopitConfig {
+        let mut device = DeviceEntry::new();
+        device.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        device.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        device.set_str(keys::KEY_SUBTYPE, keys::SUBTYPE_MOZA_R9);
+        device.set_str(keys::KEY_DEVPATH, path);
+        device.set_int(keys::KEY_BAUD, baud);
+        device.set_bool(keys::KEY_ENABLED, true);
+        device.set_int(keys::KEY_FPS, 60);
+        CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn moza_r9_arms_from_the_configured_port() {
+        const PORT: &str = "/dev/ttyMOZA-TEST";
+        let config = moza_config(PORT, keys::BAUD_DEFAULT);
+        let baud = serial::moza_r9_open_baud(keys::BAUD_DEFAULT);
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| false,
+        );
+        assert!(missing.devices.is_empty());
+        assert!(missing
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_SERIAL_OPEN_ERROR));
+        assert!(missing.notices.iter().any(|notice| {
+            notice.message == games::serial_init_error_message(games::SERIAL_OPEN_ERROR)
+        }));
+        assert!(missing
+            .notices
+            .iter()
+            .any(|notice| { notice.message == games::could_not_initialize_message(CLASS_SERIAL) }));
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| true,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        assert_eq!(loaded.devices.device(0).unwrap().kind(), DeviceKind::Serial);
+        assert!(loaded.notices.iter().any(|notice| {
+            notice.message == games::serial_init_port_message(PORT, keys::BAUD_DEFAULT)
+        }));
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::serial_baud_message(baud)));
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::moza_opened_message(PORT)));
+        let mut reference = MozaNewWheel::new();
+        let expected = reference.prepare(PROBE_OPEN_NS).frames;
+        assert_eq!(
+            loaded
+                .devices
+                .captured_serial(0)
+                .map(|frames| frames.to_vec()),
+            Some(expected)
+        );
+        let mut devices = loaded.devices;
+        let before = devices.captured_serial(0).unwrap().len();
+        let _ = devices.tick(0, &Telemetry::new(), PROBE_OPEN_NS);
+        assert!(devices.captured_serial(0).unwrap().len() > before);
+        let released = devices.release(PROBE_OPEN_NS);
+        assert!(released
+            .iter()
+            .any(|notice| notice.message == games::serial_free_message(PORT)));
     }
 }
