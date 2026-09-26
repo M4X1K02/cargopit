@@ -168,6 +168,7 @@ fn generate_bindings(include: &Path, root: &Path, out_dir: &Path) {
         .allowlist_type("SimMap")
         .allowlist_type("SimInfo")
         .allowlist_type("SimCompatMap")
+        .allowlist_type("SimAPIError")
         .allowlist_var("SIMAPI_.*")
         .allowlist_var("SIMULATOREXE_.*")
         .derive_default(true);

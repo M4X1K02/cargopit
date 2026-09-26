@@ -581,12 +581,21 @@ fn print_test_script(
     subjects: &[testmode::TestSubject],
     device_index: Option<u32>,
 ) {
+    let mut session = GameSession::new();
+    let open_error = session.try_open_publish_map();
+    let publish = session.map_open();
+    if !publish {
+        slog(parsed, Level::Warn, &testmode::map_open_warning(open_error));
+    }
     let options = testmode::RunOptions {
         subjects,
         device_index,
         trace: false,
+        publish,
     };
-    let script = testmode::run(&options, &mut |_| false);
+    let script = testmode::run_frames(&options, &mut |_| false, &mut |bytes| {
+        let _ = session.publish_bytes(bytes);
+    });
     for line in script.lines {
         slog(parsed, Level::Info, &line);
     }

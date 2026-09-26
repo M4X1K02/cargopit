@@ -176,6 +176,7 @@ pub struct RunOptions<'a> {
     pub subjects: &'a [TestSubject],
     pub device_index: Option<u32>,
     pub trace: bool,
+    pub publish: bool,
 }
 
 pub struct Run {
@@ -189,6 +190,7 @@ pub struct Run {
     pub gear: u32,
     pub flag: u8,
     pub car: String,
+    pub mtick: u64,
     pub trace: Vec<TickView>,
 }
 
@@ -225,12 +227,19 @@ pub fn is_quit_key(byte: u8) -> bool {
     byte == QUIT_KEY || byte == QUIT_KEY_UPPER || byte == QUIT_KEY_ESC
 }
 
+pub fn map_open_warning(error: i32) -> String {
+    format!(
+        "Could not open shared telemetry memory for test mode (error {error}) - test sequence will still drive local devices, but external tools won't see it"
+    )
+}
+
 pub fn light_script(label: &str) -> Vec<String> {
     let subject = TestSubject::lights(DeviceKind::Usb);
     let options = RunOptions {
         subjects: &[subject],
         device_index: None,
         trace: false,
+        publish: false,
     };
     run(&options, &mut |_| false)
         .lines
@@ -277,8 +286,17 @@ pub fn run<F>(options: &RunOptions<'_>, halt: &mut F) -> Run
 where
     F: FnMut(u64) -> bool,
 {
-    let mut runner = Runner::new(options.trace, halt);
+    run_frames(options, halt, &mut |_frame: &[u8]| {})
+}
+
+pub fn run_frames<F, P>(options: &RunOptions<'_>, halt: &mut F, on_frame: &mut P) -> Run
+where
+    F: FnMut(u64) -> bool,
+    P: FnMut(&[u8]),
+{
+    let mut runner = Runner::new(options.trace, options.publish, halt, on_frame);
     set_identity(&mut runner.frame);
+    runner.publish_frame(false);
     if let Some(index) = options.device_index {
         runner.lines.push(format!("{MSG_DEVICE_INDEX} {index}"));
     }
@@ -332,29 +350,38 @@ fn effect_uses_tyre(effect: i32) -> bool {
         || effect == EFFECT_SUSPENSION
 }
 
-struct Runner<'a, F> {
+struct Runner<'a, F, P> {
     frame: Telemetry,
     lines: Vec<String>,
     trace: Vec<TickView>,
+    scratch: Vec<u8>,
     tick_count: u64,
     stopped: bool,
     record_trace: bool,
+    publish: bool,
     halt: &'a mut F,
+    on_frame: &'a mut P,
 }
 
-impl<'a, F> Runner<'a, F>
+impl<'a, F, P> Runner<'a, F, P>
 where
     F: FnMut(u64) -> bool,
+    P: FnMut(&[u8]),
 {
-    fn new(record_trace: bool, halt: &'a mut F) -> Self {
+    fn new(record_trace: bool, publish: bool, halt: &'a mut F, on_frame: &'a mut P) -> Self {
+        let frame = Telemetry::new();
+        let scratch = vec![0u8; frame.byte_len()];
         Self {
-            frame: Telemetry::new(),
+            frame,
             lines: Vec::new(),
             trace: Vec::new(),
+            scratch,
             tick_count: 0,
             stopped: false,
             record_trace,
+            publish,
             halt,
+            on_frame,
         }
     }
 
@@ -370,6 +397,7 @@ where
             gear: self.frame.gear(),
             flag: self.frame.player_flag(),
             car: self.frame.car(),
+            mtick: self.frame.mtick(),
             trace: self.trace,
         }
     }
@@ -393,8 +421,22 @@ where
         self.lines.push(named(action, label));
     }
 
+    fn publish_frame(&mut self, bump_mtick: bool) {
+        if !self.publish {
+            return;
+        }
+        if bump_mtick {
+            self.frame.set_mtick(self.frame.mtick().wrapping_add(1));
+        }
+        if !self.frame.copy_into(&mut self.scratch) {
+            return;
+        }
+        (self.on_frame)(&self.scratch);
+    }
+
     fn record(&mut self) {
         self.tick_count = self.tick_count.saturating_add(1);
+        self.publish_frame(true);
         if !self.record_trace {
             return;
         }
@@ -882,7 +924,13 @@ mod tests {
             subjects,
             device_index: None,
             trace: true,
+            publish: false,
         }
+    }
+
+    fn frame_from(bytes: &[u8]) -> Telemetry {
+        let buf = simapi_sys::SimDataBuf::from_bytes(bytes).expect("frame");
+        Telemetry::from_buf(buf)
     }
 
     fn sweep_ticks() -> u64 {
@@ -1043,6 +1091,43 @@ mod tests {
         assert_eq!(run.lines, vec![preparing(1)]);
         assert!(!run.stopped);
         assert_eq!(run.tick_count, 1);
+        assert_eq!(run.mtick, 0);
+    }
+
+    #[test]
+    fn publish_copies_each_frame_and_leaves_mtick_at_zero_when_closed() {
+        const SHM_OPEN_FAILED: i32 = 10;
+        const MAP_OPEN_WARNING: &str = "Could not open shared telemetry memory for test mode (error 10) - test sequence will still drive local devices, but external tools won't see it";
+        let mut disabled = TestSubject::lights(DeviceKind::Usb);
+        disabled.active = false;
+        let subjects = [disabled];
+        let mut opts = options(&subjects);
+        opts.publish = false;
+        let mut closed_calls = 0u32;
+        let closed = run_frames(&opts, &mut |_| false, &mut |_frame: &[u8]| {
+            closed_calls = closed_calls.saturating_add(1);
+        });
+        assert_eq!(closed_calls, 0);
+        assert_eq!(closed.mtick, 0);
+
+        opts.publish = true;
+        let mut frames = Vec::new();
+        let run = run_frames(&opts, &mut |_| false, &mut |frame| {
+            frames.push(frame.to_vec());
+        });
+        assert_eq!(run.tick_count, 1);
+        assert_eq!(run.mtick, 1);
+        assert_eq!(frames.len(), 2);
+        let open = frame_from(&frames[0]);
+        let close = frame_from(&frames[1]);
+        assert_eq!(open.mtick(), 0);
+        assert!(open.simon());
+        assert_eq!(open.simstatus(), games::STATUS_ACTIVE_PLAY as u32);
+        assert_eq!(close.mtick(), 1);
+        assert!(!close.simon());
+        assert_eq!(close.simstatus(), STATUS_OFF);
+        assert_eq!(run.simstatus, STATUS_OFF);
+        assert_eq!(map_open_warning(SHM_OPEN_FAILED), MAP_OPEN_WARNING);
     }
 
     #[test]

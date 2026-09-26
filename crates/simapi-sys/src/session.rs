@@ -5,6 +5,10 @@ use crate::bindings;
 const MAP_CREATE_FAILED: &str = "simapi_simmap_create returned null";
 const CLEAR_FAILED: &str = "simapi_sim_clear failed";
 
+fn map_error(code: bindings::SimAPIError) -> i32 {
+    code as i32
+}
+
 pub struct GameSession {
     data: Box<bindings::SimData>,
     map: *mut bindings::SimMap,
@@ -89,11 +93,53 @@ impl GameSession {
     }
 
     pub fn open_publish_map(&mut self) {
-        unsafe {
-            if (*self.map).addr.is_null() {
-                bindings::simapi_universalmap_open(self.map, self.data.as_mut());
-            }
+        let _ = self.try_open_publish_map();
+    }
+
+    pub fn try_open_publish_map(&mut self) -> i32 {
+        if self.map.is_null() {
+            return map_error(bindings::SimAPIError_SIMAPI_ERROR_UNKNOWN);
         }
+        unsafe {
+            if !(*self.map).addr.is_null() {
+                return map_error(bindings::SimAPIError_SIMAPI_ERROR_NONE);
+            }
+            bindings::simapi_universalmap_open(self.map, self.data.as_mut())
+        }
+    }
+
+    pub fn map_open(&self) -> bool {
+        !self.map.is_null() && unsafe { !(*self.map).addr.is_null() }
+    }
+
+    pub fn publish_bytes(&mut self, bytes: &[u8]) -> bool {
+        if !self.map_open() || !self.write_frame(bytes) {
+            return false;
+        }
+        self.copy_data_to_map()
+    }
+
+    pub fn published_bytes(&self) -> Option<&[u8]> {
+        if !self.map_open() {
+            return None;
+        }
+        let len = std::mem::size_of::<bindings::SimData>();
+        Some(unsafe { std::slice::from_raw_parts((*self.map).addr.cast(), len) })
+    }
+
+    fn copy_data_to_map(&mut self) -> bool {
+        if !self.map_open() {
+            return false;
+        }
+        let len = std::mem::size_of::<bindings::SimData>();
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                (&*self.data as *const bindings::SimData).cast::<u8>(),
+                (*self.map).addr.cast(),
+                len,
+            );
+        }
+        true
     }
 
     pub fn map_packet(&mut self, map_api: i32, packet: &mut [u8]) {
