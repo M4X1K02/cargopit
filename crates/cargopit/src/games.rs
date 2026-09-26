@@ -254,6 +254,10 @@ pub const MSG_G29_ATTEMPT: &str = "Attempting to initialize Logitech G29";
 pub const MSG_G29_INIT: &str = "initializing Logitech G29 wheel...";
 pub const MSG_G29_FOUND: &str = "Found Logitech G29 Wheel...";
 pub const MSG_G29_MISSING: &str = "Could not find attached Logitech G29 Wheel";
+pub const MSG_C5_ATTEMPT: &str = "Attempting to initialize cammus C5";
+pub const MSG_C5_INIT: &str = "initializing cammus c5 wheel...";
+pub const MSG_C5_FOUND: &str = "Found Cammus C5 Wheel...";
+pub const MSG_C5_MISSING: &str = "Could not find attached Cammus C5 Wheel";
 pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
 pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
 pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
@@ -268,6 +272,18 @@ pub fn g29_write_message(report: &[u8], rpm: i32) -> String {
         byte(cargopit_devices::usb::G29_BYTE_LEDS),
         byte(cargopit_devices::usb::G29_BYTE_PAD),
         byte(cargopit_devices::usb::G29_BYTE_TAIL),
+    )
+}
+
+pub fn c5_write_message(report: &[u8], rpm: i32, velocity: i32, gear: i32) -> String {
+    let byte = |index: usize| report.get(index).copied().unwrap_or(0);
+    format!(
+        "writing bytes x{:02x}x{:02x}x{:02x}x{:02x}x{:02x} from rpm {rpm} velocity {velocity} gear {gear}",
+        byte(cargopit_devices::usb::C5_BYTE_REPORT),
+        byte(cargopit_devices::usb::C5_BYTE_LEDS),
+        byte(cargopit_devices::usb::C5_BYTE_VELOCITY_HIGH),
+        byte(cargopit_devices::usb::C5_BYTE_VELOCITY_LOW),
+        byte(cargopit_devices::usb::C5_BYTE_GEAR),
     )
 }
 
@@ -769,6 +785,27 @@ mod tests {
         assert_eq!(
             g29_write_message(&report, i32::try_from(G29_SAMPLE_RPM).unwrap_or(i32::MAX)),
             "writing bytes xf8x12x1fx00x01 from rpm 6000"
+        );
+        assert_eq!(MSG_C5_ATTEMPT, "Attempting to initialize cammus C5");
+        assert_eq!(MSG_C5_INIT, "initializing cammus c5 wheel...");
+        assert_eq!(MSG_C5_FOUND, "Found Cammus C5 Wheel...");
+        assert_eq!(MSG_C5_MISSING, "Could not find attached Cammus C5 Wheel");
+        const C5_SAMPLE_GEAR: u32 = 4;
+        const C5_SAMPLE_VELOCITY: u32 = 300;
+        let c5 = cargopit_devices::usb::c5_report(
+            G29_SAMPLE_RPM,
+            G29_SAMPLE_MAX,
+            C5_SAMPLE_GEAR,
+            C5_SAMPLE_VELOCITY,
+        );
+        assert_eq!(
+            c5_write_message(
+                &c5,
+                i32::try_from(G29_SAMPLE_RPM).unwrap_or(i32::MAX),
+                i32::try_from(C5_SAMPLE_VELOCITY).unwrap_or(i32::MAX),
+                i32::try_from(C5_SAMPLE_GEAR).unwrap_or(i32::MAX),
+            ),
+            "writing bytes xfcx09x01x2cx03 from rpm 6000 velocity 300 gear 4"
         );
         assert_eq!(MSG_INIT_TACH, "initializing tachometer device...");
         assert_eq!(MSG_INIT_REVBURNER, "initializing revburner tachometer...");
