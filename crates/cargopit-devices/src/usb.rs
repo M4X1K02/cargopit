@@ -79,15 +79,27 @@ const C12_PERCENT: f64 = 100.0;
 const C12_VELOCITY_SHIFT: u32 = 8;
 const C12_BYTE_MASK: u32 = 0xff;
 const REDLINE_MARGIN: f64 = 0.05;
-const GT_NEO_VID: u16 = 0x3670;
-const GT_NEO_PID: u16 = 0x0805;
-const GT_NEO_LEDS: i64 = 73;
-const GT_NEO_PAYLOAD: usize = 64;
-const GT_NEO_REPORT: u8 = 0xf0;
-const GT_NEO_CONTROL: u8 = 0xec;
-const GT_NEO_PREPARE: u8 = 0x02;
-const GT_NEO_SET: u8 = 0x03;
-const GT_NEO_HEADER: usize = 9;
+pub const GT_NEO_VID: u16 = 0x3670;
+pub const GT_NEO_PID: u16 = 0x0805;
+pub const GT_NEO_LEDS: i64 = 73;
+pub const GT_NEO_LUA_FIRST: i64 = 1;
+pub const GT_NEO_PAYLOAD: usize = 64;
+pub const GT_NEO_REPORT: u8 = 0xf0;
+pub const GT_NEO_CONTROL: u8 = 0xec;
+pub const GT_NEO_PREPARE: u8 = 0x02;
+pub const GT_NEO_SET: u8 = 0x03;
+const GT_NEO_PREPARE_COUNT: u8 = 0x01;
+const GT_NEO_BYTE_REPORT: usize = 0;
+const GT_NEO_BYTE_CONTROL: usize = 6;
+const GT_NEO_BYTE_ACTION: usize = 7;
+const GT_NEO_BYTE_COUNT: usize = 8;
+const GT_NEO_BYTE_LED: usize = 9;
+const GT_NEO_HEADER: usize = GT_NEO_BYTE_LED;
+const GT_NEO_PACKET_RED: usize = 1;
+const GT_NEO_PACKET_GREEN: usize = 2;
+const GT_NEO_PACKET_BLUE: usize = 3;
+const GT_NEO_COLOR_GREEN: usize = 1;
+const GT_NEO_COLOR_BLUE: usize = 2;
 const LED_STRIDE: usize = 4;
 const RGB_CHANNELS: usize = 3;
 const P1000_LEN: usize = 49;
@@ -492,34 +504,56 @@ fn run_c12(log: &Log, frames: &[Telemetry]) {
     log.hid_close(id);
 }
 
+pub fn gt_neo_color_len() -> usize {
+    usize::try_from(GT_NEO_LEDS)
+        .unwrap_or(0)
+        .saturating_mul(RGB_CHANNELS)
+}
+
+pub fn gt_neo_reports(colors: &[u8]) -> Vec<[u8; GT_NEO_PAYLOAD]> {
+    let mut reports = vec![gt_prepare()];
+    let total = usize::try_from(GT_NEO_LEDS).unwrap_or(0);
+    let mut led = 0;
+    while led < total {
+        let (report, count) = gt_chunk(colors, led);
+        if count == 0 {
+            break;
+        }
+        reports.push(report);
+        led += count;
+    }
+    reports
+}
+
 fn gt_prepare() -> [u8; GT_NEO_PAYLOAD] {
     let mut report = [0; GT_NEO_PAYLOAD];
-    report[0] = GT_NEO_REPORT;
-    report[6] = GT_NEO_CONTROL;
-    report[7] = GT_NEO_PREPARE;
-    report[8] = 0x01;
+    report[GT_NEO_BYTE_REPORT] = GT_NEO_REPORT;
+    report[GT_NEO_BYTE_CONTROL] = GT_NEO_CONTROL;
+    report[GT_NEO_BYTE_ACTION] = GT_NEO_PREPARE;
+    report[GT_NEO_BYTE_COUNT] = GT_NEO_PREPARE_COUNT;
     report
 }
 
 fn gt_chunk(colors: &[u8], start_led: usize) -> ([u8; GT_NEO_PAYLOAD], usize) {
     let room = (GT_NEO_PAYLOAD - 1 - GT_NEO_HEADER) / LED_STRIDE;
     let mut report = [0; GT_NEO_PAYLOAD];
-    report[0] = GT_NEO_REPORT;
-    report[6] = GT_NEO_CONTROL;
-    report[7] = GT_NEO_SET;
+    report[GT_NEO_BYTE_REPORT] = GT_NEO_REPORT;
+    report[GT_NEO_BYTE_CONTROL] = GT_NEO_CONTROL;
+    report[GT_NEO_BYTE_ACTION] = GT_NEO_SET;
+    let total = usize::try_from(GT_NEO_LEDS).unwrap_or(0);
     let mut count = 0;
-    while count < room && start_led + count < GT_NEO_LEDS as usize {
+    while count < room && start_led + count < total {
         let led = start_led + count;
-        let base = 9 + count * LED_STRIDE;
-        report[base] = led as u8;
+        let base = GT_NEO_BYTE_LED + count * LED_STRIDE;
+        report[base] = u8::try_from(led).unwrap_or(u8::MAX);
         let color = led * RGB_CHANNELS;
-        if color + 2 < colors.len() {
-            report[base + 1] = colors[color];
-            report[base + 2] = colors[color + 1];
-            report[base + 3] = colors[color + 2];
+        if color + GT_NEO_COLOR_BLUE < colors.len() {
+            report[base + GT_NEO_PACKET_RED] = colors[color];
+            report[base + GT_NEO_PACKET_GREEN] = colors[color + GT_NEO_COLOR_GREEN];
+            report[base + GT_NEO_PACKET_BLUE] = colors[color + GT_NEO_COLOR_BLUE];
         }
         count += 1;
-        report[8] = count as u8;
+        report[GT_NEO_BYTE_COUNT] = u8::try_from(count).unwrap_or(u8::MAX);
     }
     (report, count)
 }
@@ -532,15 +566,8 @@ fn run_gt_neo(log: &Log, frames: &[Telemetry], lua_source: &str) -> Option<()> {
         let mut sim = frame.clone_buf();
         let tick = host.call(&mut sim, GT_NEO_LEDS, &trace).ok();
         let colors = tick.map(|tick| tick.leds).unwrap_or_default();
-        log.hid_feature(id, &gt_prepare());
-        let mut led = 0;
-        while led < GT_NEO_LEDS as usize {
-            let (report, count) = gt_chunk(&colors, led);
-            if count == 0 {
-                break;
-            }
+        for report in gt_neo_reports(&colors) {
             log.hid_feature(id, &report);
-            led += count;
         }
     });
     Some(())
@@ -727,5 +754,25 @@ mod tests {
             u8::try_from(total).unwrap_or(u8::MAX)
         );
         assert_eq!(reports[0].len(), C12_LED_LEN);
+    }
+
+    #[test]
+    fn gt_neo_feature_reports_pack_every_led() {
+        const LED_RED: u8 = 0xff;
+        let mut colors = vec![0u8; gt_neo_color_len()];
+        colors[0] = LED_RED;
+        let reports = gt_neo_reports(&colors);
+        assert!(reports.len() > 1);
+        assert_eq!(reports[0][GT_NEO_BYTE_REPORT], GT_NEO_REPORT);
+        assert_eq!(reports[0][GT_NEO_BYTE_CONTROL], GT_NEO_CONTROL);
+        assert_eq!(reports[0][GT_NEO_BYTE_ACTION], GT_NEO_PREPARE);
+        assert_eq!(reports[0][GT_NEO_BYTE_COUNT], GT_NEO_PREPARE_COUNT);
+        assert_eq!(reports[1][GT_NEO_BYTE_ACTION], GT_NEO_SET);
+        assert_eq!(reports[1][GT_NEO_BYTE_LED], 0);
+        assert_eq!(reports[1][GT_NEO_BYTE_LED + GT_NEO_PACKET_RED], LED_RED);
+        let total = usize::try_from(GT_NEO_LEDS).unwrap_or(0);
+        let room = (GT_NEO_PAYLOAD - 1 - GT_NEO_HEADER) / LED_STRIDE;
+        let chunks = total.div_ceil(room);
+        assert_eq!(reports.len(), chunks + 1);
     }
 }
