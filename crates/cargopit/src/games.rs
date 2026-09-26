@@ -34,6 +34,7 @@ pub const MSG_TEST_INDEX: &str = "Could not resolve config index for test";
 pub const ERROR_NONE: i32 = 0;
 pub const ERROR_UNKNOWN: i32 = 1;
 pub const USB_INIT_LUA_FAILED: i32 = -1;
+pub const USB_INIT_CSL_PERMISSION: i32 = 2;
 pub const ERROR_INVALID_DEV: i32 = 3;
 pub const ERROR_SIMD_REQUIRED: i32 = 7;
 pub const CONFIG_CHECK_START: i32 = 0;
@@ -274,6 +275,13 @@ pub const MSG_GT_LUA: &str = "Using lua file";
 pub const MSG_GT_NEEDS_CONFIG: &str = "Simagic GT Neo requires lua config file to function";
 pub const MSG_GT_FEATURE_FAILED: &str = "Failed to send HID feature report";
 pub const MSG_GT_FEATURE_CHUNK_FAILED: &str = "Failed to send HID feature report chunk";
+pub const MSG_USB_NO_HAPTICS: &str = "This sim does not support haptic effects";
+pub const MSG_CSL_ATTEMPT: &str = "Attempting to initialize CSL Elite V3 Pedals";
+pub const MSG_CSL_INIT: &str = "initializing CSL Elite V3 Pedals...";
+pub const MSG_CSL_FOUND: &str = "CSL Elite V3 Pedals Successfully initialized...";
+pub const MSG_CSL_MISSING: &str = "Could not find attached Club Sport Elite V3 Pedals";
+pub const MSG_CSL_PERMISSION: &str = "Permissions issue finding Club Sport Elite V3 Pedals";
+pub const MSG_CSL_OPEN: &str = "Could not open pedal device...";
 pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
 pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
 pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
@@ -898,6 +906,29 @@ mod tests {
             MSG_GT_FEATURE_CHUNK_FAILED,
             "Failed to send HID feature report chunk"
         );
+        assert_eq!(USB_INIT_CSL_PERMISSION, 2);
+        assert_eq!(
+            MSG_USB_NO_HAPTICS,
+            "This sim does not support haptic effects"
+        );
+        assert_eq!(
+            MSG_CSL_ATTEMPT,
+            "Attempting to initialize CSL Elite V3 Pedals"
+        );
+        assert_eq!(MSG_CSL_INIT, "initializing CSL Elite V3 Pedals...");
+        assert_eq!(
+            MSG_CSL_FOUND,
+            "CSL Elite V3 Pedals Successfully initialized..."
+        );
+        assert_eq!(
+            MSG_CSL_MISSING,
+            "Could not find attached Club Sport Elite V3 Pedals"
+        );
+        assert_eq!(
+            MSG_CSL_PERMISSION,
+            "Permissions issue finding Club Sport Elite V3 Pedals"
+        );
+        assert_eq!(MSG_CSL_OPEN, "Could not open pedal device...");
         assert_eq!(USB_INIT_LUA_FAILED, -1);
         assert_eq!(
             usb_init_error_message(USB_INIT_LUA_FAILED),

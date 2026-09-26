@@ -1,6 +1,7 @@
 //! USB device encoders. Output matches the C capture goldens, including quirks.
 
 use std::cell::{Cell, RefCell};
+use std::ffi::{CStr, CString};
 
 use crate::clock::{Clock, VirtualClock};
 use crate::haptic::{HapticEffect, HapticSettings, TyreId, VibrationEffect};
@@ -114,7 +115,11 @@ const HAPTIC_HZ: u32 = 40;
 const HAPTIC_AMP: u32 = 100;
 const HAPTIC_THRESHOLD: f64 = 0.2;
 const HAPTIC_DURATION_S: f64 = 0.10;
-const CSL_SLIP: i32 = 0x00ff_0000;
+pub const CSL_RUMBLE_OFF: i32 = 0;
+pub const CSL_RUMBLE_SLIP: i32 = 0x00ff_0000;
+pub const CSL_RUMBLE_LOCK: i32 = 0x0000_ff00;
+pub const CSL_RUMBLE_ABS: i32 = 0x00ff_ff00;
+pub const CSL_SYSFS_GLOB: &str = "/sys/module/hid_fanatec/drivers/hid:f*/0003:0EB7:183B.*/rumble";
 const CLOCK_OP: &str = concat!("clock_", "gettime");
 const WALL_OP: &str = concat!("get", "timeofday");
 const CSL_PATH: &str = "/sys/module/hid_fanatec/drivers/hid:fake/0003:0EB7:183B.0001/rumble";
@@ -573,6 +578,61 @@ fn run_gt_neo(log: &Log, frames: &[Telemetry], lua_source: &str) -> Option<()> {
     Some(())
 }
 
+pub enum CslLocate {
+    Found(String),
+    Missing,
+    Permission,
+}
+
+pub fn csl_rumble_value(effect: VibrationEffect, play: f64) -> i32 {
+    if play <= 0.0 {
+        return CSL_RUMBLE_OFF;
+    }
+    match effect {
+        VibrationEffect::TyreSlip => CSL_RUMBLE_SLIP,
+        VibrationEffect::TyreLock => CSL_RUMBLE_LOCK,
+        VibrationEffect::AbsBrakes => CSL_RUMBLE_ABS,
+        VibrationEffect::EngineRpm | VibrationEffect::GearShift | VibrationEffect::Suspension => {
+            CSL_RUMBLE_OFF
+        }
+    }
+}
+
+pub fn csl_rumble_text(effect: VibrationEffect, play: f64) -> String {
+    format!("{}\n", csl_rumble_value(effect, play))
+}
+
+pub fn locate_csl_pedals() -> CslLocate {
+    let Ok(pattern) = CString::new(CSL_SYSFS_GLOB) else {
+        return CslLocate::Missing;
+    };
+    let mut paths: libc::glob_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe { libc::glob(pattern.as_ptr(), libc::GLOB_PERIOD, None, &mut paths) };
+    let located = csl_from_glob(rc, &paths);
+    unsafe { libc::globfree(&mut paths) };
+    located
+}
+
+fn csl_from_glob(rc: i32, paths: &libc::glob_t) -> CslLocate {
+    if rc == libc::GLOB_ABORTED {
+        return CslLocate::Permission;
+    }
+    if rc != 0 || paths.gl_pathc == 0 || paths.gl_pathv.is_null() {
+        return CslLocate::Missing;
+    }
+    let first = unsafe { *paths.gl_pathv };
+    if first.is_null() {
+        return CslLocate::Missing;
+    }
+    let Ok(path) = unsafe { CStr::from_ptr(first) }.to_str() else {
+        return CslLocate::Missing;
+    };
+    if path.is_empty() {
+        return CslLocate::Missing;
+    }
+    CslLocate::Found(path.to_string())
+}
+
 fn slip_effect() -> HapticEffect {
     HapticEffect::new(&HapticSettings {
         effect: VibrationEffect::TyreSlip,
@@ -596,8 +656,7 @@ fn run_csl(log: &Log, frames: &[Telemetry]) {
         if play == state {
             return;
         }
-        let value = if play > 0.0 { CSL_SLIP } else { 0 };
-        let text = format!("{value}\n");
+        let text = csl_rumble_text(VibrationEffect::TyreSlip, play);
         log.op("sysfs_write", CSL_PATH);
         log.bytes("sysfs_value", text.as_bytes());
         state = play;
@@ -774,5 +833,35 @@ mod tests {
         let room = (GT_NEO_PAYLOAD - 1 - GT_NEO_HEADER) / LED_STRIDE;
         let chunks = total.div_ceil(room);
         assert_eq!(reports.len(), chunks + 1);
+    }
+
+    #[test]
+    fn csl_rumble_values_follow_the_effect() {
+        const PLAYING: f64 = 1.0;
+        const IDLE: f64 = 0.0;
+        assert_eq!(
+            csl_rumble_value(VibrationEffect::TyreSlip, PLAYING),
+            CSL_RUMBLE_SLIP
+        );
+        assert_eq!(
+            csl_rumble_value(VibrationEffect::TyreLock, PLAYING),
+            CSL_RUMBLE_LOCK
+        );
+        assert_eq!(
+            csl_rumble_value(VibrationEffect::AbsBrakes, PLAYING),
+            CSL_RUMBLE_ABS
+        );
+        assert_eq!(
+            csl_rumble_value(VibrationEffect::TyreSlip, IDLE),
+            CSL_RUMBLE_OFF
+        );
+        assert_eq!(
+            csl_rumble_value(VibrationEffect::Suspension, PLAYING),
+            CSL_RUMBLE_OFF
+        );
+        assert_eq!(
+            csl_rumble_text(VibrationEffect::TyreSlip, PLAYING),
+            format!("{CSL_RUMBLE_SLIP}\n")
+        );
     }
 }
