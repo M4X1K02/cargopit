@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" role="img" aria-labelledby="title desc">
+  <title id="title">Cargopit telemetry gateway</title>
+  <desc id="desc">Shared-memory sims pass through simshmbridge into simd and SIMAPI. Cargopit reads that gateway and drives USB, serial, sound, and tachometer devices. On a Moza wheel, cargopit and Boxflat share one serial port: cargopit writes telemetry LEDs, Boxflat keeps force feedback and base settings.</desc>
+  <rect width="960" height="700" fill="#f6f3ec"/>
+  <text x="32" y="40" fill="#1c1917" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Telemetry gateway</text>
+  <text x="32" y="64" fill="#57534e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14">Sim data in. Devices out. Boxflat stays on the Moza wheel.</text>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 10 5 L 0 8.8 Z" fill="#44403c"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 10 5 L 0 8.8 Z" fill="#1e3a8a"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif">
+    <rect x="28" y="92" width="168" height="78" rx="12" fill="#ffffff" stroke="#14532d" stroke-width="1.75"/>
+    <text x="112" y="124" text-anchor="middle" fill="#14532d" font-size="15" font-weight="700">Sim</text>
+    <text x="112" y="146" text-anchor="middle" fill="#57534e" font-size="12">shared memory</text>
+
+    <line x1="196" y1="131" x2="228" y2="131" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+    <rect x="236" y="92" width="176" height="78" rx="12" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="324" y="124" text-anchor="middle" fill="#1c1917" font-size="15" font-weight="700">simshmbridge</text>
+    <text x="324" y="146" text-anchor="middle" fill="#57534e" font-size="12">Proton prefix EXE</text>
+
+    <line x1="412" y1="131" x2="444" y2="131" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+    <rect x="452" y="92" width="150" height="78" rx="12" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="527" y="124" text-anchor="middle" fill="#1c1917" font-size="15" font-weight="700">simd</text>
+    <text x="527" y="146" text-anchor="middle" fill="#57534e" font-size="12">session mapper</text>
+
+    <line x1="602" y1="131" x2="634" y2="131" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+    <rect x="642" y="92" width="150" height="78" rx="12" fill="#fff7ed" stroke="#9a3412" stroke-width="1.75"/>
+    <text x="717" y="124" text-anchor="middle" fill="#9a3412" font-size="15" font-weight="700">SIMAPI.DAT</text>
+    <text x="717" y="146" text-anchor="middle" fill="#57534e" font-size="12">/dev/shm</text>
+
+    <line x1="792" y1="131" x2="808" y2="131" stroke="#44403c" stroke-width="1.6"/>
+    <path d="M 808 131 L 808 214 L 792 214" fill="none" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+    <rect x="632" y="214" width="300" height="78" rx="12" fill="#9a3412"/>
+    <text x="782" y="246" text-anchor="middle" fill="#fff7ed" font-size="16" font-weight="700">cargopit</text>
+    <text x="782" y="268" text-anchor="middle" fill="#ffedd5" font-size="12">reads SIMAPI, drives hardware</text>
+
+    <text x="28" y="206" fill="#57534e" font-size="13">UDP titles skip simshmbridge. Cargopit binds those ports.</text>
+
+    <line x1="782" y1="292" x2="782" y2="328" stroke="#44403c" stroke-width="1.6"/>
+    <line x1="118" y1="328" x2="782" y2="328" stroke="#44403c" stroke-width="1.6"/>
+    <line x1="118" y1="328" x2="118" y2="358" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <line x1="318" y1="328" x2="318" y2="358" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <line x1="518" y1="328" x2="518" y2="358" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <line x1="718" y1="328" x2="718" y2="358" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+
+    <rect x="38" y="360" width="160" height="72" rx="12" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="118" y="390" text-anchor="middle" fill="#1c1917" font-size="14" font-weight="700">USB HID</text>
+    <text x="118" y="410" text-anchor="middle" fill="#57534e" font-size="12">wheels, pedals</text>
+
+    <rect x="238" y="360" width="160" height="72" rx="12" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="318" y="390" text-anchor="middle" fill="#1c1917" font-size="14" font-weight="700">Arduino</text>
+    <text x="318" y="410" text-anchor="middle" fill="#57534e" font-size="12">serial sketches</text>
+
+    <rect x="438" y="360" width="160" height="72" rx="12" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="518" y="390" text-anchor="middle" fill="#1c1917" font-size="14" font-weight="700">Sound</text>
+    <text x="518" y="410" text-anchor="middle" fill="#57534e" font-size="12">bass shakers</text>
+
+    <rect x="638" y="360" width="160" height="72" rx="12" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="718" y="390" text-anchor="middle" fill="#1c1917" font-size="14" font-weight="700">Tachometer</text>
+    <text x="718" y="410" text-anchor="middle" fill="#57534e" font-size="12">RevBurner</text>
+
+    <rect x="28" y="460" width="904" height="212" rx="16" fill="#eef2ff" stroke="#1e3a8a" stroke-width="1.5"/>
+    <text x="48" y="490" fill="#1e3a8a" font-size="14" font-weight="700">Moza wheel: one serial port, two programs</text>
+
+    <rect x="56" y="514" width="220" height="92" rx="12" fill="#9a3412"/>
+    <text x="166" y="548" text-anchor="middle" fill="#fff7ed" font-size="15" font-weight="700">cargopit</text>
+    <text x="166" y="570" text-anchor="middle" fill="#ffedd5" font-size="12">RPM bar, flags, corner LEDs</text>
+    <text x="166" y="588" text-anchor="middle" fill="#ffedd5" font-size="12">telemetry arm on the port</text>
+
+    <rect x="370" y="514" width="220" height="92" rx="12" fill="#ffffff" stroke="#1e3a8a" stroke-width="1.75"/>
+    <text x="480" y="548" text-anchor="middle" fill="#1c1917" font-size="15" font-weight="700">Moza wheel</text>
+    <text x="480" y="570" text-anchor="middle" fill="#57534e" font-size="12">R3 / R5 / R8 / R9 / KS Pro</text>
+    <text x="480" y="588" text-anchor="middle" fill="#57534e" font-size="12">shared /dev/ttyACM*</text>
+
+    <rect x="684" y="514" width="220" height="92" rx="12" fill="#1e3a8a"/>
+    <text x="794" y="548" text-anchor="middle" fill="#eef2ff" font-size="15" font-weight="700">Boxflat</text>
+    <text x="794" y="570" text-anchor="middle" fill="#dbeafe" font-size="12">force feedback</text>
+    <text x="794" y="588" text-anchor="middle" fill="#dbeafe" font-size="12">base and rim settings</text>
+
+    <line x1="276" y1="560" x2="362" y2="560" stroke="#44403c" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <line x1="684" y1="560" x2="598" y2="560" stroke="#1e3a8a" stroke-width="1.6" marker-end="url(#arrow-blue)"/>
+
+    <text x="48" y="644" fill="#1e3a8a" font-size="13">Cargopit drops the exclusive open and clears hang-up-on-close, so Boxflat can use the same port.</text>
+  </g>
+</svg>
