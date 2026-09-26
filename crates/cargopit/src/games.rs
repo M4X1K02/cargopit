@@ -395,6 +395,17 @@ pub fn sound_describe_error(effect: i32) -> String {
     format!("could not describe sound stream for effect {effect}")
 }
 
+pub const SOUND_DEFAULT_SINK: &str = "the default sink";
+
+pub fn sound_connect_error(node: &str, sink: &str, err: &str) -> String {
+    let label = if sink.is_empty() {
+        SOUND_DEFAULT_SINK
+    } else {
+        sink
+    };
+    format!("could not connect sound stream {node} to {label}: {err}")
+}
+
 pub fn serial_free_message(path: &str) -> String {
     format!("freeing physical device {path}")
 }
@@ -868,6 +879,14 @@ mod tests {
         assert_eq!(
             sound_describe_error(cargopit_config::names::EFFECT_ENGINE),
             "could not describe sound stream for effect 0"
+        );
+        assert_eq!(
+            sound_connect_error("cargopit.Gear", "alsa_output.test", "Bad state"),
+            "could not connect sound stream cargopit.Gear to alsa_output.test: Bad state"
+        );
+        assert_eq!(
+            sound_connect_error("cargopit.Gear", "", "Bad state"),
+            "could not connect sound stream cargopit.Gear to the default sink: Bad state"
         );
         assert_eq!(
             unknown_haptic_message(9),

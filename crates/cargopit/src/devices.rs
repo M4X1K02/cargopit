@@ -1,7 +1,7 @@
 //! Configured devices for one play session. A USB tachometer opens the RevBurner
 //! and writes its pulse report on each tick. A Moza R9 serial wheel opens its
 //! port and writes the new-firmware LED frames. A sound device logs the C init
-//! sequence and its Pulse node name; the stream itself connects later.
+//! sequence, then connects its Pulse playback stream when the play session is ready.
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,7 @@ use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
 use cargopit_devices::serial::{self, MozaNewWheel};
 use cargopit_devices::telemetry::Telemetry;
-use cargopit_devices::transport::{RealHid, RealSerial, ShareWarning};
+use cargopit_devices::transport::{PulseSession, RealHid, RealSerial, ShakerRequest, ShareWarning};
 use cargopit_devices::usb::{self, TachPulses};
 use cargopit_devices::{tick_interval_ms, DeviceKind, SimDevice, DEFAULT_DEVICE_FPS};
 
@@ -43,6 +43,7 @@ pub struct LoadedDevices {
     tables: Vec<TachMap>,
     serials: Vec<SerialPort>,
     wheels: Vec<Option<MozaNewWheel>>,
+    sounds: Vec<Option<ShakerRequest>>,
 }
 
 pub struct InitNotice {
@@ -67,6 +68,7 @@ impl LoadedDevices {
             disable_audio,
             PROBE_OPEN_NS,
             ASSUME_SIM_SUPPORTS_HAPTICS,
+            None,
         )
         .devices
     }
@@ -80,7 +82,12 @@ impl LoadedDevices {
             tables: Vec::new(),
             serials: Vec::new(),
             wheels: Vec::new(),
+            sounds: Vec::new(),
         }
+    }
+
+    pub fn captured_sound(&self, index: usize) -> Option<&ShakerRequest> {
+        self.sounds.get(index).and_then(Option::as_ref)
     }
 
     pub fn hid_handles(&self) -> usize {
@@ -375,6 +382,7 @@ pub fn open_profile_at(
     disable_audio: bool,
     now_ns: u64,
     supports_haptics: bool,
+    pulse: Option<&mut PulseSession>,
 ) -> ProfileLoad {
     open_profile_with(
         config,
@@ -382,6 +390,7 @@ pub fn open_profile_at(
         disable_audio,
         USE_PULSES_DURING_PLAY,
         supports_haptics,
+        pulse,
         &mut HidAttempt::Live { now_ns },
     )
 }
@@ -426,6 +435,7 @@ where
         disable_audio,
         use_pulses,
         ASSUME_SIM_SUPPORTS_HAPTICS,
+        None,
         &mut HidAttempt::Probe {
             hid: &mut hid,
             serial: &mut serial,
@@ -440,6 +450,7 @@ fn open_profile_with(
     disable_audio: bool,
     use_pulses: bool,
     supports_haptics: bool,
+    mut pulse: Option<&mut PulseSession>,
     attempt: &mut HidAttempt<'_>,
 ) -> ProfileLoad {
     let Some(profile) = config.profiles.get(index) else {
@@ -455,12 +466,13 @@ fn open_profile_with(
     let mut tables = Vec::new();
     let mut serials = Vec::new();
     let mut wheels = Vec::new();
+    let mut sounds = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
     let mut initialized = 0i32;
     for (slot, entry) in profile.devices.iter().enumerate() {
         let slot = i32::try_from(slot).unwrap_or(i32::MAX);
-        let considered = consider_entry(
+        let mut considered = consider_entry(
             entry,
             slot,
             devices.len() as i32,
@@ -469,6 +481,9 @@ fn open_profile_with(
             supports_haptics,
             attempt,
         );
+        if !link_prepared_sound(&mut pulse, &mut considered) {
+            considered.prepared = None;
+        }
         setup_notices.extend(considered.setup_notices);
         notices.extend(considered.notices);
         let Some(prepared) = considered.prepared else {
@@ -478,6 +493,7 @@ fn open_profile_with(
         tables.push(considered.tach);
         serials.push(considered.serial);
         wheels.push(considered.wheel);
+        sounds.push(considered.sound);
         devices.push(prepared.device);
         effects.push(prepared.effect);
         initialized = initialized.saturating_add(1);
@@ -502,6 +518,7 @@ fn open_profile_with(
             tables,
             serials,
             wheels,
+            sounds,
         },
         setup_notices,
         notices,
@@ -533,6 +550,7 @@ struct Considered {
     tach: TachMap,
     serial: SerialPort,
     wheel: Option<MozaNewWheel>,
+    sound: Option<ShakerRequest>,
 }
 
 enum SerialPort {
@@ -608,6 +626,7 @@ fn consider_sound(
 fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: bool) -> Considered {
     let opened = sound_host::open_sound(entry, effect, &device_port(entry), supports_haptics);
     let ready = opened.ready;
+    let request = opened.request.clone();
     let mut notices = sound_notices(opened);
     if !ready {
         notices.push(notice(
@@ -624,7 +643,33 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         tach: inactive_tach(),
         serial: SerialPort::Closed,
         wheel: None,
+        sound: request,
     }
+}
+
+fn link_prepared_sound(pulse: &mut Option<&mut PulseSession>, considered: &mut Considered) -> bool {
+    if considered.prepared.is_none() {
+        return true;
+    }
+    let Some(session) = pulse.as_mut() else {
+        return true;
+    };
+    let Some(request) = considered.sound.as_ref() else {
+        return true;
+    };
+    if let Err(err) = session.connect_shaker(request) {
+        considered.notices.push(notice(
+            Level::Error,
+            games::sound_connect_error(&request.node, &request.sink, &err),
+        ));
+        considered.notices.push(notice(
+            Level::Warn,
+            games::could_not_initialize_message(CLASS_SOUND),
+        ));
+        considered.sound = None;
+        return false;
+    }
+    true
 }
 
 fn sound_entry(entry: &DeviceEntry) -> bool {
@@ -648,6 +693,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         tach: inactive_tach(),
         serial: SerialPort::Closed,
         wheel: None,
+        sound: None,
     }
 }
 
@@ -660,6 +706,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         tach: inactive_tach(),
         serial: SerialPort::Closed,
         wheel: None,
+        sound: None,
     }
 }
 
@@ -672,6 +719,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         tach: inactive_tach(),
         serial: SerialPort::Closed,
         wheel: None,
+        sound: None,
     }
 }
 
@@ -804,6 +852,7 @@ fn revburner_attempt(
                 tach: inactive_tach(),
                 serial: SerialPort::Closed,
                 wheel: None,
+                sound: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -814,6 +863,7 @@ fn revburner_attempt(
             tach: prep.map,
             serial: SerialPort::Closed,
             wheel: None,
+            sound: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -823,6 +873,7 @@ fn revburner_attempt(
             tach: prep.map,
             serial: SerialPort::Closed,
             wheel: None,
+            sound: None,
         },
     }
 }
@@ -934,6 +985,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         tach: inactive_tach(),
         serial: SerialPort::Closed,
         wheel: None,
+        sound: None,
     }
 }
 
@@ -998,6 +1050,7 @@ fn finish_moza(
         tach: inactive_tach(),
         serial: port,
         wheel: Some(wheel),
+        sound: None,
     }
 }
 
@@ -1544,6 +1597,7 @@ mod tests {
             false,
             PROBE_OPEN_NS,
             false,
+            None,
         );
         assert_eq!(gear.devices.len(), 1);
         assert_eq!(gear.devices.effect(0), Some(names::EFFECT_GEAR));
@@ -1577,6 +1631,13 @@ mod tests {
             .map(|notice| notice.message.clone())
             .collect();
         assert_eq!(gear_messages, expected);
+        let captured = gear.devices.captured_sound(0).expect("captured shaker");
+        assert_eq!(captured.node, "cargopit.Gear");
+        assert_eq!(captured.sink, SOUND_SINK);
+        assert_eq!(captured.stream_name, "Gear");
+        assert_eq!(captured.volume_percent, SOUND_VOLUME);
+        assert!(captured.tyre_name.is_none());
+        assert!(captured.gear);
 
         let lock = open_profile_at(
             &sound_profile(sound_entry("TyreLock", Some("ALL"))),
@@ -1584,11 +1645,18 @@ mod tests {
             false,
             PROBE_OPEN_NS,
             true,
+            None,
         );
         assert_eq!(lock.devices.effect(0), Some(names::EFFECT_TYRE_LOCK));
         assert!(lock.notices.iter().any(|notice| {
             notice.message == games::sound_node_message("cargopit.TyreLock.All")
         }));
+        assert_eq!(
+            lock.devices
+                .captured_sound(0)
+                .and_then(|sound| sound.tyre_name.as_deref()),
+            Some("All")
+        );
 
         let blocked = open_profile_at(
             &sound_profile(sound_entry("Suspension", Some("All"))),
@@ -1596,6 +1664,7 @@ mod tests {
             false,
             PROBE_OPEN_NS,
             false,
+            None,
         );
         assert!(blocked.devices.is_empty());
         assert_eq!(blocked.notices[0].message, games::MSG_SOUND_SKIP_HAPTICS);
@@ -1607,5 +1676,31 @@ mod tests {
             blocked.notices[2].message,
             games::initialized_devices_message(0)
         );
+    }
+
+    #[test]
+    fn sound_connect_fails_when_pulse_is_not_ready() {
+        let mut pulse = PulseSession::not_ready();
+        let failed = open_profile_at(
+            &sound_profile(sound_entry("Gear", None)),
+            0,
+            false,
+            PROBE_OPEN_NS,
+            true,
+            Some(&mut pulse),
+        );
+        assert!(failed.devices.is_empty());
+        assert!(failed.notices.iter().any(|notice| {
+            notice.message
+                == games::sound_connect_error(
+                    "cargopit.Gear",
+                    SOUND_SINK,
+                    cargopit_devices::transport::PULSE_CONTEXT_MISSING,
+                )
+        }));
+        assert!(failed
+            .notices
+            .iter()
+            .any(|notice| { notice.message == games::could_not_initialize_message(CLASS_SOUND) }));
     }
 }

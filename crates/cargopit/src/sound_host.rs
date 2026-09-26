@@ -1,8 +1,10 @@
-//! Sound-device init logs and Pulse node names. Stream connect is a later slice.
+//! Sound-device init logs, Pulse node names, and the playback request.
 
 use cargopit_config::config::DeviceEntry;
 use cargopit_config::keys;
 use cargopit_config::names;
+
+use cargopit_devices::transport::ShakerRequest;
 
 use crate::games;
 use crate::log::Level;
@@ -18,6 +20,7 @@ const FREQUENCY_DEFAULT: i64 = 0;
 const NOISE_DEFAULT: i64 = 0;
 const GEAR_DURATION_DEFAULT_S: f64 = 0.125;
 const DURATION_UNSET: f64 = 0.0;
+const NODE_EFFECT_FALLBACK: &str = "Engine";
 const NODE_PREFIX: &str = "cargopit";
 const NODE_SEPARATOR: &str = ".";
 const NODE_NAME_MAX: usize = 64;
@@ -25,6 +28,7 @@ const NODE_NAME_MAX: usize = 64;
 pub struct SoundOpen {
     pub notices: Vec<(Level, String)>,
     pub ready: bool,
+    pub request: Option<ShakerRequest>,
 }
 
 struct SoundSettings {
@@ -51,12 +55,17 @@ pub fn open_sound(
         return SoundOpen {
             notices: vec![(Level::Warn, games::MSG_SOUND_SKIP_HAPTICS.to_string())],
             ready: false,
+            request: None,
         };
     }
     let settings = SoundSettings::read(entry, effect, path);
     let mut notices = settings.haptic_notices();
-    let ready = append_stream(&mut notices, &settings);
-    SoundOpen { notices, ready }
+    let request = append_stream(&mut notices, &settings);
+    SoundOpen {
+        ready: request.is_some(),
+        request,
+        notices,
+    }
 }
 
 pub fn stream_node_name(effect: i32, tyre: i32) -> Option<String> {
@@ -74,14 +83,17 @@ pub fn stream_node_name(effect: i32, tyre: i32) -> Option<String> {
     Some(name)
 }
 
-fn append_stream(notices: &mut Vec<(Level, String)>, settings: &SoundSettings) -> bool {
+fn append_stream(
+    notices: &mut Vec<(Level, String)>,
+    settings: &SoundSettings,
+) -> Option<ShakerRequest> {
     notices.extend(settings.stream_notices());
     let Some(name) = stream_node_name(settings.effect, settings.tyre) else {
         notices.push((Level::Error, games::sound_describe_error(settings.effect)));
-        return false;
+        return None;
     };
     notices.push((Level::Info, games::sound_node_message(&name)));
-    true
+    Some(settings.playback(&name))
 }
 
 fn effect_uses_tyre(effect: i32) -> bool {
@@ -92,6 +104,12 @@ fn effect_uses_tyre(effect: i32) -> bool {
             | names::EFFECT_ABS
             | names::EFFECT_SUSPENSION
     )
+}
+
+fn effect_label(effect: i32) -> &'static str {
+    names::name_for(names::EFFECTS, effect)
+        .or_else(|| names::name_for(names::EFFECTS, names::EFFECT_ENGINE))
+        .unwrap_or(NODE_EFFECT_FALLBACK)
 }
 
 fn tyre_label(effect: i32, tyre: i32) -> Option<&'static str> {
@@ -165,6 +183,21 @@ impl SoundSettings {
         }
         notices.push((Level::Trace, games::sound_use_message(&self.path)));
         notices
+    }
+
+    fn playback(&self, node: &str) -> ShakerRequest {
+        let effect_name = effect_label(self.effect).to_string();
+        ShakerRequest {
+            sink: self.path.clone(),
+            node: node.to_string(),
+            stream_name: effect_name.clone(),
+            effect_name,
+            tyre_name: tyre_label(self.effect, self.tyre).map(str::to_string),
+            volume_percent: self.volume,
+            channels: u8::try_from(self.channels).unwrap_or(CHANNEL_MIN as u8),
+            mask: self.mask,
+            gear: self.effect == names::EFFECT_GEAR,
+        }
     }
 
     fn stream_notices(&self) -> Vec<(Level, String)> {

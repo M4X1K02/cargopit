@@ -268,6 +268,33 @@ pub const PULSE_CONTEXT_SETTING_NAME: i32 = 3;
 pub const PULSE_CONTEXT_READY: i32 = 4;
 pub const PULSE_CONTEXT_FAILED: i32 = 5;
 pub const PULSE_CONTEXT_TERMINATED: i32 = 6;
+pub const PULSE_CONTEXT_MISSING: &str = "pulseaudio context is not ready";
+
+const SHAKER_LATENCY_S: f64 = 0.040;
+const SHAKER_GEAR_LATENCY_S: f64 = 0.040;
+const SHAKER_PERCENT_SCALE: f64 = 100.0;
+const SHAKER_BYTES_PER_SAMPLE: u32 = 2;
+const SHAKER_SINK_UNMUTED: bool = false;
+const SHAKER_BUFFER_DEFAULT: u32 = u32::MAX;
+const SHAKER_CHANNELS_STEREO: u8 = 2;
+const SHAKER_CHANNELS_QUAD: u8 = 4;
+const SHAKER_CHANNELS_SURROUND_51: u8 = 6;
+const SHAKER_CHANNELS_SURROUND_71: u8 = 8;
+const SHAKER_MAP_STEREO: &str = "front-left,front-right";
+const SHAKER_MAP_QUAD: &str = "front-left,front-right,rear-left,rear-right";
+const SHAKER_MAP_SURROUND_51: &str = "front-left,front-right,front-center,lfe,rear-left,rear-right";
+const SHAKER_MAP_SURROUND_71: &str =
+    "front-left,front-right,front-center,lfe,rear-left,rear-right,side-left,side-right";
+const SHAKER_PROP_MEDIA_NAME: &str = "media.name";
+const SHAKER_PROP_MEDIA_ROLE: &str = "media.role";
+const SHAKER_PROP_APP_NAME: &str = "application.name";
+const SHAKER_PROP_APP_ID: &str = "application.id";
+const SHAKER_PROP_NODE: &str = "node.name";
+const SHAKER_PROP_EFFECT: &str = "cargopit.effect";
+const SHAKER_PROP_TYRE: &str = "cargopit.tyre";
+const SHAKER_MEDIA_ROLE: &str = "game";
+const SHAKER_APP_ID: &str = "io.github.M4X1K02.cargopit";
+const SHAKER_CHANNEL_BIT: u32 = 1;
 
 #[derive(Clone, Debug, Default)]
 pub struct FakePulse {
@@ -419,9 +446,25 @@ pub enum PulseOutcome {
     NotCreated,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShakerRequest {
+    pub sink: String,
+    pub node: String,
+    pub stream_name: String,
+    pub effect_name: String,
+    pub tyre_name: Option<String>,
+    pub volume_percent: i64,
+    pub channels: u8,
+    pub mask: u32,
+    pub gear: bool,
+}
+
 pub struct PulseSession {
     mainloop: Option<libpulse_binding::mainloop::threaded::Mainloop>,
     context: Option<libpulse_binding::context::Context>,
+    // Boxed so the write-callback pointer stays valid when another stream is stored.
+    #[allow(clippy::vec_box)]
+    streams: Vec<Box<libpulse_binding::stream::Stream>>,
     outcome: PulseOutcome,
 }
 
@@ -450,6 +493,56 @@ impl PulseSession {
         self.context.is_some()
     }
 
+    pub fn not_ready() -> Self {
+        Self::from_parts(None, None, PulseOutcome::ConnectFailed)
+    }
+
+    pub fn connect_shaker(&mut self, request: &ShakerRequest) -> Result<(), String> {
+        if self.outcome != PulseOutcome::Ready {
+            return Err(PULSE_CONTEXT_MISSING.to_string());
+        }
+        let connected = self.connect_shaker_while_locked(request);
+        match connected {
+            Ok(stream) => {
+                self.streams.push(stream);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn connect_shaker_while_locked(
+        &mut self,
+        request: &ShakerRequest,
+    ) -> Result<Box<libpulse_binding::stream::Stream>, String> {
+        let Some(mainloop) = self.mainloop.as_mut() else {
+            return Err(PULSE_CONTEXT_MISSING.to_string());
+        };
+        let Some(context) = self.context.as_mut() else {
+            return Err(PULSE_CONTEXT_MISSING.to_string());
+        };
+        mainloop.lock();
+        let connected = connect_shaker_locked(mainloop, context, request);
+        let result = match connected {
+            Ok(stream) => Ok(stream),
+            Err(()) => Err(context_errno(context)),
+        };
+        mainloop.unlock();
+        result
+    }
+
+    pub fn disconnect_shakers(&mut self) {
+        let Some(mainloop) = self.mainloop.as_mut() else {
+            self.streams.clear();
+            return;
+        };
+        mainloop.lock();
+        for stream in self.streams.drain(..) {
+            release_stream(*stream);
+        }
+        mainloop.unlock();
+    }
+
     fn from_parts(
         mainloop: Option<libpulse_binding::mainloop::threaded::Mainloop>,
         context: Option<libpulse_binding::context::Context>,
@@ -458,6 +551,7 @@ impl PulseSession {
         Self {
             mainloop,
             context,
+            streams: Vec::new(),
             outcome,
         }
     }
@@ -465,6 +559,7 @@ impl PulseSession {
 
 impl Drop for PulseSession {
     fn drop(&mut self) {
+        self.disconnect_shakers();
         let Some(mainloop) = self.mainloop.as_mut() else {
             self.context.take();
             return;
@@ -474,6 +569,253 @@ impl Drop for PulseSession {
         mainloop.unlock();
         self.mainloop.take();
     }
+}
+
+fn connect_shaker_locked(
+    mainloop: &mut libpulse_binding::mainloop::threaded::Mainloop,
+    context: &mut libpulse_binding::context::Context,
+    request: &ShakerRequest,
+) -> Result<Box<libpulse_binding::stream::Stream>, ()> {
+    use libpulse_binding::proplist::Proplist;
+    use libpulse_binding::sample::{Format, Spec};
+    use libpulse_binding::stream::Stream;
+
+    let spec = Spec {
+        format: Format::S16le,
+        channels: request.channels,
+        rate: PULSE_RATE,
+    };
+    if !spec.is_valid() {
+        return Err(());
+    }
+    let map = shaker_channel_map(request.channels);
+    let Some(mut props) = Proplist::new() else {
+        return Err(());
+    };
+    if fill_shaker_props(&mut props, request).is_err() {
+        return Err(());
+    }
+    let Some(stream) =
+        Stream::new_with_proplist(context, &request.stream_name, &spec, Some(&map), &mut props)
+    else {
+        return Err(());
+    };
+    let mut boxed = Box::new(stream);
+    let stream_ptr = boxed.as_mut() as *mut Stream;
+    let attr = shaker_buffer(request);
+    let volume = shaker_volumes(request);
+    if boxed
+        .connect_playback(
+            sink_arg(&request.sink),
+            Some(&attr),
+            shaker_flags(),
+            Some(&volume),
+            None,
+        )
+        .is_err()
+    {
+        release_stream(*boxed);
+        return Err(());
+    }
+    if !wait_for_stream(mainloop, stream_ptr) {
+        release_stream(*boxed);
+        return Err(());
+    }
+    boxed.set_write_callback(Some(Box::new(move |nbytes| {
+        write_silence(stream_ptr, nbytes);
+    })));
+    unmute_shaker(context, &boxed);
+    Ok(boxed)
+}
+
+fn shaker_flags() -> libpulse_binding::stream::FlagSet {
+    use libpulse_binding::stream::FlagSet;
+
+    FlagSet::INTERPOLATE_TIMING
+        | FlagSet::AUTO_TIMING_UPDATE
+        | FlagSet::ADJUST_LATENCY
+        | FlagSet::START_UNMUTED
+        | FlagSet::DONT_MOVE
+}
+
+fn shaker_channel_map(channels: u8) -> libpulse_binding::channelmap::Map {
+    use libpulse_binding::channelmap::{Map, MapDef};
+
+    let mut map = Map::default();
+    map.init_auto(channels, MapDef::AIFF);
+    let Some(spec) = shaker_map_spec(channels) else {
+        return map;
+    };
+    Map::new_from_string(spec).unwrap_or(map)
+}
+
+fn shaker_map_spec(channels: u8) -> Option<&'static str> {
+    match channels {
+        SHAKER_CHANNELS_STEREO => Some(SHAKER_MAP_STEREO),
+        SHAKER_CHANNELS_QUAD => Some(SHAKER_MAP_QUAD),
+        SHAKER_CHANNELS_SURROUND_51 => Some(SHAKER_MAP_SURROUND_51),
+        SHAKER_CHANNELS_SURROUND_71 => Some(SHAKER_MAP_SURROUND_71),
+        _ => None,
+    }
+}
+
+fn fill_shaker_props(
+    props: &mut libpulse_binding::proplist::Proplist,
+    request: &ShakerRequest,
+) -> Result<(), ()> {
+    props.set_str(SHAKER_PROP_MEDIA_NAME, &request.effect_name)?;
+    props.set_str(SHAKER_PROP_MEDIA_ROLE, SHAKER_MEDIA_ROLE)?;
+    props.set_str(SHAKER_PROP_APP_NAME, PULSE_HOST_APP_NAME)?;
+    props.set_str(SHAKER_PROP_APP_ID, SHAKER_APP_ID)?;
+    props.set_str(SHAKER_PROP_NODE, &request.node)?;
+    props.set_str(SHAKER_PROP_EFFECT, &request.effect_name)?;
+    if let Some(tyre) = request.tyre_name.as_deref() {
+        props.set_str(SHAKER_PROP_TYRE, tyre)?;
+    }
+    Ok(())
+}
+
+fn shaker_buffer(request: &ShakerRequest) -> libpulse_binding::def::BufferAttr {
+    let latency = if request.gear {
+        SHAKER_GEAR_LATENCY_S
+    } else {
+        SHAKER_LATENCY_S
+    };
+    libpulse_binding::def::BufferAttr {
+        maxlength: SHAKER_BUFFER_DEFAULT,
+        tlength: bytes_for_duration(request.channels, latency),
+        prebuf: SHAKER_BUFFER_DEFAULT,
+        minreq: SHAKER_BUFFER_DEFAULT,
+        fragsize: SHAKER_BUFFER_DEFAULT,
+    }
+}
+
+fn bytes_for_duration(channels: u8, seconds: f64) -> u32 {
+    if seconds <= 0.0 || channels == 0 {
+        return 0;
+    }
+    let bytes =
+        f64::from(PULSE_RATE) * seconds * f64::from(channels) * f64::from(SHAKER_BYTES_PER_SAMPLE);
+    if bytes >= f64::from(u32::MAX) {
+        return u32::MAX;
+    }
+    bytes as u32
+}
+
+fn shaker_volumes(request: &ShakerRequest) -> libpulse_binding::volume::ChannelVolumes {
+    use libpulse_binding::volume::ChannelVolumes;
+
+    let mut volumes = ChannelVolumes::default();
+    volumes.mute(request.channels);
+    let level = shaker_volume(request.volume_percent);
+    let active = active_channel_mask(request.mask, request.channels);
+    let Some(slots) = volumes.get_mut().get_mut(..usize::from(request.channels)) else {
+        return volumes;
+    };
+    for (index, slot) in slots.iter_mut().enumerate() {
+        let bit = SHAKER_CHANNEL_BIT << index;
+        if active & bit != 0 {
+            *slot = level;
+        }
+    }
+    volumes
+}
+
+fn shaker_volume(percent: i64) -> libpulse_binding::volume::Volume {
+    use libpulse_binding::volume::Volume;
+
+    if percent <= 0 {
+        return Volume::MUTED;
+    }
+    let scaled = (percent as f64 / SHAKER_PERCENT_SCALE) * f64::from(Volume::NORMAL.0);
+    if scaled >= f64::from(Volume::MAX.0) {
+        return Volume::MAX;
+    }
+    Volume(scaled as u32)
+}
+
+fn active_channel_mask(mask: u32, channels: u8) -> u32 {
+    let all = if channels == 0 || channels >= u32::BITS as u8 {
+        0
+    } else {
+        (SHAKER_CHANNEL_BIT << channels) - SHAKER_CHANNEL_BIT
+    };
+    let bits = mask & all;
+    if bits == 0 {
+        return all;
+    }
+    bits
+}
+
+fn sink_arg(sink: &str) -> Option<&str> {
+    if sink.is_empty() {
+        return None;
+    }
+    Some(sink)
+}
+
+fn wait_for_stream(
+    mainloop: &mut libpulse_binding::mainloop::threaded::Mainloop,
+    stream: *mut libpulse_binding::stream::Stream,
+) -> bool {
+    use libpulse_binding::stream::State;
+
+    for _ in 0..PULSE_POLL_ATTEMPTS {
+        match stream_state(stream) {
+            State::Ready => return true,
+            State::Failed | State::Terminated => return false,
+            _ => {}
+        }
+        mainloop.unlock();
+        std::thread::sleep(Duration::from_millis(PULSE_POLL_MS));
+        mainloop.lock();
+    }
+    stream_state(stream) == State::Ready
+}
+
+fn unmute_shaker(
+    context: &mut libpulse_binding::context::Context,
+    stream: &libpulse_binding::stream::Stream,
+) {
+    let Some(index) = stream.get_index() else {
+        return;
+    };
+    context
+        .introspect()
+        .set_sink_input_mute(index, SHAKER_SINK_UNMUTED, None);
+}
+
+fn release_stream(mut stream: libpulse_binding::stream::Stream) {
+    stream.set_state_callback(None);
+    stream.set_write_callback(None);
+    let _ = stream.disconnect();
+}
+
+fn write_silence(stream: *mut libpulse_binding::stream::Stream, nbytes: usize) {
+    use libpulse_binding::stream::SeekMode;
+
+    if stream.is_null() || nbytes == 0 {
+        return;
+    }
+    let bytes = vec![0u8; nbytes];
+    let _ = unsafe { (*stream).write_copy(&bytes, 0, SeekMode::Relative) };
+}
+
+fn stream_state(stream: *mut libpulse_binding::stream::Stream) -> libpulse_binding::stream::State {
+    use libpulse_binding::stream::State;
+
+    if stream.is_null() {
+        return State::Failed;
+    }
+    unsafe { (*stream).get_state() }
+}
+
+fn context_errno(context: &libpulse_binding::context::Context) -> String {
+    context
+        .errno()
+        .to_string()
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| PULSE_CONTEXT_MISSING.to_string())
 }
 
 fn reject_context(
@@ -629,5 +971,63 @@ mod tests {
             }
             PulseOutcome::NotCreated => panic!("pulse context was not created"),
         }
+    }
+
+    #[test]
+    fn shaker_volume_scales_the_percent_the_way_c_does() {
+        use libpulse_binding::volume::Volume;
+
+        assert_eq!(shaker_volume(0), Volume::MUTED);
+        assert_eq!(shaker_volume(100), Volume::NORMAL);
+        let forty = (40.0 / SHAKER_PERCENT_SCALE) * f64::from(Volume::NORMAL.0);
+        assert_eq!(shaker_volume(40), Volume(forty as u32));
+        assert_eq!(
+            bytes_for_duration(SHAKER_CHANNELS_STEREO, SHAKER_LATENCY_S),
+            (f64::from(PULSE_RATE)
+                * SHAKER_LATENCY_S
+                * f64::from(SHAKER_CHANNELS_STEREO)
+                * f64::from(SHAKER_BYTES_PER_SAMPLE)) as u32
+        );
+    }
+
+    #[test]
+    fn shaker_connect_reports_a_missing_context() {
+        let mut session = PulseSession::not_ready();
+        let err = session
+            .connect_shaker(&ShakerRequest {
+                sink: "alsa_output.test".to_string(),
+                node: "cargopit.Gear".to_string(),
+                stream_name: "Gear".to_string(),
+                effect_name: "Gear".to_string(),
+                tyre_name: None,
+                volume_percent: 40,
+                channels: SHAKER_CHANNELS_STEREO,
+                mask: (SHAKER_CHANNEL_BIT << SHAKER_CHANNELS_STEREO) - SHAKER_CHANNEL_BIT,
+                gear: true,
+            })
+            .expect_err("missing context");
+        assert_eq!(err, PULSE_CONTEXT_MISSING);
+    }
+
+    #[test]
+    fn shaker_stream_connects_when_pulse_is_ready() {
+        const SAMPLE_VOLUME: i64 = 40;
+        let mut session = PulseSession::open();
+        if session.outcome() != PulseOutcome::Ready {
+            return;
+        }
+        let request = ShakerRequest {
+            sink: String::new(),
+            node: "cargopit.Gear".to_string(),
+            stream_name: "Gear".to_string(),
+            effect_name: "Gear".to_string(),
+            tyre_name: None,
+            volume_percent: SAMPLE_VOLUME,
+            channels: SHAKER_CHANNELS_STEREO,
+            mask: (SHAKER_CHANNEL_BIT << SHAKER_CHANNELS_STEREO) - SHAKER_CHANNEL_BIT,
+            gear: true,
+        };
+        session.connect_shaker(&request).expect("shaker playback");
+        session.disconnect_shakers();
     }
 }
