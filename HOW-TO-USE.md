@@ -4,7 +4,7 @@ Game/bridge details live in the [simapi docs](https://spacefreak18.github.io/sim
 
 ## Install the stack
 
-Prefer the method for your distro in the [README](README.md#quick-install). A packaged or `./install.sh` install should give you:
+Prefer the method for your distro in the [README](README.md#how-to-install). A packaged or `./install.sh` install should give you:
 
 * `start-simd`, `start-cargopit`, `test-cargopit`, `cargopit-tui` in `~/.local/bin`
 * configs in `~/.config/simd/` and `~/.config/cargopit/`
@@ -12,7 +12,7 @@ Prefer the method for your distro in the [README](README.md#quick-install). A pa
 
 To compile by hand instead:
 
-* build [cargopit](https://github.com/M4X1K02/cargopit) — `git submodule update --init --recursive`, then `cmake` / `make` (needs cargo for `cargopit-tui`)
+* build [cargopit](https://github.com/M4X1K02/cargopit) — `git submodule update --init --recursive`, then `./install.sh --from-source` (Rust host as `cargopit`, C host as `cargopit-legacy`)
 * build [simd](https://github.com/Spacefreak18/simapi/tree/master/simd) (needs simapi installed first, including `simdata.h`)
 * get [simshmbridge](https://github.com/spacefreak18/simshmbridge) compatibility EXEs ([releases](https://github.com/spacefreak18/simshmbridge/releases)) unless you only use UDP titles
 

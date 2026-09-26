@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" role="img" aria-labelledby="title desc">
+  <title id="title">Connecting cargopit haptic streams to audio filters</title>
+  <desc id="desc">Each haptic effect is its own PipeWire stream. Streams can share one filter-chain of a 10 Hz high-pass, peaking cuts, a 120 Hz low-pass, and a clamp into the tactile amplifier. A single tyre stream can leave that chain and take its own EQ into one shaker.</desc>
+  <rect width="960" height="620" fill="#f6f3ec"/>
+  <text x="32" y="40" fill="#1c1917" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Haptic filter graph</text>
+  <text x="32" y="64" fill="#57534e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14">Each effect is a PipeWire node. Share one chain, or patch one tyre on its own.</text>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 10 5 L 0 8.8 Z" fill="#44403c"/>
+    </marker>
+    <marker id="arrow-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 10 5 L 0 8.8 Z" fill="#0f766e"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-sans-serif, system-ui, sans-serif">
+    <text x="32" y="104" fill="#57534e" font-size="12" font-weight="700">STREAMS</text>
+
+    <rect x="32" y="118" width="228" height="34" rx="8" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="146" y="140" text-anchor="middle" fill="#1c1917" font-size="13">cargopit.Engine</text>
+
+    <rect x="32" y="160" width="228" height="34" rx="8" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="146" y="182" text-anchor="middle" fill="#1c1917" font-size="13">cargopit.Gear</text>
+
+    <rect x="32" y="202" width="228" height="34" rx="8" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="146" y="224" text-anchor="middle" fill="#1c1917" font-size="13">cargopit.ABS</text>
+
+    <rect x="32" y="244" width="228" height="34" rx="8" fill="#ffffff" stroke="#0f766e" stroke-width="1.75"/>
+    <text x="146" y="266" text-anchor="middle" fill="#0f766e" font-size="13">cargopit.TyreSlip.FrontLeft</text>
+
+    <rect x="32" y="286" width="228" height="34" rx="8" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="146" y="308" text-anchor="middle" fill="#1c1917" font-size="13">cargopit.Suspension</text>
+
+    <path d="M 292 135 L 292 303" fill="none" stroke="#44403c" stroke-width="1.5"/>
+    <path d="M 260 135 L 292 135" fill="none" stroke="#44403c" stroke-width="1.5"/>
+    <path d="M 260 177 L 292 177" fill="none" stroke="#44403c" stroke-width="1.5"/>
+    <path d="M 260 219 L 308 219" fill="none" stroke="#44403c" stroke-width="1.5" marker-end="url(#arrow)"/>
+    <path d="M 260 261 L 292 261" fill="none" stroke="#44403c" stroke-width="1.5"/>
+    <path d="M 260 303 L 292 303" fill="none" stroke="#44403c" stroke-width="1.5"/>
+
+    <text x="316" y="184" fill="#9a3412" font-size="12" font-weight="700">cargopit_tactile</text>
+
+    <rect x="316" y="194" width="100" height="50" rx="10" fill="#fff7ed" stroke="#9a3412" stroke-width="1.5"/>
+    <text x="366" y="215" text-anchor="middle" fill="#9a3412" font-size="12" font-weight="700">high-pass</text>
+    <text x="366" y="232" text-anchor="middle" fill="#57534e" font-size="12">10 Hz</text>
+
+    <line x1="416" y1="219" x2="444" y2="219" stroke="#44403c" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="452" y="194" width="100" height="50" rx="10" fill="#fff7ed" stroke="#9a3412" stroke-width="1.5"/>
+    <text x="502" y="215" text-anchor="middle" fill="#9a3412" font-size="12" font-weight="700">peaking</text>
+    <text x="502" y="232" text-anchor="middle" fill="#57534e" font-size="12">seat cuts</text>
+
+    <line x1="552" y1="219" x2="580" y2="219" stroke="#44403c" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="588" y="194" width="100" height="50" rx="10" fill="#fff7ed" stroke="#9a3412" stroke-width="1.5"/>
+    <text x="638" y="215" text-anchor="middle" fill="#9a3412" font-size="12" font-weight="700">low-pass</text>
+    <text x="638" y="232" text-anchor="middle" fill="#57534e" font-size="12">120 Hz</text>
+
+    <line x1="688" y1="219" x2="716" y2="219" stroke="#44403c" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="724" y="194" width="80" height="50" rx="10" fill="#fff7ed" stroke="#9a3412" stroke-width="1.5"/>
+    <text x="764" y="223" text-anchor="middle" fill="#9a3412" font-size="12" font-weight="700">clamp</text>
+
+    <line x1="804" y1="219" x2="832" y2="219" stroke="#44403c" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+    <rect x="840" y="194" width="96" height="50" rx="10" fill="#ffffff" stroke="#292524" stroke-width="1.5"/>
+    <text x="888" y="215" text-anchor="middle" fill="#1c1917" font-size="13" font-weight="700">amp</text>
+    <text x="888" y="232" text-anchor="middle" fill="#57534e" font-size="12">tactile sink</text>
+
+    <rect x="32" y="360" width="896" height="228" rx="16" fill="#f0fdfa" stroke="#0f766e" stroke-width="1.5"/>
+    <text x="52" y="392" fill="#0f766e" font-size="14" font-weight="700">One stream, its own filter</text>
+    <text x="52" y="414" fill="#57534e" font-size="13">A tyre node can leave the shared chain. Carla, Easy Effects, or WirePlumber inserts the filter.</text>
+
+    <rect x="52" y="444" width="240" height="56" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="1.75"/>
+    <text x="172" y="468" text-anchor="middle" fill="#0f766e" font-size="13" font-weight="700">TyreSlip.FrontLeft</text>
+    <text x="172" y="486" text-anchor="middle" fill="#57534e" font-size="12">cargopit.tyre = FrontLeft</text>
+
+    <line x1="292" y1="472" x2="340" y2="472" stroke="#0f766e" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+
+    <rect x="348" y="444" width="200" height="56" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="1.5"/>
+    <text x="448" y="468" text-anchor="middle" fill="#1c1917" font-size="13" font-weight="700">per-tyre EQ</text>
+    <text x="448" y="486" text-anchor="middle" fill="#57534e" font-size="12">limiter stays here too</text>
+
+    <line x1="548" y1="472" x2="596" y2="472" stroke="#0f766e" stroke-width="1.6" marker-end="url(#arrow-teal)"/>
+
+    <rect x="604" y="444" width="200" height="56" rx="10" fill="#ffffff" stroke="#0f766e" stroke-width="1.5"/>
+    <text x="704" y="468" text-anchor="middle" fill="#1c1917" font-size="13" font-weight="700">front-left shaker</text>
+    <text x="704" y="486" text-anchor="middle" fill="#57534e" font-size="12">one amp channel</text>
+
+    <text x="52" y="540" fill="#57534e" font-size="13">Engine, Gear, ABS, and Suspension can stay on cargopit_tactile while this tyre splits off.</text>
+    <text x="52" y="562" fill="#57534e" font-size="13">qpwgraph draws the same links. WirePlumber can match cargopit.effect and cargopit.tyre.</text>
+  </g>
+</svg>

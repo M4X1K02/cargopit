@@ -230,13 +230,14 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     let seen = bridge_if_needed(observed.seen);
     let play = note_sim(play, seen.sim_exe);
     let play = apply_quit(play, parsed, parts.devices.loaded.len());
+    let now_ns = parts.clock.monotonic_ns();
     if play.phase == PlayPhase::Exiting {
-        release_configured(parts.devices, parsed);
+        release_configured(parts.devices, parsed, now_ns);
         return play;
     }
-    let play = apply_control(parts.control, parts.devices, play, parsed);
+    let play = apply_control(parts.control, parts.devices, play, parsed, now_ns);
     if play.phase == PlayPhase::Exiting {
-        release_configured(parts.devices, parsed);
+        release_configured(parts.devices, parsed, now_ns);
         return play;
     }
     if play.releasing {
@@ -262,7 +263,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
             );
             if next.phase != PlayPhase::Mapping {
                 announce_release(parsed);
-                release_configured(parts.devices, parsed);
+                release_configured(parts.devices, parsed, parts.clock.monotonic_ns());
                 if next.user_stopped {
                     slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
                 } else {
@@ -325,6 +326,7 @@ fn apply_control(
     devices: &mut DeviceLoop,
     play: PlayLoop,
     parsed: &cli::Invocation,
+    now_ns: u64,
 ) -> PlayLoop {
     let Some(listener) = control else {
         return play;
@@ -346,7 +348,7 @@ fn apply_control(
                 announce_release(parsed);
                 slog(parsed, Level::Info, games::MSG_RESTART_CHECK);
             }
-            release_configured(devices, parsed);
+            release_configured(devices, parsed, now_ns);
             devices.pending = true;
             searching(PlayLoop {
                 user_stopped: false,
@@ -393,15 +395,15 @@ fn searching(play: PlayLoop) -> PlayLoop {
 
 fn finish_release(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
     let _ = parts.session.clear(false);
-    release_configured(parts.devices, parsed);
+    release_configured(parts.devices, parsed, parts.clock.monotonic_ns());
     if play.user_stopped {
         slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
     }
     searching(play)
 }
 
-fn release_configured(devices: &mut DeviceLoop, parsed: &cli::Invocation) {
-    log_notices(parsed, devices.loaded.release());
+fn release_configured(devices: &mut DeviceLoop, parsed: &cli::Invocation, now_ns: u64) {
+    log_notices(parsed, devices.loaded.release(now_ns));
     devices.loaded = LoadedDevices::empty();
     devices.scheduler.clear();
     devices.pending = false;
@@ -486,7 +488,7 @@ fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, simulator_a
     if parts.devices.pending {
         parts.devices.pending = false;
         parts.devices.scheduler.clear();
-        parts.devices.loaded = load_configured(parsed, simulator_api);
+        parts.devices.loaded = load_configured(parsed, simulator_api, parts.clock.monotonic_ns());
         for index in 0..parts.devices.loaded.len() {
             let fps = parts
                 .devices
@@ -565,7 +567,7 @@ fn publish_tyres(session: &mut GameSession, snapshot: &mut games::FrameSnapshot,
     }
 }
 
-fn load_configured(parsed: &cli::Invocation, simulator_api: i32) -> LoadedDevices {
+fn load_configured(parsed: &cli::Invocation, simulator_api: i32, now_ns: u64) -> LoadedDevices {
     let path = games::config_path_for(
         parsed.config_file.as_deref().map(std::path::Path::new),
         parsed.config_dir.as_deref().map(std::path::Path::new),
@@ -587,7 +589,7 @@ fn load_configured(parsed: &cli::Invocation, simulator_api: i32) -> LoadedDevice
     let Some(index) = devices::profile_index(config.profiles.len(), parsed.config_index) else {
         return LoadedDevices::empty();
     };
-    announce_device_init(parsed, &config, index, simulator_api)
+    announce_device_init(parsed, &config, index, simulator_api, now_ns)
 }
 
 fn announce_device_init(
@@ -595,6 +597,7 @@ fn announce_device_init(
     config: &cargopit_config::config::CargopitConfig,
     index: usize,
     simulator_api: i32,
+    now_ns: u64,
 ) -> LoadedDevices {
     let devices = &config.profiles[index].devices;
     let device_count = i32::try_from(devices.len()).unwrap_or(i32::MAX);
@@ -605,7 +608,7 @@ fn announce_device_init(
         &games::loading_confignum_message(confignum, device_count),
     );
     slog(parsed, Level::Info, games::MSG_PARSING_CONFIG);
-    let loaded = devices::open_profile_at(config, index, parsed.disable_audio);
+    let loaded = devices::open_profile_at(config, index, parsed.disable_audio, now_ns);
     log_notices(parsed, loaded.setup_notices);
     slog(
         parsed,
@@ -624,7 +627,13 @@ fn log_notices(parsed: &cli::Invocation, notices: Vec<InitNotice>) {
 
 fn drive_device(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, index: usize) {
     let frame = current_frame(parts.session);
-    log_notices(parsed, parts.devices.loaded.tick(index, &frame));
+    log_notices(
+        parsed,
+        parts
+            .devices
+            .loaded
+            .tick(index, &frame, parts.clock.monotonic_ns()),
+    );
 }
 
 fn current_frame(session: &GameSession) -> Telemetry {

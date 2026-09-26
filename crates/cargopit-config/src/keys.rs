@@ -51,6 +51,7 @@ pub const KEY_EFFECT: &str = "effect";
 pub const KEY_TYRE: &str = "tyre";
 pub const KEY_THRESHOLD: &str = "threshold";
 pub const KEY_BAUD: &str = "baud";
+pub const BAUD_DEFAULT: i64 = 9_600;
 pub const KEY_AMPFACTOR: &str = "ampfactor";
 pub const KEY_NUMLEDS: &str = "numleds";
 pub const KEY_STARTLED: &str = "startled";

@@ -165,7 +165,13 @@ impl FakeSerial {
 }
 
 pub struct RealSerial {
-    port: Box<dyn serialport::SerialPort>,
+    port: serialport::TTYPort,
+}
+
+pub enum ShareWarning {
+    NativeHandle,
+    Exclusive,
+    Hupcl,
 }
 
 impl RealSerial {
@@ -175,7 +181,7 @@ impl RealSerial {
         }
         let port = serialport::new(path, baud)
             .timeout(Duration::from_millis(SERIAL_TIMEOUT_MS))
-            .open()
+            .open_native()
             .map_err(|_| TransportError::Unavailable)?;
         Ok(Self { port })
     }
@@ -183,7 +189,36 @@ impl RealSerial {
     pub fn write(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         self.port.write(data).map_err(|_| TransportError::Failed)
     }
+
+    /// Match `cargopit_serial_share_port`: drop exclusive open and hang-up-on-close.
+    pub fn share(&self) -> Vec<ShareWarning> {
+        use std::os::fd::AsRawFd;
+
+        let fd = self.port.as_raw_fd();
+        if fd < 0 {
+            return vec![ShareWarning::NativeHandle];
+        }
+        let mut warnings = Vec::new();
+        if unsafe { libc::ioctl(fd, TIOCNXCL) != 0 } {
+            warnings.push(ShareWarning::Exclusive);
+        }
+        if !clear_hupcl(fd) {
+            warnings.push(ShareWarning::Hupcl);
+        }
+        warnings
+    }
 }
+
+fn clear_hupcl(fd: i32) -> bool {
+    let mut term: libc::termios = unsafe { std::mem::zeroed() };
+    if unsafe { libc::tcgetattr(fd, &mut term) != 0 } {
+        return true;
+    }
+    term.c_cflag &= !libc::HUPCL;
+    unsafe { libc::tcsetattr(fd, libc::TCSANOW, &term) == 0 }
+}
+
+const TIOCNXCL: libc::Ioctl = 0x5429;
 
 const SERIAL_TIMEOUT_MS: u64 = 100;
 
