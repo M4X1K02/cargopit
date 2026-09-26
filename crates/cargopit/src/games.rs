@@ -249,10 +249,27 @@ pub fn skipping_disabled_message(index: i32) -> String {
 }
 
 pub const MSG_INIT_USB: &str = "initializing usb device...";
+pub const MSG_INIT_WHEEL: &str = "initializing wheel or pedals device...";
+pub const MSG_G29_ATTEMPT: &str = "Attempting to initialize Logitech G29";
+pub const MSG_G29_INIT: &str = "initializing Logitech G29 wheel...";
+pub const MSG_G29_FOUND: &str = "Found Logitech G29 Wheel...";
+pub const MSG_G29_MISSING: &str = "Could not find attached Logitech G29 Wheel";
 pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
 pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
 pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
 pub const DEVICE_NAME_MISSING: &str = "(null)";
+
+pub fn g29_write_message(report: &[u8], rpm: i32) -> String {
+    let byte = |index: usize| report.get(index).copied().unwrap_or(0);
+    format!(
+        "writing bytes x{:02x}x{:02x}x{:02x}x{:02x}x{:02x} from rpm {rpm}",
+        byte(cargopit_devices::usb::G29_BYTE_REPORT),
+        byte(cargopit_devices::usb::G29_BYTE_CMD),
+        byte(cargopit_devices::usb::G29_BYTE_LEDS),
+        byte(cargopit_devices::usb::G29_BYTE_PAD),
+        byte(cargopit_devices::usb::G29_BYTE_TAIL),
+    )
+}
 
 pub fn usb_init_error_message(code: i32) -> String {
     format!("Did not initialize usb device due to error code {code}")
@@ -738,6 +755,21 @@ mod tests {
             "skipping disabled device at index 3"
         );
         assert_eq!(MSG_INIT_USB, "initializing usb device...");
+        assert_eq!(MSG_INIT_WHEEL, "initializing wheel or pedals device...");
+        assert_eq!(MSG_G29_ATTEMPT, "Attempting to initialize Logitech G29");
+        assert_eq!(MSG_G29_INIT, "initializing Logitech G29 wheel...");
+        assert_eq!(MSG_G29_FOUND, "Found Logitech G29 Wheel...");
+        assert_eq!(
+            MSG_G29_MISSING,
+            "Could not find attached Logitech G29 Wheel"
+        );
+        const G29_SAMPLE_RPM: u32 = 6_000;
+        const G29_SAMPLE_MAX: u32 = 7_000;
+        let report = cargopit_devices::usb::g29_report(G29_SAMPLE_RPM, G29_SAMPLE_MAX);
+        assert_eq!(
+            g29_write_message(&report, i32::try_from(G29_SAMPLE_RPM).unwrap_or(i32::MAX)),
+            "writing bytes xf8x12x1fx00x01 from rpm 6000"
+        );
         assert_eq!(MSG_INIT_TACH, "initializing tachometer device...");
         assert_eq!(MSG_INIT_REVBURNER, "initializing revburner tachometer...");
         assert_eq!(
