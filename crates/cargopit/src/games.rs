@@ -258,6 +258,10 @@ pub const MSG_C5_ATTEMPT: &str = "Attempting to initialize cammus C5";
 pub const MSG_C5_INIT: &str = "initializing cammus c5 wheel...";
 pub const MSG_C5_FOUND: &str = "Found Cammus C5 Wheel...";
 pub const MSG_C5_MISSING: &str = "Could not find attached Cammus C5 Wheel";
+pub const MSG_C12_ATTEMPT: &str = "Attempting to initialize cammus C12";
+pub const MSG_C12_INIT: &str = "initializing cammus c12 wheel...";
+pub const MSG_C12_FOUND: &str = "Found Cammus C12 Wheel...";
+pub const MSG_C12_MISSING: &str = "Could not find attached Cammus C12 Wheel";
 pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
 pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
 pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
@@ -284,6 +288,20 @@ pub fn c5_write_message(report: &[u8], rpm: i32, velocity: i32, gear: i32) -> St
         byte(cargopit_devices::usb::C5_BYTE_VELOCITY_HIGH),
         byte(cargopit_devices::usb::C5_BYTE_VELOCITY_LOW),
         byte(cargopit_devices::usb::C5_BYTE_GEAR),
+    )
+}
+
+pub fn c12_write_message(report: &[u8], rpm: i32, velocity: i32, gear: i32) -> String {
+    let byte = |index: usize| report.get(index).copied().unwrap_or(0);
+    format!(
+        "writing bytes x{:02x}x{:02x}x{:02x}x{:02x}x{:02x}x{:02x}x{:02x} from rpm {rpm} velocity {velocity} gear {gear}",
+        byte(cargopit_devices::usb::C12_BYTE_MARK0),
+        byte(cargopit_devices::usb::C12_BYTE_MARK1),
+        byte(cargopit_devices::usb::C12_BYTE_MARK2),
+        byte(cargopit_devices::usb::C12_BYTE_PERCENT),
+        byte(cargopit_devices::usb::C12_BYTE_VELOCITY_LOW),
+        byte(cargopit_devices::usb::C12_BYTE_VELOCITY_HIGH),
+        byte(cargopit_devices::usb::C12_BYTE_GEAR),
     )
 }
 
@@ -806,6 +824,25 @@ mod tests {
                 i32::try_from(C5_SAMPLE_GEAR).unwrap_or(i32::MAX),
             ),
             "writing bytes xfcx09x01x2cx03 from rpm 6000 velocity 300 gear 4"
+        );
+        assert_eq!(MSG_C12_ATTEMPT, "Attempting to initialize cammus C12");
+        assert_eq!(MSG_C12_INIT, "initializing cammus c12 wheel...");
+        assert_eq!(MSG_C12_FOUND, "Found Cammus C12 Wheel...");
+        assert_eq!(MSG_C12_MISSING, "Could not find attached Cammus C12 Wheel");
+        let c12 = cargopit_devices::usb::c12_report(
+            G29_SAMPLE_RPM,
+            G29_SAMPLE_MAX,
+            C5_SAMPLE_GEAR,
+            C5_SAMPLE_VELOCITY,
+        );
+        assert_eq!(
+            c12_write_message(
+                &c12,
+                i32::try_from(G29_SAMPLE_RPM).unwrap_or(i32::MAX),
+                i32::try_from(C5_SAMPLE_VELOCITY).unwrap_or(i32::MAX),
+                i32::try_from(C5_SAMPLE_GEAR).unwrap_or(i32::MAX),
+            ),
+            "writing bytes xfaxfbxd4x56x2cx01x03 from rpm 6000 velocity 300 gear 4"
         );
         assert_eq!(MSG_INIT_TACH, "initializing tachometer device...");
         assert_eq!(MSG_INIT_REVBURNER, "initializing revburner tachometer...");

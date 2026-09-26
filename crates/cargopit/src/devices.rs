@@ -1,8 +1,9 @@
 //! Configured devices for one play session. A USB tachometer opens the RevBurner
-//! and writes its pulse report on each tick. A Logitech G29 and a Cammus C5 open
-//! and write their LED reports on each tick. A Moza R9 serial wheel opens its
-//! port and writes the new-firmware LED frames. A sound device logs the C init
-//! sequence, connects its Pulse playback stream, and renders haptic samples on each tick.
+//! and writes its pulse report on each tick. A Logitech G29, a Cammus C5, and a
+//! Cammus C12 open and write their LED reports on each tick. A Moza R9 serial wheel
+//! opens its port and writes the new-firmware LED frames. A sound device logs the
+//! C init sequence, connects its Pulse playback stream, and renders haptic samples
+//! on each tick.
 
 use std::path::{Path, PathBuf};
 
@@ -54,6 +55,7 @@ pub struct LoadedDevices {
     voices: Vec<Option<SharedShaker>>,
     g29: Vec<bool>,
     c5: Vec<bool>,
+    c12: Vec<bool>,
 }
 
 pub struct InitNotice {
@@ -96,6 +98,7 @@ impl LoadedDevices {
             voices: Vec::new(),
             g29: Vec::new(),
             c5: Vec::new(),
+            c12: Vec::new(),
         }
     }
 
@@ -154,6 +157,7 @@ impl LoadedDevices {
         notices.extend(self.write_moza(index, frame, now_ns));
         notices.extend(self.write_g29(index, frame.rpms(), frame.maxrpm()));
         notices.extend(self.write_c5(index, frame));
+        notices.extend(self.write_c12(index, frame));
         self.update_sound(index, frame, now_ns);
         notices
     }
@@ -226,6 +230,24 @@ impl LoadedDevices {
         let mut notices = vec![notice(
             Level::Trace,
             games::c5_write_message(
+                &report,
+                telemetry_i32(frame.rpms()),
+                telemetry_i32(frame.velocity()),
+                telemetry_i32(frame.gear()),
+            ),
+        )];
+        self.write_index(index, &report, &mut notices);
+        notices
+    }
+
+    fn write_c12(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+        if !self.c12.get(index).copied().unwrap_or(false) {
+            return Vec::new();
+        }
+        let report = usb::c12_report(frame.rpms(), frame.maxrpm(), frame.gear(), frame.velocity());
+        let mut notices = vec![notice(
+            Level::Trace,
+            games::c12_write_message(
                 &report,
                 telemetry_i32(frame.rpms()),
                 telemetry_i32(frame.velocity()),
@@ -565,6 +587,7 @@ fn open_profile_with(
     let mut voices = Vec::new();
     let mut g29 = Vec::new();
     let mut c5 = Vec::new();
+    let mut c12 = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
     let mut initialized = 0i32;
@@ -595,6 +618,7 @@ fn open_profile_with(
         voices.push(considered.voice);
         g29.push(considered.g29);
         c5.push(considered.c5);
+        c12.push(considered.c12);
         devices.push(prepared.device);
         effects.push(prepared.effect);
         initialized = initialized.saturating_add(1);
@@ -623,6 +647,7 @@ fn open_profile_with(
             voices,
             g29,
             c5,
+            c12,
         },
         setup_notices,
         notices,
@@ -658,6 +683,7 @@ struct Considered {
     voice: Option<SharedShaker>,
     g29: bool,
     c5: bool,
+    c12: bool,
 }
 
 enum SerialPort {
@@ -689,6 +715,9 @@ fn consider_entry(
     }
     if c5_entry(entry) {
         return consider_c5(entry, slot, id, disable_audio, attempt);
+    }
+    if c12_entry(entry) {
+        return consider_c12(entry, slot, id, disable_audio, attempt);
     }
     consider_closed(entry, slot, disable_audio)
 }
@@ -761,6 +790,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         voice,
         g29: false,
         c5: false,
+        c12: false,
     }
 }
 
@@ -815,6 +845,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         voice: None,
         g29: false,
         c5: false,
+        c12: false,
     }
 }
 
@@ -831,6 +862,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         voice: None,
         g29: false,
         c5: false,
+        c12: false,
     }
 }
 
@@ -847,6 +879,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         voice: None,
         g29: false,
         c5: false,
+        c12: false,
     }
 }
 
@@ -983,6 +1016,7 @@ fn revburner_attempt(
                 voice: None,
                 g29: false,
                 c5: false,
+                c12: false,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -997,6 +1031,7 @@ fn revburner_attempt(
             voice: None,
             g29: false,
             c5: false,
+            c12: false,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1010,6 +1045,7 @@ fn revburner_attempt(
             voice: None,
             g29: false,
             c5: false,
+            c12: false,
         },
     }
 }
@@ -1039,6 +1075,10 @@ fn g29_entry(entry: &DeviceEntry) -> bool {
 
 fn c5_entry(entry: &DeviceEntry) -> bool {
     usb_wheel_hardware(entry, names::HARDWARE_CAMMUS_C5)
+}
+
+fn c12_entry(entry: &DeviceEntry) -> bool {
+    usb_wheel_hardware(entry, names::HARDWARE_CAMMUS_C12)
 }
 
 fn usb_wheel_hardware(entry: &DeviceEntry, hardware: i32) -> bool {
@@ -1099,6 +1139,29 @@ fn consider_c5(
     }
 }
 
+fn consider_c12(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let notices = vec![
+        notice(Level::Info, games::MSG_INIT_USB),
+        notice(Level::Info, games::MSG_INIT_WHEEL),
+        notice(Level::Info, games::MSG_C12_ATTEMPT),
+        notice(Level::Info, games::MSG_C12_INIT),
+    ];
+    match open_hid(attempt, usb::C12_VID, usb::C12_PID) {
+        OpenedHid::Missing => wheel_missing(notices, games::MSG_C12_MISSING),
+        OpenedHid::Live(hid) => c12_ready(entry, id, notices, HidPort::Live(hid)),
+        OpenedHid::Simulated => c12_ready(entry, id, notices, HidPort::Captured(Vec::new())),
+    }
+}
+
 fn wheel_missing(mut notices: Vec<InitNotice>, missing: &str) -> Considered {
     notices.push(notice(Level::Error, missing));
     notices.push(notice(
@@ -1131,6 +1194,7 @@ fn g29_ready(
         voice: None,
         g29: true,
         c5: false,
+        c12: false,
     }
 }
 
@@ -1153,6 +1217,30 @@ fn c5_ready(
         voice: None,
         g29: false,
         c5: true,
+        c12: false,
+    }
+}
+
+fn c12_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    mut notices: Vec<InitNotice>,
+    port: HidPort,
+) -> Considered {
+    notices.push(notice(Level::Debug, games::MSG_C12_FOUND));
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port,
+        tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: true,
     }
 }
 
@@ -1252,6 +1340,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         voice: None,
         g29: false,
         c5: false,
+        c12: false,
     }
 }
 
@@ -1320,6 +1409,7 @@ fn finish_moza(
         voice: None,
         g29: false,
         c5: false,
+        c12: false,
     }
 }
 
@@ -1956,6 +2046,79 @@ mod tests {
         assert_eq!(
             devices.captured_reports(0).and_then(|frames| frames.last()),
             Some(&blank)
+        );
+    }
+
+    #[test]
+    fn c12_writes_the_led_report_for_rpm() {
+        const SAMPLE_RPM: u32 = 6_000;
+        const SAMPLE_MAX: u32 = 7_000;
+        const SAMPLE_GEAR: u32 = 4;
+        const SAMPLE_VELOCITY: u32 = 300;
+        const C12_FPS: i64 = 60;
+        let config = wheel_config(C12_FPS, names::HARDWARE_CAMMUS_C12);
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| false,
+        );
+        assert!(missing.devices.is_empty());
+        assert!(missing
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_MISSING));
+        assert!(missing.notices.iter().any(|notice| {
+            notice.message == games::usb_init_error_message(games::ERROR_UNKNOWN)
+        }));
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| true,
+            |_path| false,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_FOUND));
+        let mut frame = Telemetry::new();
+        frame.set_rpms(SAMPLE_RPM);
+        frame.set_maxrpm(SAMPLE_MAX);
+        frame.set_gear(SAMPLE_GEAR);
+        frame.set_velocity(SAMPLE_VELOCITY);
+        let mut devices = loaded.devices;
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let expected =
+            usb::c12_report(SAMPLE_RPM, SAMPLE_MAX, SAMPLE_GEAR, SAMPLE_VELOCITY).to_vec();
+        assert_eq!(
+            devices.captured_reports(0).and_then(|frames| frames.last()),
+            Some(&expected)
+        );
+        assert!(tick.iter().any(|notice| {
+            notice.message
+                == games::c12_write_message(
+                    &expected,
+                    telemetry_i32(SAMPLE_RPM),
+                    telemetry_i32(SAMPLE_VELOCITY),
+                    telemetry_i32(SAMPLE_GEAR),
+                )
+        }));
+        let before = devices.captured_reports(0).map(|frames| frames.len());
+        let _ = devices.release(PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            before
+        );
+        assert_eq!(
+            devices.captured_reports(0).and_then(|frames| frames.last()),
+            Some(&expected)
         );
     }
 
