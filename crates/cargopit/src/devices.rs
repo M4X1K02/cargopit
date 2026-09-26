@@ -1,6 +1,7 @@
 //! Configured devices for one play session. A USB tachometer opens the RevBurner
 //! and writes its pulse report on each tick. A Moza R9 serial wheel opens its
-//! port and writes the new-firmware LED frames.
+//! port and writes the new-firmware LED frames. A sound device logs the C init
+//! sequence and its Pulse node name; the stream itself connects later.
 
 use std::path::{Path, PathBuf};
 
@@ -18,6 +19,7 @@ use cargopit_devices::{tick_interval_ms, DeviceKind, SimDevice, DEFAULT_DEVICE_F
 use crate::games;
 use crate::log::Level;
 use crate::scheduler;
+use crate::sound_host;
 use crate::tyres;
 
 pub const REVBURNER_VENDOR_ID: u16 = 0x04d8;
@@ -31,6 +33,7 @@ const GRANULARITY_MAX: i64 = 4;
 const GRANULARITY_REJECTED: i64 = 3;
 const GRANULARITY_FALLBACK: i64 = 1;
 const PROBE_OPEN_NS: u64 = 0;
+const ASSUME_SIM_SUPPORTS_HAPTICS: bool = true;
 
 pub struct LoadedDevices {
     devices: Vec<SimDevice>,
@@ -58,7 +61,14 @@ impl LoadedDevices {
         let Some(index) = profile_index(config.profiles.len(), requested_index) else {
             return Self::empty();
         };
-        open_profile_at(config, index, disable_audio, PROBE_OPEN_NS).devices
+        open_profile_at(
+            config,
+            index,
+            disable_audio,
+            PROBE_OPEN_NS,
+            ASSUME_SIM_SUPPORTS_HAPTICS,
+        )
+        .devices
     }
 
     pub fn empty() -> Self {
@@ -364,12 +374,14 @@ pub fn open_profile_at(
     index: usize,
     disable_audio: bool,
     now_ns: u64,
+    supports_haptics: bool,
 ) -> ProfileLoad {
     open_profile_with(
         config,
         index,
         disable_audio,
         USE_PULSES_DURING_PLAY,
+        supports_haptics,
         &mut HidAttempt::Live { now_ns },
     )
 }
@@ -413,6 +425,7 @@ where
         index,
         disable_audio,
         use_pulses,
+        ASSUME_SIM_SUPPORTS_HAPTICS,
         &mut HidAttempt::Probe {
             hid: &mut hid,
             serial: &mut serial,
@@ -426,6 +439,7 @@ fn open_profile_with(
     index: usize,
     disable_audio: bool,
     use_pulses: bool,
+    supports_haptics: bool,
     attempt: &mut HidAttempt<'_>,
 ) -> ProfileLoad {
     let Some(profile) = config.profiles.get(index) else {
@@ -452,6 +466,7 @@ fn open_profile_with(
             devices.len() as i32,
             disable_audio,
             use_pulses,
+            supports_haptics,
             attempt,
         );
         setup_notices.extend(considered.setup_notices);
@@ -532,6 +547,7 @@ fn consider_entry(
     id: i32,
     disable_audio: bool,
     use_pulses: bool,
+    supports_haptics: bool,
     attempt: &mut HidAttempt<'_>,
 ) -> Considered {
     if let Some(prep) = revburner_prep(entry, use_pulses) {
@@ -539,6 +555,9 @@ fn consider_entry(
     }
     if moza_new_entry(entry) {
         return consider_moza(entry, slot, id, disable_audio, attempt);
+    }
+    if sound_entry(entry) {
+        return consider_sound(entry, slot, id, disable_audio, supports_haptics);
     }
     consider_closed(entry, slot, disable_audio)
 }
@@ -564,12 +583,66 @@ fn consider_closed(entry: &DeviceEntry, slot: i32, disable_audio: bool) -> Consi
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
     }
+    unopened(vec![notice(
+        Level::Warn,
+        games::could_not_initialize_message(class_label(entry_kind(entry))),
+    )])
+}
+
+fn consider_sound(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    supports_haptics: bool,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let Some(effect) = device_effect(entry) else {
+        return consider_closed(entry, slot, disable_audio);
+    };
+    finish_sound(entry, id, effect, supports_haptics)
+}
+
+fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: bool) -> Considered {
+    let opened = sound_host::open_sound(entry, effect, &device_port(entry), supports_haptics);
+    let ready = opened.ready;
+    let mut notices = sound_notices(opened);
+    if !ready {
+        notices.push(notice(
+            Level::Warn,
+            games::could_not_initialize_message(CLASS_SOUND),
+        ));
+        return unopened(notices);
+    }
     Considered {
         setup_notices: Vec::new(),
-        notices: vec![notice(
-            Level::Warn,
-            games::could_not_initialize_message(class_label(entry_kind(entry))),
-        )],
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
+    }
+}
+
+fn sound_entry(entry: &DeviceEntry) -> bool {
+    entry_kind(entry) == DeviceKind::Sound && device_effect(entry).is_some()
+}
+
+fn sound_notices(opened: sound_host::SoundOpen) -> Vec<InitNotice> {
+    opened
+        .notices
+        .into_iter()
+        .map(|(level, message)| notice(level, message))
+        .collect()
+}
+
+fn unopened(notices: Vec<InitNotice>) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
         prepared: None,
         port: HidPort::Closed,
         tach: inactive_tach(),
@@ -1416,5 +1489,123 @@ mod tests {
         assert!(released
             .iter()
             .any(|notice| notice.message == games::serial_free_message(PORT)));
+    }
+
+    const SOUND_SINK: &str = "alsa_output.usb-test.analog-stereo";
+    const SOUND_FPS: i64 = 60;
+    const SOUND_VOLUME: i64 = 40;
+    const SOUND_OTHER_VOLUME: i64 = 80;
+    const SOUND_CHANNELS: i64 = 2;
+    const SOUND_FREQUENCY: i64 = 50;
+    const SOUND_DURATION_S: f64 = 0.1;
+    const SOUND_NOISE: i64 = 0;
+
+    fn sound_entry(effect: &str, tyre: Option<&str>) -> DeviceEntry {
+        let mut device = DeviceEntry::new();
+        device.set_str(keys::KEY_DEVICE, keys::CLASS_SOUND);
+        device.set_str(keys::KEY_EFFECT, effect);
+        if let Some(tyre) = tyre {
+            device.set_str(keys::KEY_TYRE, tyre);
+        }
+        device.set_str(keys::KEY_DEVID, SOUND_SINK);
+        device.set_int(keys::KEY_FPS, SOUND_FPS);
+        device.set_bool(keys::KEY_ENABLED, true);
+        device.set_int(keys::KEY_STREAM_VOLUME, SOUND_VOLUME);
+        device.set_int(keys::KEY_VOLUME, SOUND_OTHER_VOLUME);
+        device.set_int(keys::KEY_CHANNELS, SOUND_CHANNELS);
+        device.set_int(keys::KEY_PAN, sound_host::SOUND_PAN_ALL);
+        device.set_int(keys::KEY_FREQUENCY, SOUND_FREQUENCY);
+        device.set_int(keys::KEY_NOISE, SOUND_NOISE);
+        device.set_float(keys::KEY_DURATION, SOUND_DURATION_S);
+        device
+    }
+
+    fn sound_profile(device: DeviceEntry) -> CargopitConfig {
+        CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        }
+    }
+
+    fn stereo_all_mask() -> u32 {
+        const CHANNEL_BIT: u32 = 1;
+        let channels = u32::try_from(SOUND_CHANNELS).unwrap_or(0);
+        (CHANNEL_BIT << channels) - CHANNEL_BIT
+    }
+
+    #[test]
+    fn sound_devices_log_the_c_init_sequence() {
+        let gear = open_profile_at(
+            &sound_profile(sound_entry("Gear", None)),
+            0,
+            false,
+            PROBE_OPEN_NS,
+            false,
+        );
+        assert_eq!(gear.devices.len(), 1);
+        assert_eq!(gear.devices.effect(0), Some(names::EFFECT_GEAR));
+        let gear_node = games::sound_node_message("cargopit.Gear");
+        let expected = vec![
+            games::haptic_effect_message(games::VIBRATION_GEAR),
+            games::haptic_summary_message(names::EFFECT_GEAR, names::TYRE_FRONT_LEFT),
+            games::haptic_duration_message(SOUND_DURATION_S),
+            games::haptic_frequency_message(SOUND_FREQUENCY),
+            games::haptic_amplitude_message(sound_host::SOUND_AMPLITUDE_UNITY),
+            games::haptic_motor_message(sound_host::SOUND_MOTOR_DEFAULT),
+            games::sound_subtype_message(names::EFFECT_GEAR),
+            games::sound_effect_message(games::VIBRATION_GEAR),
+            games::sound_use_message(SOUND_SINK),
+            games::MSG_SOUND_STANDALONE.to_string(),
+            games::sound_volume_message(SOUND_VOLUME),
+            games::sound_channel_mask_message(stereo_all_mask()),
+            games::sound_channels_message(SOUND_CHANNELS),
+            games::sound_noise_message(SOUND_NOISE),
+            gear_node,
+            games::initialized_devices_message(1),
+            games::starting_device_message(
+                names::DEVICE_SOUND,
+                0,
+                u32::try_from(SOUND_FPS).unwrap_or(0),
+            ),
+        ];
+        let gear_messages: Vec<String> = gear
+            .notices
+            .iter()
+            .map(|notice| notice.message.clone())
+            .collect();
+        assert_eq!(gear_messages, expected);
+
+        let lock = open_profile_at(
+            &sound_profile(sound_entry("TyreLock", Some("ALL"))),
+            0,
+            false,
+            PROBE_OPEN_NS,
+            true,
+        );
+        assert_eq!(lock.devices.effect(0), Some(names::EFFECT_TYRE_LOCK));
+        assert!(lock.notices.iter().any(|notice| {
+            notice.message == games::sound_node_message("cargopit.TyreLock.All")
+        }));
+
+        let blocked = open_profile_at(
+            &sound_profile(sound_entry("Suspension", Some("All"))),
+            0,
+            false,
+            PROBE_OPEN_NS,
+            false,
+        );
+        assert!(blocked.devices.is_empty());
+        assert_eq!(blocked.notices[0].message, games::MSG_SOUND_SKIP_HAPTICS);
+        assert_eq!(
+            blocked.notices[1].message,
+            games::could_not_initialize_message(CLASS_SOUND)
+        );
+        assert_eq!(
+            blocked.notices[2].message,
+            games::initialized_devices_message(0)
+        );
     }
 }
