@@ -571,6 +571,18 @@ pub fn arduino_copy_message(size: i32) -> String {
     format!("copying {size} bytes to arduino device")
 }
 
+pub fn simwind_init_message(fanpower: f64) -> String {
+    format!("Initializing arduino devices for sim wind with fanpower: {fanpower:.6}")
+}
+
+pub fn simwind_speed_message(mph: i32) -> String {
+    format!("Updating arduino device speed to {mph}")
+}
+
+pub fn simwind_fan_message(fan: i32, configured: f64) -> String {
+    format!("Sending fanpower: {fan} (from config: {configured:.6})")
+}
+
 pub fn tach_config_load_message(path: &str) -> String {
     format!("will try to load config file at {path}")
 }
@@ -1229,6 +1241,20 @@ mod tests {
         assert_eq!(
             arduino_copy_message(cargopit_devices::serial::SHIFT_PACKET_LEN),
             "copying 1 bytes to arduino device"
+        );
+        assert_eq!(
+            simwind_init_message(cargopit_config::keys::FANPOWER_DEFAULT),
+            "Initializing arduino devices for sim wind with fanpower: 0.600000"
+        );
+        const SIMWIND_SAMPLE_MPH: i32 = 50;
+        const SIMWIND_SAMPLE_FAN: i32 = 153;
+        assert_eq!(
+            simwind_speed_message(SIMWIND_SAMPLE_MPH),
+            "Updating arduino device speed to 50"
+        );
+        assert_eq!(
+            simwind_fan_message(SIMWIND_SAMPLE_FAN, cargopit_config::keys::FANPOWER_DEFAULT),
+            "Sending fanpower: 153 (from config: 0.600000)"
         );
         assert_eq!(MSG_MOZA_ARM_FAILED, "Moza R9 telemetry arm failed");
         assert_eq!(MSG_MOZA_ARMED, "Moza R9 telemetry mode armed");
