@@ -8,7 +8,8 @@
 //! opens over HID and writes its motor report when that play value changes. A Moza R9 serial wheel opens its port and
 //! writes the new-firmware LED frames. Shift lights open their serial port and write
 //! one lit-count byte on each tick. SimWind opens its serial port and writes speed
-//! and fan power on each tick. A sound device logs the C init sequence,
+//! and fan power on each tick. Serial haptic opens its port when the sim supports
+//! haptics and writes an eight-byte motor report on each tick. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
 use std::fs::OpenOptions;
@@ -83,6 +84,7 @@ pub struct LoadedDevices {
     simnet: Vec<Option<SimNetPedal>>,
     shift_lights: Vec<Option<i32>>,
     simwind: Vec<Option<f64>>,
+    serial_haptic: Vec<Option<SerialHaptic>>,
     luas: Vec<Option<LuaHost>>,
 }
 
@@ -133,6 +135,7 @@ impl LoadedDevices {
             simnet: Vec::new(),
             shift_lights: Vec::new(),
             simwind: Vec::new(),
+            serial_haptic: Vec::new(),
             luas: Vec::new(),
         }
     }
@@ -200,6 +203,7 @@ impl LoadedDevices {
         notices.extend(self.write_moza(index, frame, now_ns));
         notices.extend(self.write_shiftlights(index, frame));
         notices.extend(self.write_simwind(index, frame));
+        notices.extend(self.write_serial_haptic(index, frame, now_ns));
         notices.extend(self.write_g29(index, frame.rpms(), frame.maxrpm()));
         notices.extend(self.write_c5(index, frame));
         notices.extend(self.write_c12(index, frame));
@@ -227,6 +231,7 @@ impl LoadedDevices {
         self.blank_g29(&mut notices);
         self.blank_c5(&mut notices);
         self.blank_moza(now_ns, &mut notices);
+        self.blank_serial_haptic(&mut notices);
         self.close_ports(&mut notices);
         self.close_c12_lua(&mut notices);
         self.close_csl();
@@ -615,6 +620,37 @@ impl LoadedDevices {
         notices
     }
 
+    fn write_serial_haptic(
+        &mut self,
+        index: usize,
+        frame: &Telemetry,
+        now_ns: u64,
+    ) -> Vec<InitNotice> {
+        let Some(tick) = self.haptic_tick(index, frame, now_ns) else {
+            return Vec::new();
+        };
+        let notices = serial_haptic_tick_notices(&tick);
+        write_haptic_packet(self.serials.get_mut(index), &tick.step.packet);
+        notices
+    }
+
+    fn haptic_tick(
+        &mut self,
+        index: usize,
+        frame: &Telemetry,
+        now_ns: u64,
+    ) -> Option<SerialHapticTick> {
+        let haptic = self.serial_haptic.get_mut(index)?.as_mut()?;
+        Some(haptic.tick(frame, now_ns))
+    }
+
+    fn blank_serial_haptic(&mut self, notices: &mut Vec<InitNotice>) {
+        for index in haptic_indexes(&self.serial_haptic) {
+            write_haptic_packet(self.serials.get_mut(index), &serial::haptic_stop_packet());
+            notices.push(notice(Level::Info, games::MSG_SERIAL_HAPTIC_ZERO));
+        }
+    }
+
     fn write_moza(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
         let step = {
             let Some(wheel) = self.wheels.get_mut(index).and_then(Option::as_mut) else {
@@ -889,6 +925,7 @@ fn open_profile_with(
     let mut simnet = Vec::new();
     let mut shift_lights = Vec::new();
     let mut simwind = Vec::new();
+    let mut serial_haptic = Vec::new();
     let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
@@ -927,6 +964,7 @@ fn open_profile_with(
         simnet.push(considered.simnet);
         shift_lights.push(considered.shift_lights);
         simwind.push(considered.simwind);
+        serial_haptic.push(considered.serial_haptic);
         luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
@@ -963,6 +1001,7 @@ fn open_profile_with(
             simnet,
             shift_lights,
             simwind,
+            serial_haptic,
             luas,
         },
         setup_notices,
@@ -1008,6 +1047,7 @@ struct Considered {
     simnet: Option<SimNetPedal>,
     shift_lights: Option<i32>,
     simwind: Option<f64>,
+    serial_haptic: Option<SerialHaptic>,
 }
 
 enum SerialPort {
@@ -1033,6 +1073,9 @@ fn consider_entry(
     }
     if simwind_entry(entry) {
         return consider_simwind(entry, slot, id, disable_audio, attempt);
+    }
+    if serial_haptic_entry(entry) {
+        return consider_serial_haptic(entry, slot, id, disable_audio, supports_haptics, attempt);
     }
     if moza_new_entry(entry) {
         return consider_moza(entry, slot, id, disable_audio, attempt);
@@ -1140,6 +1183,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -1202,6 +1246,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -1226,6 +1271,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -1250,6 +1296,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -1396,6 +1443,7 @@ fn revburner_attempt(
                 simnet: None,
                 shift_lights: None,
                 simwind: None,
+                serial_haptic: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1418,6 +1466,7 @@ fn revburner_attempt(
             simnet: None,
             shift_lights: None,
             simwind: None,
+            serial_haptic: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1439,6 +1488,7 @@ fn revburner_attempt(
             simnet: None,
             shift_lights: None,
             simwind: None,
+            serial_haptic: None,
         },
     }
 }
@@ -1576,6 +1626,7 @@ fn p1000_ready(
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -1710,6 +1761,7 @@ fn simnet_ready(
         }),
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -1793,6 +1845,7 @@ fn csl_ready(
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -1878,9 +1931,7 @@ fn csl_haptic_notices(entry: &DeviceEntry, effect: i32) -> Vec<InitNotice> {
     let amplitude = entry
         .get_i64(keys::KEY_AMPLITUDE)
         .unwrap_or(HAPTIC_AMPLITUDE_UNITY);
-    let motor = entry
-        .get_i64(keys::KEY_MOTORS)
-        .unwrap_or(HAPTIC_MOTOR_DEFAULT);
+    let motor = configured_motor_i64(entry);
     let mut notices = Vec::new();
     match csl_vibration_phrase(effect) {
         Some(phrase) => notices.push(notice(Level::Info, games::haptic_effect_message(phrase))),
@@ -1925,11 +1976,7 @@ fn csl_effect(entry: &DeviceEntry, effect: i32) -> Option<HapticEffect> {
                 .unwrap_or(HAPTIC_AMPLITUDE_UNITY),
         ),
         duration: csl_duration(entry, effect),
-        motor_position: u32_from_i64(
-            entry
-                .get_i64(keys::KEY_MOTORS)
-                .unwrap_or(HAPTIC_MOTOR_DEFAULT),
-        ),
+        motor_position: configured_motor(entry),
         ..HapticSettings::default()
     }))
 }
@@ -1978,6 +2025,16 @@ fn csl_vibration_phrase(effect: i32) -> Option<&'static str> {
 
 fn u32_from_i64(value: i64) -> u32 {
     u32::try_from(value).unwrap_or(0)
+}
+
+fn configured_motor_i64(entry: &DeviceEntry) -> i64 {
+    entry
+        .get_i64(keys::KEY_MOTORS)
+        .unwrap_or(HAPTIC_MOTOR_DEFAULT)
+}
+
+fn configured_motor(entry: &DeviceEntry) -> u32 {
+    u32_from_i64(configured_motor_i64(entry))
 }
 
 fn usb_wheel_hardware(entry: &DeviceEntry, hardware: i32) -> bool {
@@ -2170,6 +2227,7 @@ fn gt_ready(
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -2248,6 +2306,7 @@ fn g29_ready(
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -2278,6 +2337,7 @@ fn c5_ready(
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -2308,6 +2368,7 @@ fn c12_ready(
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -2358,9 +2419,20 @@ fn serial_lookup_notices(
     subtype: i32,
     init: String,
 ) -> Vec<InitNotice> {
+    let mut notices = serial_preamble(subtype, init);
+    notices.extend(serial_open_attempt_notices(path, configured));
+    notices
+}
+
+fn serial_preamble(subtype: i32, init: String) -> Vec<InitNotice> {
     vec![
         notice(Level::Trace, games::serial_subtype_message(subtype)),
         notice(Level::Info, init),
+    ]
+}
+
+fn serial_open_attempt_notices(path: &str, configured: i64) -> Vec<InitNotice> {
+    vec![
         notice(Level::Info, games::MSG_SERIAL_START),
         notice(
             Level::Info,
@@ -2383,10 +2455,11 @@ fn config_i32(value: i64) -> i32 {
 
 fn serial_open_failed(mut notices: Vec<InitNotice>) -> Considered {
     notices.push(notice(Level::Error, games::MSG_SERIAL_OPEN_ERROR));
-    notices.push(notice(
-        Level::Warn,
-        games::serial_init_error_message(games::SERIAL_OPEN_ERROR),
-    ));
+    serial_rejected(notices, games::SERIAL_OPEN_ERROR)
+}
+
+fn serial_rejected(mut notices: Vec<InitNotice>, code: i32) -> Considered {
+    notices.push(notice(Level::Warn, games::serial_init_error_message(code)));
     notices.push(notice(
         Level::Warn,
         games::could_not_initialize_message(CLASS_SERIAL),
@@ -2421,6 +2494,7 @@ fn shiftlights_ready(
         simnet: None,
         shift_lights: Some(lights),
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -2490,7 +2564,168 @@ fn simwind_ready(
         simnet: None,
         shift_lights: None,
         simwind: Some(fanpower),
+        serial_haptic: None,
     }
+}
+
+fn serial_haptic_entry(entry: &DeviceEntry) -> bool {
+    if entry_kind(entry) != DeviceKind::Serial {
+        return false;
+    }
+    let kind = entry.get_str(keys::KEY_TYPE).unwrap_or("");
+    names::lookup(names::SERIAL_TYPES, kind) == Some(names::SUBTYPE_SERIAL_HAPTIC)
+}
+
+fn consider_serial_haptic(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    supports_haptics: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let mut notices = serial_preamble(
+        names::SUBTYPE_SERIAL_HAPTIC,
+        games::MSG_SERIAL_HAPTIC_INIT.to_string(),
+    );
+    if !supports_haptics {
+        return serial_rejected(notices, games::UNSUPPORTED_SIM_FEATURE);
+    }
+    let effect_id = device_effect(entry).unwrap_or(names::EFFECT_ENGINE);
+    notices.extend(csl_haptic_notices(entry, effect_id));
+    let path = device_port(entry);
+    let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
+    notices.extend(serial_open_attempt_notices(&path, configured));
+    let baud = serial_baud(configured);
+    let haptic = serial_haptic_from(entry, effect_id);
+    match open_serial(attempt, &path, baud) {
+        OpenedSerial::Missing => serial_open_failed(notices),
+        OpenedSerial::Ready(port) => {
+            notices.extend(moza_ready_notices(baud));
+            serial_haptic_ready(entry, id, notices, port, haptic)
+        }
+    }
+}
+
+fn serial_haptic_from(entry: &DeviceEntry, effect_id: i32) -> SerialHaptic {
+    SerialHaptic {
+        effect: csl_effect(entry, effect_id),
+        effect_id,
+        ampfactor: entry
+            .get_f64(keys::KEY_AMPFACTOR)
+            .unwrap_or(keys::AMPFACTOR_DEFAULT),
+        motor: configured_motor(entry),
+        state: serial::SerialHapticState::new(),
+    }
+}
+
+fn serial_haptic_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: SerialPort,
+    haptic: SerialHaptic,
+) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: port,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: None,
+        gt: false,
+        csl: None,
+        p1000: None,
+        simnet: None,
+        shift_lights: None,
+        simwind: None,
+        serial_haptic: Some(haptic),
+    }
+}
+
+struct SerialHaptic {
+    effect: Option<HapticEffect>,
+    effect_id: i32,
+    ampfactor: f64,
+    motor: u32,
+    state: serial::SerialHapticState,
+}
+
+struct SerialHapticTick {
+    step: serial::SerialHapticStep,
+    effect_id: i32,
+    raw: f64,
+    ampfactor: f64,
+}
+
+impl SerialHaptic {
+    fn tick(&mut self, frame: &Telemetry, now_ns: u64) -> SerialHapticTick {
+        let raw = self.raw_play(frame, now_ns);
+        let step = self.state.tick(raw, self.ampfactor, self.motor);
+        SerialHapticTick {
+            step,
+            effect_id: self.effect_id,
+            raw,
+            ampfactor: self.ampfactor,
+        }
+    }
+
+    fn raw_play(&mut self, frame: &Telemetry, now_ns: u64) -> f64 {
+        let Some(effect) = self.effect.as_mut() else {
+            return HAPTIC_STATE_IDLE;
+        };
+        let clock = VirtualClock::from_monotonic_ns(now_ns);
+        effect.play_with_clock(frame, &clock)
+    }
+}
+
+fn serial_haptic_tick_notices(tick: &SerialHapticTick) -> Vec<InitNotice> {
+    let mut notices = vec![notice(
+        Level::Trace,
+        games::MSG_SERIAL_HAPTIC_UPDATING.to_string(),
+    )];
+    for channel in tick.step.channels.into_iter().flatten() {
+        notices.push(notice(
+            Level::Trace,
+            games::serial_haptic_channel_message(
+                tick.effect_id,
+                i32::from(channel.speed),
+                channel.motor,
+                tick.raw,
+                tick.ampfactor,
+            ),
+        ));
+    }
+    notices.push(notice(
+        Level::Trace,
+        games::arduino_copy_message(serial::HAPTIC_PACKET_LEN),
+    ));
+    notices
+}
+
+fn write_haptic_packet(port: Option<&mut SerialPort>, packet: &[u8]) {
+    let Some(port) = port else {
+        return;
+    };
+    let _ = write_serial_frame(port, packet);
+}
+
+fn haptic_indexes(haptics: &[Option<SerialHaptic>]) -> Vec<usize> {
+    haptics
+        .iter()
+        .enumerate()
+        .filter_map(|(index, haptic)| haptic.as_ref().map(|_| index))
+        .collect()
 }
 
 fn consider_moza(
@@ -2541,22 +2776,12 @@ fn device_port(entry: &DeviceEntry) -> String {
 }
 
 fn moza_lookup_notices(path: &str, configured: i64) -> Vec<InitNotice> {
-    vec![
-        notice(
-            Level::Trace,
-            games::serial_subtype_message(names::SUBTYPE_SERIAL_WHEEL),
-        ),
-        notice(Level::Info, games::MSG_MOZA_NEW_INIT),
-        notice(Level::Info, games::MSG_SERIAL_START),
-        notice(
-            Level::Info,
-            games::serial_init_port_message(path, configured),
-        ),
-        notice(Level::Info, games::serial_looking_message(path)),
-        notice(Level::Debug, games::MSG_SERIAL_NO_EXISTING),
-        notice(Level::Info, games::MSG_SERIAL_OPENING),
-        notice(Level::Debug, games::serial_looking_for_port_message(path)),
-    ]
+    let mut notices = serial_preamble(
+        names::SUBTYPE_SERIAL_WHEEL,
+        games::MSG_MOZA_NEW_INIT.to_string(),
+    );
+    notices.extend(serial_open_attempt_notices(path, configured));
+    notices
 }
 
 fn moza_ready_notices(baud: u32) -> Vec<InitNotice> {
@@ -2640,6 +2865,7 @@ fn finish_moza(
         simnet: None,
         shift_lights: None,
         simwind: None,
+        serial_haptic: None,
     }
 }
 
@@ -2838,6 +3064,12 @@ mod tests {
     use cargopit_devices::telemetry::Telemetry;
 
     const PLAY_USES_PULSES: bool = false;
+    const HAPTIC_MOTOR_CHANNEL_ONE: i64 = 0;
+    const HAPTIC_LOG_MOTOR_ONE: i32 = 1;
+    const HAPTIC_MOTOR_FLAG: u8 = 1;
+    const HAPTIC_MOTOR_ONE: usize = 0;
+    const HAPTIC_EFFECT_ONE: usize = 1;
+    const WHEEL_FRONT_LEFT: usize = 0;
     const FRAME_PULSES: u32 = 7;
     const RPM_TABLE: u32 = 1000;
     const ELEMENT_AT_1000: i32 = 1;
@@ -3304,6 +3536,290 @@ mod tests {
             &games::simwind_speed_message(i32::from(expected[serial::SIMWIND_BYTE_SPEED]))
         ));
         assert!(devices.captured_serial(0).is_none());
+    }
+
+    #[test]
+    fn serial_haptic_missing_port_is_not_scheduled() {
+        const PORT: &str = "/dev/ttyHAPTIC-TEST";
+        let config = serial_haptic_config(PORT, Some(HAPTIC_MOTOR_CHANNEL_ONE));
+        let mut seen = String::new();
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| {
+                seen = path.to_string();
+                false
+            },
+        );
+        assert_eq!(seen, PORT);
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_SERIAL_HAPTIC_INIT));
+        assert!(notice_has(
+            &missing.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP)
+        ));
+        assert!(notice_has(&missing.notices, games::MSG_SERIAL_OPEN_ERROR));
+        assert!(notice_has(
+            &missing.notices,
+            &games::serial_init_error_message(games::SERIAL_OPEN_ERROR)
+        ));
+        assert!(notice_absent(
+            &missing.notices,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+    }
+
+    #[test]
+    fn serial_haptic_without_sim_support_does_not_open() {
+        const PORT: &str = "/dev/ttyHAPTIC-TEST";
+        let config = serial_haptic_config(PORT, Some(HAPTIC_MOTOR_CHANNEL_ONE));
+        let mut seen = false;
+        let missing = open_profile_with(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            false,
+            None,
+            &mut HidAttempt::Probe {
+                hid: &mut |_vendor, _product| false,
+                serial: &mut |_path| {
+                    seen = true;
+                    true
+                },
+                sysfs: None,
+                now_ns: PROBE_OPEN_NS,
+            },
+        );
+        assert!(!seen);
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_SERIAL_HAPTIC_INIT));
+        assert!(notice_has(
+            &missing.notices,
+            &games::serial_init_error_message(games::UNSUPPORTED_SIM_FEATURE)
+        ));
+        assert!(notice_has(
+            &missing.notices,
+            &games::could_not_initialize_message(CLASS_SERIAL)
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_SERIAL_START));
+        assert!(notice_absent(
+            &missing.notices,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_USB_NO_HAPTICS));
+        assert!(notice_absent(
+            &missing.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP)
+        ));
+    }
+
+    #[test]
+    fn serial_haptic_writes_slip_and_keeps_the_effect_byte() {
+        const PORT: &str = "/dev/ttyHAPTIC-TEST";
+        const SAMPLE_SPEED: u32 = 80;
+        const SAMPLE_Y: f64 = 1.0;
+        const SAMPLE_GAS: f64 = 0.2;
+        const SAMPLE_SLIP: f64 = -0.4;
+        const STRONGER_SLIP: f64 = -0.8;
+        const SAMPLE_PLAY: f64 = 0.4;
+        const SLIP_SPEED: u8 = 102;
+        const STRONGER_SPEED: u8 = 204;
+        let config = serial_haptic_config(PORT, Some(HAPTIC_MOTOR_CHANNEL_ONE));
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| path == PORT,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            &games::serial_subtype_message(names::SUBTYPE_SERIAL_HAPTIC),
+            games::MSG_SERIAL_HAPTIC_INIT
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_SERIAL_HAPTIC_INIT,
+            &games::haptic_effect_message(games::VIBRATION_SLIP)
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP),
+            games::MSG_SERIAL_START
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_SERIAL_START,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::haptic_motor_message(HAPTIC_MOTOR_CHANNEL_ONE)
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_baud_message(serial_baud(keys::BAUD_DEFAULT))
+        ));
+        let mut devices = loaded.devices;
+        let frame = csl_frame(
+            SAMPLE_SPEED,
+            SAMPLE_Y,
+            SAMPLE_GAS,
+            WHEEL_FRONT_LEFT,
+            SAMPLE_SLIP,
+        );
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_has(&tick, games::MSG_SERIAL_HAPTIC_UPDATING));
+        assert!(notice_has(
+            &tick,
+            &games::serial_haptic_channel_message(
+                names::EFFECT_TYRE_SLIP,
+                i32::from(SLIP_SPEED),
+                HAPTIC_LOG_MOTOR_ONE,
+                SAMPLE_PLAY,
+                keys::AMPFACTOR_DEFAULT,
+            )
+        ));
+        assert!(notice_has(
+            &tick,
+            &games::arduino_copy_message(serial::HAPTIC_PACKET_LEN)
+        ));
+        let held = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_absent(
+            &held,
+            &games::serial_haptic_channel_message(
+                names::EFFECT_TYRE_SLIP,
+                i32::from(SLIP_SPEED),
+                HAPTIC_LOG_MOTOR_ONE,
+                SAMPLE_PLAY,
+                keys::AMPFACTOR_DEFAULT,
+            )
+        ));
+        let stronger = csl_frame(
+            SAMPLE_SPEED,
+            SAMPLE_Y,
+            SAMPLE_GAS,
+            WHEEL_FRONT_LEFT,
+            STRONGER_SLIP,
+        );
+        let _ = devices.tick(0, &stronger, PROBE_OPEN_NS);
+        let idle = csl_frame(SAMPLE_SPEED, SAMPLE_Y, 0.0, WHEEL_FRONT_LEFT, SAMPLE_SLIP);
+        let idle_tick = devices.tick(0, &idle, PROBE_OPEN_NS);
+        assert!(notice_has(
+            &idle_tick,
+            &games::serial_haptic_channel_message(
+                names::EFFECT_TYRE_SLIP,
+                0,
+                HAPTIC_LOG_MOTOR_ONE,
+                0.0,
+                keys::AMPFACTOR_DEFAULT,
+            )
+        ));
+        let frames = devices.captured_serial(0).expect("captured");
+        assert_eq!(
+            frames,
+            vec![
+                haptic_slip_packet(SLIP_SPEED, true),
+                haptic_slip_packet(SLIP_SPEED, false),
+                haptic_slip_packet(STRONGER_SPEED, true),
+                haptic_slip_packet(0, true),
+            ]
+        );
+        let released = devices.release(PROBE_OPEN_NS);
+        assert!(notice_before(
+            &released,
+            games::MSG_SERIAL_HAPTIC_ZERO,
+            &games::serial_free_message(PORT)
+        ));
+        assert!(notice_absent(&released, games::MSG_SERIAL_HAPTIC_UPDATING));
+        assert!(devices.captured_serial(0).is_none());
+    }
+
+    #[test]
+    fn serial_haptic_unset_motor_writes_zeros() {
+        const PORT: &str = "/dev/ttyHAPTIC-TEST";
+        const SAMPLE_SPEED: u32 = 80;
+        const SAMPLE_Y: f64 = 1.0;
+        const SAMPLE_GAS: f64 = 0.2;
+        const SAMPLE_SLIP: f64 = -0.4;
+        let config = serial_haptic_config(PORT, None);
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| path == PORT,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_has(
+            &loaded.notices,
+            &games::haptic_motor_message(HAPTIC_MOTOR_DEFAULT)
+        ));
+        let mut devices = loaded.devices;
+        let frame = csl_frame(
+            SAMPLE_SPEED,
+            SAMPLE_Y,
+            SAMPLE_GAS,
+            WHEEL_FRONT_LEFT,
+            SAMPLE_SLIP,
+        );
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_absent(
+            &tick,
+            &games::serial_haptic_channel_message(
+                names::EFFECT_TYRE_SLIP,
+                0,
+                HAPTIC_LOG_MOTOR_ONE,
+                SAMPLE_SLIP.abs(),
+                keys::AMPFACTOR_DEFAULT,
+            )
+        ));
+        let frames = devices.captured_serial(0).expect("captured");
+        assert_eq!(frames, vec![vec![0; serial::HAPTIC_PACKET_LEN as usize]]);
+    }
+
+    fn serial_haptic_config(path: &str, motors: Option<i64>) -> CargopitConfig {
+        const HAPTIC_FPS: i64 = 60;
+        let mut device = DeviceEntry::new();
+        device.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        let kind =
+            names::name_for(names::SERIAL_TYPES, names::SUBTYPE_SERIAL_HAPTIC).expect("haptic");
+        device.set_str(keys::KEY_TYPE, kind);
+        device.set_str(keys::KEY_DEVPATH, path);
+        device.set_int(keys::KEY_BAUD, keys::BAUD_DEFAULT);
+        let effect = names::name_for(names::EFFECTS, names::EFFECT_TYRE_SLIP).expect("slip");
+        device.set_str(keys::KEY_EFFECT, effect);
+        if let Some(motors) = motors {
+            device.set_int(keys::KEY_MOTORS, motors);
+        }
+        device.set_bool(keys::KEY_ENABLED, true);
+        device.set_int(keys::KEY_FPS, HAPTIC_FPS);
+        CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        }
+    }
+
+    fn haptic_slip_packet(speed: u8, flagged: bool) -> Vec<u8> {
+        let mut packet = vec![0; serial::HAPTIC_PACKET_LEN as usize];
+        packet[HAPTIC_EFFECT_ONE] = speed;
+        if flagged {
+            packet[HAPTIC_MOTOR_ONE] = HAPTIC_MOTOR_FLAG;
+        }
+        packet
     }
 
     fn simwind_config(path: &str, baud: i64) -> CargopitConfig {

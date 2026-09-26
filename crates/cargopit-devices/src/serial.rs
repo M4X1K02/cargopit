@@ -57,7 +57,18 @@ const MOTOR_RIGHT_MID: u32 = 6;
 const MOTOR_RIGHT_FRONT: u32 = 9;
 const MOTOR_RIGHT_ALL: u32 = 12;
 const HAPTIC_MOTORS: usize = 4;
-const HAPTIC_PACKET: usize = HAPTIC_MOTORS * 2;
+const HAPTIC_MOTOR_STRIDE: usize = 2;
+const HAPTIC_EFFECT_OFFSET: usize = 1;
+const HAPTIC_PACKET: usize = HAPTIC_MOTORS * HAPTIC_MOTOR_STRIDE;
+pub const HAPTIC_PACKET_LEN: i32 = HAPTIC_PACKET as i32;
+const HAPTIC_MOTOR_FLAG: u8 = 1;
+const HAPTIC_CHANNEL_SLOTS: usize = 2;
+const HAPTIC_SLOT_ONE: usize = 0;
+const HAPTIC_SLOT_THREE: usize = 1;
+const HAPTIC_LOG_MOTOR_ONE: i32 = 1;
+const HAPTIC_LOG_MOTOR_THREE: i32 = 3;
+const HAPTIC_MOTOR_ONE_INDEX: usize = 0;
+const HAPTIC_MOTOR_THREE_INDEX: usize = 2;
 const MOZA_MAGIC: u32 = 0x0d;
 const MOZA_START: u8 = 0x7e;
 const MOZA_R5_TEMPLATE: [u8; 11] = [0x7e, 0x06, 0x41, 0x13, 0xfd, 0xde, 0, 0, 0, 0, 0];
@@ -455,47 +466,102 @@ fn motor_three(position: u32) -> bool {
     )
 }
 
-fn haptic_packet(effect: u8, motor: u32, enabled: bool) -> [u8; HAPTIC_PACKET] {
-    let mut bytes = [0; HAPTIC_PACKET];
-    if !enabled {
-        return bytes;
+#[derive(Clone, Copy)]
+pub struct SerialHapticChannel {
+    pub motor: i32,
+    pub speed: u8,
+}
+
+#[derive(Clone, Copy)]
+pub struct SerialHapticStep {
+    pub packet: [u8; HAPTIC_PACKET],
+    pub channels: [Option<SerialHapticChannel>; HAPTIC_CHANNEL_SLOTS],
+}
+
+#[derive(Default)]
+pub struct SerialHapticState {
+    packet: [u8; HAPTIC_PACKET],
+    scaled: f64,
+}
+
+impl SerialHapticState {
+    pub fn new() -> Self {
+        Self::default()
     }
-    if motor_one(motor) {
-        bytes[0] = 1;
-        bytes[1] = effect;
+
+    pub fn tick(&mut self, raw_play: f64, ampfactor: f64, motor: u32) -> SerialHapticStep {
+        clear_haptic_motors(&mut self.packet);
+        let scaled = clamp_haptic_play(raw_play * ampfactor);
+        let mut channels = [None; HAPTIC_CHANNEL_SLOTS];
+        if scaled != self.scaled {
+            let speed = haptic_effect_speed(scaled);
+            if motor_one(motor) {
+                set_haptic_channel(&mut self.packet, HAPTIC_MOTOR_ONE_INDEX, speed);
+                channels[HAPTIC_SLOT_ONE] = Some(SerialHapticChannel {
+                    motor: HAPTIC_LOG_MOTOR_ONE,
+                    speed,
+                });
+            }
+            if motor_three(motor) {
+                set_haptic_channel(&mut self.packet, HAPTIC_MOTOR_THREE_INDEX, speed);
+                channels[HAPTIC_SLOT_THREE] = Some(SerialHapticChannel {
+                    motor: HAPTIC_LOG_MOTOR_THREE,
+                    speed,
+                });
+            }
+            self.scaled = scaled;
+        }
+        SerialHapticStep {
+            packet: self.packet,
+            channels,
+        }
     }
-    if motor_three(motor) {
-        bytes[4] = 1;
-        bytes[5] = effect;
+}
+
+pub fn haptic_stop_packet() -> [u8; HAPTIC_PACKET] {
+    let mut stopped = [0; HAPTIC_PACKET];
+    for index in 0..HAPTIC_MOTORS {
+        stopped[index * HAPTIC_MOTOR_STRIDE] = HAPTIC_MOTOR_FLAG;
     }
-    bytes
+    stopped
+}
+
+fn clamp_haptic_play(play: f64) -> f64 {
+    if play > PLAY_LIMIT {
+        return PLAY_LIMIT;
+    }
+    play
+}
+
+fn haptic_effect_speed(play: f64) -> u8 {
+    (EFFECT_BYTE_SCALE * play).ceil() as u8
+}
+
+fn clear_haptic_motors(packet: &mut [u8; HAPTIC_PACKET]) {
+    for index in 0..HAPTIC_MOTORS {
+        packet[index * HAPTIC_MOTOR_STRIDE] = 0;
+    }
+}
+
+fn set_haptic_channel(packet: &mut [u8; HAPTIC_PACKET], motor_index: usize, speed: u8) {
+    let motor = motor_index * HAPTIC_MOTOR_STRIDE;
+    packet[motor] = HAPTIC_MOTOR_FLAG;
+    packet[motor + HAPTIC_EFFECT_OFFSET] = speed;
 }
 
 fn run_haptic(log: &Log, frames: &[Telemetry]) {
     let id = log.open_port(CAPTURE_PORT, BAUD_DEFAULT);
     let clock = Trace { log };
     let mut effect = HapticEffect::new(&haptic_settings());
-    let mut state = 0.0;
+    let mut state = SerialHapticState::new();
     each_frame(log, frames, |_log, frame| {
-        let mut play = effect.play_with_clock(frame, &clock) * AMP_FACTOR;
-        if play > PLAY_LIMIT {
-            play = PLAY_LIMIT;
-        }
-        let changed = play != state;
-        if changed {
-            state = play;
-        }
-        let speed = (EFFECT_BYTE_SCALE * play).ceil() as u8;
-        let packet = haptic_packet(speed, MOTOR_1, changed);
+        let raw = effect.play_with_clock(frame, &clock);
+        let step = state.tick(raw, AMP_FACTOR, MOTOR_1);
         let _ = ARDUINO_TIMEOUT_MS;
-        log.write_port(id, &packet);
+        log.write_port(id, &step.packet);
     });
-    let mut stopped = [0; HAPTIC_PACKET];
-    for motor in 0..HAPTIC_MOTORS {
-        stopped[motor * 2] = 1;
-    }
     let _ = HAPTIC_ZERO_TIMEOUT_MS;
-    log.write_port(id, &stopped);
+    log.write_port(id, &haptic_stop_packet());
     log.close_port(id);
 }
 
@@ -1397,5 +1463,87 @@ mod tests {
         assert_eq!(report[SIMWIND_BYTE_SPEED], SAMPLE_MPH);
         assert_eq!(report[SIMWIND_BYTE_FAN], SAMPLE_FAN_BYTE);
         assert_eq!(report.len(), SIMWIND_LEN);
+    }
+
+    #[test]
+    fn haptic_keeps_effect_bytes_when_play_is_unchanged() {
+        const FULL_SPEED: u8 = 255;
+        let mut state = SerialHapticState::new();
+        let first = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_1);
+        assert_eq!(
+            first.packet,
+            [HAPTIC_MOTOR_FLAG, FULL_SPEED, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            first.channels[HAPTIC_SLOT_ONE].map(|channel| channel.speed),
+            Some(FULL_SPEED)
+        );
+        let held = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_1);
+        assert_eq!(held.packet, [0, FULL_SPEED, 0, 0, 0, 0, 0, 0]);
+        assert!(held.channels.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn haptic_default_motor_enables_no_channel() {
+        const MOTOR_CONFIG_DEFAULT: u32 = 1;
+        let mut state = SerialHapticState::new();
+        let step = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_CONFIG_DEFAULT);
+        assert_eq!(step.packet, [0; HAPTIC_PACKET]);
+        assert!(step.channels.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn haptic_front_axle_sets_both_channels() {
+        const FULL_SPEED: u8 = 255;
+        let mut state = SerialHapticState::new();
+        let step = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_FRONT_AXLE);
+        assert_eq!(
+            step.packet,
+            [
+                HAPTIC_MOTOR_FLAG,
+                FULL_SPEED,
+                0,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                FULL_SPEED,
+                0,
+                0
+            ]
+        );
+        assert_eq!(
+            step.channels[HAPTIC_SLOT_THREE].map(|channel| channel.motor),
+            Some(HAPTIC_LOG_MOTOR_THREE)
+        );
+    }
+
+    #[test]
+    fn haptic_stop_packet_enables_every_motor() {
+        assert_eq!(
+            haptic_stop_packet(),
+            [
+                HAPTIC_MOTOR_FLAG,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                0
+            ]
+        );
+    }
+
+    #[test]
+    fn haptic_return_to_zero_still_flags_the_motor() {
+        const SAMPLE_PLAY: f64 = 0.4;
+        const SAMPLE_SPEED: u8 = 102;
+        let mut state = SerialHapticState::new();
+        let active = state.tick(SAMPLE_PLAY, AMP_FACTOR, MOTOR_1);
+        assert_eq!(
+            active.packet,
+            [HAPTIC_MOTOR_FLAG, SAMPLE_SPEED, 0, 0, 0, 0, 0, 0]
+        );
+        let idle = state.tick(0.0, AMP_FACTOR, MOTOR_1);
+        assert_eq!(idle.packet, [HAPTIC_MOTOR_FLAG, 0, 0, 0, 0, 0, 0, 0]);
     }
 }

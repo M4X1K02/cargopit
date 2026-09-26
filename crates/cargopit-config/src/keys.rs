@@ -64,6 +64,7 @@ pub const KEY_NOISE: &str = "noise";
 pub const KEY_BAUD: &str = "baud";
 pub const BAUD_DEFAULT: i64 = 9_600;
 pub const KEY_AMPFACTOR: &str = "ampfactor";
+pub const AMPFACTOR_DEFAULT: f64 = 1.0;
 pub const KEY_NUMLEDS: &str = "numleds";
 pub const KEY_NUMLIGHTS: &str = "numlights";
 pub const NUMLIGHTS_DEFAULT: i64 = 6;
