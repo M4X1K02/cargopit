@@ -1,5 +1,7 @@
 //! Game-path decisions that stay in the host: UDP ports, stale simd, ACR bridge.
 
+use std::path::{Path, PathBuf};
+
 use crate::acr;
 
 pub const DAEMON_PROBE_US: u64 = 50_000;
@@ -22,6 +24,22 @@ pub const MSG_RELEASE_LOOP: &str = "release loop";
 pub const MSG_RELEASING_DEVICES: &str = "releasing devices, please wait";
 pub const MSG_RESTART_CHECK: &str = "restarting checking for data...";
 pub const MSG_RELOAD: &str = "reload requested, releasing devices to load the saved profile";
+pub const MSG_APPLYING_SETTINGS: &str = "applying settings";
+pub const MSG_SETTINGS_APPLIED: &str = "settings applied";
+pub const MSG_CHECKING_DIAMETERS: &str = "checking for diameters config";
+pub const MSG_OPENED_CONFIG: &str = "Opened and validated cargopit configuration file";
+pub const MSG_GAMELOOP_MODE: &str = "running cargopit in gameloop mode..";
+pub const MSG_TEST_MODE_BANNER: &str = "running cargopit in test mode...";
+pub const MSG_TEST_INDEX: &str = "Could not resolve config index for test";
+pub const ERROR_NONE: i32 = 0;
+pub const ERROR_UNKNOWN: i32 = 1;
+pub const ERROR_INVALID_DEV: i32 = 3;
+pub const ERROR_SIMD_REQUIRED: i32 = 7;
+pub const CONFIG_CHECK_START: i32 = 0;
+pub const CONFIG_IO_FILE: &str = "(null)";
+pub const CONFIG_IO_LINE: i32 = 0;
+pub const CONFIG_IO_TEXT: &str = "file I/O error";
+pub const CONFIG_SYNTAX_TEXT: &str = "syntax error";
 pub const MAPPING_START_MS: u64 = 2000;
 const MS_PER_SECOND: f64 = 1000.0;
 const HALF_MS: f64 = 0.5;
@@ -173,6 +191,83 @@ pub fn config_index_range_message(index: i32, configs: i32) -> String {
 
 pub fn no_profile_message(config_index: i32) -> String {
     format!("no device profile to load (config-index {config_index})")
+}
+
+pub fn testing_config_message(path: &str) -> String {
+    format!("Testing cargopit config file: {path}")
+}
+
+pub fn diameters_debug_message(path: &str, config_check: i32) -> String {
+    format!("using diameters file {path} {config_check}")
+}
+
+pub fn config_issue_message(file: &str, line: i32, text: &str) -> String {
+    format!("Issue with cargopit config file: {file}:{line} - {text}")
+}
+
+pub fn game_loop_exit_message(code: i32) -> String {
+    format!("Game loop exited succesfully with error code: {code}")
+}
+
+pub fn game_loop_fail_message(code: i32) -> String {
+    format!("Game loop exited with error code: {code}")
+}
+
+pub fn test_exit_message(code: i32) -> String {
+    format!("Test exited succesfully with error code: {code}")
+}
+
+pub fn test_fail_message(code: i32) -> String {
+    format!("Test exited with error code: {code}")
+}
+
+pub fn home_config_file(name: &str) -> PathBuf {
+    cargopit_config::paths::home_dir()
+        .join(cargopit_config::keys::XDG_CONFIG_FALLBACK)
+        .join(cargopit_config::keys::CONFIG_DIR_NAME)
+        .join(name)
+}
+
+pub fn config_path_for(config_file: Option<&Path>, config_dir: Option<&Path>) -> PathBuf {
+    if let Some(path) = config_file {
+        if path.is_file() {
+            return path.to_path_buf();
+        }
+    }
+    if let Some(dir) = config_dir {
+        if dir.is_dir() {
+            return dir.join(cargopit_config::keys::CONFIG_FILE_NAME);
+        }
+    }
+    home_config_file(cargopit_config::keys::CONFIG_FILE_NAME)
+}
+
+pub struct ConfigIssue {
+    pub file: String,
+    pub line: i32,
+    pub text: String,
+}
+
+pub fn inspect_config(path: &Path) -> Result<(), ConfigIssue> {
+    let src = match std::fs::read_to_string(path) {
+        Ok(src) => src,
+        Err(_) => {
+            return Err(ConfigIssue {
+                file: CONFIG_IO_FILE.to_string(),
+                line: CONFIG_IO_LINE,
+                text: CONFIG_IO_TEXT.to_string(),
+            });
+        }
+    };
+    if let Err(err) = cargopit_config::parse(&src) {
+        let line = i32::try_from(err.line).unwrap_or(i32::MAX);
+        return Err(ConfigIssue {
+            file: path.display().to_string(),
+            line,
+            text: CONFIG_SYNTAX_TEXT.to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub fn profile_load_fault(profile_count: i32, requested: i32) -> Option<ProfileLoadFault> {
@@ -349,6 +444,83 @@ mod tests {
             })
         );
         assert_eq!(profile_load_fault(TWO_PROFILES, SAMPLE_CONFIGS), None);
+    }
+
+    #[test]
+    fn startup_config_messages_match_the_c_host() {
+        const SYNTAX_LINE: i32 = 2;
+        let dir = std::env::temp_dir().join("cargopit-startup-config");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir");
+        let missing = dir.join("missing.config");
+        let broken = dir.join("broken.config");
+        let valid = dir.join(cargopit_config::keys::CONFIG_FILE_NAME);
+        let other_dir = dir.join("configs");
+        std::fs::create_dir_all(&other_dir).expect("config dir");
+        std::fs::write(&broken, "configs = (\n").expect("broken");
+        std::fs::write(&valid, "configs = ();\n").expect("valid");
+
+        assert_eq!(MSG_APPLYING_SETTINGS, "applying settings");
+        assert_eq!(MSG_SETTINGS_APPLIED, "settings applied");
+        assert_eq!(MSG_CHECKING_DIAMETERS, "checking for diameters config");
+        assert_eq!(
+            MSG_OPENED_CONFIG,
+            "Opened and validated cargopit configuration file"
+        );
+        assert_eq!(MSG_GAMELOOP_MODE, "running cargopit in gameloop mode..");
+        assert_eq!(MSG_TEST_MODE_BANNER, "running cargopit in test mode...");
+        assert_eq!(MSG_TEST_INDEX, "Could not resolve config index for test");
+        assert_eq!(
+            testing_config_message("/tmp/cargopit.config"),
+            "Testing cargopit config file: /tmp/cargopit.config"
+        );
+        assert_eq!(
+            diameters_debug_message("/tmp/diameters.config", CONFIG_CHECK_START),
+            "using diameters file /tmp/diameters.config 0"
+        );
+        assert_eq!(
+            game_loop_exit_message(ERROR_NONE),
+            "Game loop exited succesfully with error code: 0"
+        );
+        assert_eq!(
+            game_loop_fail_message(ERROR_SIMD_REQUIRED),
+            "Game loop exited with error code: 7"
+        );
+        assert_eq!(
+            test_exit_message(ERROR_NONE),
+            "Test exited succesfully with error code: 0"
+        );
+        assert_eq!(
+            test_fail_message(ERROR_INVALID_DEV),
+            "Test exited with error code: 3"
+        );
+        assert_eq!(ERROR_UNKNOWN, 1);
+
+        let missing_issue = inspect_config(&missing).expect_err("missing");
+        assert_eq!(missing_issue.file, CONFIG_IO_FILE);
+        assert_eq!(missing_issue.line, CONFIG_IO_LINE);
+        assert_eq!(missing_issue.text, CONFIG_IO_TEXT);
+        assert_eq!(
+            config_issue_message(&missing_issue.file, missing_issue.line, &missing_issue.text),
+            "Issue with cargopit config file: (null):0 - file I/O error"
+        );
+
+        let broken_issue = inspect_config(&broken).expect_err("syntax");
+        assert_eq!(broken_issue.file, broken.display().to_string());
+        assert_eq!(broken_issue.line, SYNTAX_LINE);
+        assert_eq!(broken_issue.text, CONFIG_SYNTAX_TEXT);
+        assert!(inspect_config(&valid).is_ok());
+
+        assert_eq!(config_path_for(Some(&valid), None), valid);
+        assert_eq!(
+            config_path_for(Some(&missing), None),
+            home_config_file(cargopit_config::keys::CONFIG_FILE_NAME)
+        );
+        assert_eq!(
+            config_path_for(Some(&missing), Some(&other_dir)),
+            other_dir.join(cargopit_config::keys::CONFIG_FILE_NAME)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

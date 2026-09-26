@@ -82,11 +82,25 @@ fn main() -> ExitCode {
 }
 
 fn play(parsed: &cli::Invocation) -> ExitCode {
-    let _ = parsed.disable_audio;
-    match simd::ensure() {
-        EnsureStatus::Ok => run_discovery(parsed),
-        EnsureStatus::NotInstalled | EnsureStatus::StartFailed => ExitCode::SUCCESS,
+    if !prepare_host(parsed) {
+        return ExitCode::SUCCESS;
     }
+    slog(parsed, Level::Info, games::MSG_GAMELOOP_MODE);
+    let code = match simd::ensure() {
+        EnsureStatus::Ok => {
+            let _ = run_discovery(parsed);
+            games::ERROR_NONE
+        }
+        EnsureStatus::NotInstalled => games::ERROR_SIMD_REQUIRED,
+        EnsureStatus::StartFailed => games::ERROR_UNKNOWN,
+    };
+    log_action_exit(
+        parsed,
+        code,
+        games::game_loop_exit_message,
+        games::game_loop_fail_message,
+    );
+    ExitCode::SUCCESS
 }
 
 struct PlayLoop {
@@ -543,11 +557,10 @@ fn publish_tyres(session: &mut GameSession, snapshot: &mut games::FrameSnapshot,
 }
 
 fn load_configured(parsed: &cli::Invocation) -> LoadedDevices {
-    let path = parsed
-        .config_file
-        .as_deref()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(cargopit_config::paths::default_config_path);
+    let path = games::config_path_for(
+        parsed.config_file.as_deref().map(std::path::Path::new),
+        parsed.config_dir.as_deref().map(std::path::Path::new),
+    );
     let path_text = path.display().to_string();
     slog(
         parsed,
@@ -631,25 +644,106 @@ fn session_status(session: &mut GameSession) -> i32 {
 }
 
 fn test_mode(parsed: &cli::Invocation) -> ExitCode {
-    let config = parsed
-        .config_file
-        .as_ref()
-        .and_then(|path| cargopit_config::config::load_file(std::path::Path::new(path)).ok());
+    if !prepare_host(parsed) {
+        return ExitCode::SUCCESS;
+    }
+    slog(parsed, Level::Info, games::MSG_TEST_MODE_BANNER);
+    let code = run_test(parsed);
+    log_action_exit(
+        parsed,
+        code,
+        games::test_exit_message,
+        games::test_fail_message,
+    );
+    let _ = io::stdout().flush();
+    ExitCode::SUCCESS
+}
+
+fn run_test(parsed: &cli::Invocation) -> i32 {
+    let path = games::config_path_for(
+        parsed.config_file.as_deref().map(std::path::Path::new),
+        parsed.config_dir.as_deref().map(std::path::Path::new),
+    );
+    let config = cargopit_config::config::load_file(&path).ok();
     match testmode::plan(
         config.as_ref(),
         parsed.config_index,
         parsed.device_index,
         parsed.disable_audio,
     ) {
-        testmode::Plan::MissingIndex => eprintln!("{}", testmode::MSG_NO_DEVICES),
-        testmode::Plan::Empty => slog(parsed, Level::Info, &testmode::preparing(0)),
+        testmode::Plan::MissingIndex => {
+            slog(parsed, Level::Error, testmode::MSG_NO_DEVICES);
+            games::ERROR_INVALID_DEV
+        }
+        testmode::Plan::Empty => {
+            slog(parsed, Level::Error, games::MSG_TEST_INDEX);
+            games::ERROR_INVALID_DEV
+        }
+        testmode::Plan::Ready { subjects, .. } if subjects.is_empty() => {
+            slog(parsed, Level::Error, testmode::MSG_NO_DEVICES);
+            games::ERROR_INVALID_DEV
+        }
         testmode::Plan::Ready {
             subjects,
             device_index,
-        } => print_test_script(parsed, &subjects, device_index),
+        } => {
+            print_test_script(parsed, &subjects, device_index);
+            games::ERROR_NONE
+        }
     }
-    let _ = io::stdout().flush();
-    ExitCode::SUCCESS
+}
+
+fn prepare_host(parsed: &cli::Invocation) -> bool {
+    eprintln!("{}", games::MSG_APPLYING_SETTINGS);
+    eprintln!("{}", games::MSG_SETTINGS_APPLIED);
+    slog(parsed, Level::Info, games::MSG_CHECKING_DIAMETERS);
+    let path = games::config_path_for(
+        parsed.config_file.as_deref().map(std::path::Path::new),
+        parsed.config_dir.as_deref().map(std::path::Path::new),
+    );
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let path_text = path.display().to_string();
+    slog(
+        parsed,
+        Level::Info,
+        &games::testing_config_message(&path_text),
+    );
+    let diameters = games::home_config_file(cargopit_config::keys::DIAMETERS_FILE_NAME);
+    slog(
+        parsed,
+        Level::Debug,
+        &games::diameters_debug_message(
+            &diameters.display().to_string(),
+            games::CONFIG_CHECK_START,
+        ),
+    );
+    match games::inspect_config(&path) {
+        Ok(()) => {
+            slog(parsed, Level::Info, games::MSG_OPENED_CONFIG);
+            true
+        }
+        Err(issue) => {
+            let message = games::config_issue_message(&issue.file, issue.line, &issue.text);
+            slog(parsed, Level::Error, &message);
+            eprintln!("{message}");
+            false
+        }
+    }
+}
+
+fn log_action_exit(
+    parsed: &cli::Invocation,
+    code: i32,
+    success: fn(i32) -> String,
+    failure: fn(i32) -> String,
+) {
+    if code == games::ERROR_NONE {
+        slog(parsed, Level::Info, &success(code));
+        return;
+    }
+    slog(parsed, Level::Error, &failure(code));
 }
 
 fn print_test_script(
@@ -688,6 +782,9 @@ fn slog(parsed: &cli::Invocation, level: Level, message: &str) {
 }
 
 fn config_tach(parsed: &cli::Invocation) -> ExitCode {
+    if !prepare_host(parsed) {
+        return ExitCode::SUCCESS;
+    }
     let Some(targets) = tach::rpm_targets(parsed.max_revs, parsed.granularity) else {
         eprintln!("{}", tach::min_revs_message());
         return ExitCode::SUCCESS;
