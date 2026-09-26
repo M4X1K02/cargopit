@@ -19,6 +19,7 @@ const BAUD_R9_FLOOR: i32 = 115_200;
 const SHIFT_LIGHTS: i32 = 8;
 const SIMLED_COUNT: i32 = 8;
 const LED_FIRST: i32 = 1;
+const SIMLED_END_ALL: i32 = 0;
 const FAN_POWER: f64 = 0.5;
 const AMP_FACTOR: f64 = 1.0;
 const KPH_TO_MPH: f64 = 0.621317;
@@ -580,9 +581,72 @@ fn led_packet(total: usize, rgb: &[u8]) -> Vec<u8> {
     bytes
 }
 
-fn simled_rgb(lit: i32, total: i32, startled: i32) -> Vec<u8> {
+pub struct SimLedReport {
+    pub lit: i32,
+    pub bytes: Vec<u8>,
+}
+
+pub fn simled_report(
+    rpm: u32,
+    maxrpm: u32,
+    total: i32,
+    startled: i32,
+    endled: i32,
+) -> Option<SimLedReport> {
+    let span = simled_span(total, startled, endled)?;
+    let lit = if rpm > 0 && maxrpm > 0 {
+        revlights_lit(rpm as i32, maxrpm as i32, span.avail)
+    } else {
+        0
+    };
+    let rgb = simled_rgb(lit, span.total, span.avail, span.start);
+    Some(SimLedReport {
+        lit,
+        bytes: led_packet(span.total as usize, &rgb),
+    })
+}
+
+pub fn simled_blank(total: i32) -> Option<Vec<u8>> {
+    let count = usize::try_from(total).ok()?;
+    Some(led_packet(count, &[]))
+}
+
+struct SimLedSpan {
+    total: i32,
+    start: i32,
+    avail: i32,
+}
+
+fn simled_span(total: i32, startled: i32, endled: i32) -> Option<SimLedSpan> {
+    if total < LED_FIRST {
+        return None;
+    }
+    let mut end = endled;
+    if end == SIMLED_END_ALL {
+        end = total;
+    }
+    let mut start = startled;
+    if start < LED_FIRST {
+        start = LED_FIRST;
+    }
+    if end > total {
+        end = total;
+    }
+    let avail = end - start + 1;
+    if avail < LED_FIRST {
+        return None;
+    }
+    Some(SimLedSpan {
+        total,
+        start,
+        avail,
+    })
+}
+
+fn simled_rgb(lit: i32, total: i32, avail: i32, startled: i32) -> Vec<u8> {
     let mut rgb = vec![0; total as usize * RGB_CHANNELS];
-    let half = total / 2;
+    let half = avail / 2;
+    let last = avail - 1;
     for index in 0..lit {
         let led = index + startled - LED_FIRST;
         if led < 0 || led >= total {
@@ -591,11 +655,11 @@ fn simled_rgb(lit: i32, total: i32, startled: i32) -> Vec<u8> {
         let base = led as usize * RGB_CHANNELS;
         if index < half {
             rgb[base + GREEN_CHANNEL] = MARK_BYTE;
-        } else if index < total - 1 {
+        } else if index < last {
             rgb[base + RED_CHANNEL] = MARK_BYTE;
             rgb[base + GREEN_CHANNEL] = MARK_BYTE;
         }
-        if index == total - 1 {
+        if index == last {
             rgb[base + RED_CHANNEL] = MARK_BYTE;
             rgb[base + GREEN_CHANNEL] = 0;
         }
@@ -606,17 +670,16 @@ fn simled_rgb(lit: i32, total: i32, startled: i32) -> Vec<u8> {
 fn run_simled(log: &Log, frames: &[Telemetry]) {
     let id = log.open_port(CAPTURE_PORT, BAUD_DEFAULT);
     let total = SIMLED_COUNT;
-    let avail = total - LED_FIRST + 1;
     each_frame(log, frames, |_log, frame| {
-        let lit = if frame.rpms() > 0 && frame.maxrpm() > 0 {
-            revlights_lit(frame.rpms() as i32, frame.maxrpm() as i32, avail)
-        } else {
-            0
+        let Some(report) = simled_report(frame.rpms(), frame.maxrpm(), total, LED_FIRST, total)
+        else {
+            return;
         };
-        let rgb = simled_rgb(lit, total, LED_FIRST);
-        log.write_port(id, &led_packet(total as usize, &rgb));
+        log.write_port(id, &report.bytes);
     });
-    log.write_port(id, &led_packet(total as usize, &[]));
+    if let Some(blank) = simled_blank(total) {
+        log.write_port(id, &blank);
+    }
     log.close_port(id);
 }
 
@@ -1545,5 +1608,62 @@ mod tests {
         );
         let idle = state.tick(0.0, AMP_FACTOR, MOTOR_1);
         assert_eq!(idle.packet, [HAPTIC_MOTOR_FLAG, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn simled_report_paints_green_then_the_last_led_red() {
+        const TOTAL: i32 = 8;
+        const SAMPLE_RPM: u32 = 4_000;
+        const SAMPLE_MAX: u32 = 8_000;
+        const SAMPLE_LIT: i32 = 4;
+        let report = simled_report(SAMPLE_RPM, SAMPLE_MAX, TOTAL, LED_FIRST, TOTAL).expect("span");
+        assert_eq!(report.lit, SAMPLE_LIT);
+        let mut expected = vec![MARK_BYTE; HEADER_MARKS];
+        expected.extend_from_slice(SLED_TAG);
+        for led in 0..TOTAL {
+            if led < SAMPLE_LIT {
+                expected.extend_from_slice(&[0, MARK_BYTE, 0]);
+            } else {
+                expected.extend_from_slice(&[0, 0, 0]);
+            }
+        }
+        expected.extend_from_slice(&LED_PACKET_TAIL);
+        assert_eq!(report.bytes, expected);
+    }
+
+    #[test]
+    fn simled_endled_zero_uses_every_led() {
+        const TOTAL: i32 = 8;
+        let all = simled_report(8_000, 8_000, TOTAL, LED_FIRST, SIMLED_END_ALL).expect("all");
+        let explicit = simled_report(8_000, 8_000, TOTAL, LED_FIRST, TOTAL).expect("explicit");
+        assert_eq!(all.bytes, explicit.bytes);
+    }
+
+    #[test]
+    fn simled_single_available_led_is_red() {
+        const TOTAL: i32 = 6;
+        const ONE: i32 = 1;
+        const SAMPLE_RPM: u32 = 8_000;
+        let report = simled_report(SAMPLE_RPM, SAMPLE_RPM, TOTAL, ONE, ONE).expect("one");
+        assert_eq!(report.lit, ONE);
+        assert_eq!(report.bytes[HEADER_MARKS + SLED_TAG.len()], MARK_BYTE);
+        assert_eq!(
+            report.bytes[HEADER_MARKS + SLED_TAG.len() + GREEN_CHANNEL],
+            0
+        );
+    }
+
+    #[test]
+    fn simled_without_leds_does_not_build_a_frame() {
+        assert!(simled_report(4_000, 8_000, 0, LED_FIRST, SIMLED_END_ALL).is_none());
+    }
+
+    #[test]
+    fn simled_blank_clears_the_color_bytes() {
+        const TOTAL: i32 = 8;
+        let blank = simled_blank(TOTAL).expect("blank");
+        let dark = simled_report(0, 8_000, TOTAL, LED_FIRST, TOTAL).expect("dark");
+        assert_eq!(dark.lit, 0);
+        assert_eq!(blank, dark.bytes);
     }
 }

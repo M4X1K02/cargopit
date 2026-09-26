@@ -430,6 +430,7 @@ pub const SERIAL_OPEN_ERROR: i32 = -1;
 pub const UNSUPPORTED_SIM_FEATURE: i32 = 6;
 pub const MSG_SHIFTLIGHTS_INIT: &str = "Initializing arduino device for shiftlights.";
 pub const MSG_SERIAL_HAPTIC_INIT: &str = "Initializing arduino device for haptic effects.";
+pub const MSG_SIMLED_INIT: &str = "Initializing arduino device for simled.";
 pub const MSG_SERIAL_HAPTIC_UPDATING: &str = "arduino haptic device updating";
 pub const MSG_SERIAL_HAPTIC_ZERO: &str = "set zero to arduino device";
 pub const MSG_MOZA_NEW_INIT: &str = "Initializing new firmware Moza serial wheel device.";
@@ -1277,6 +1278,7 @@ mod tests {
             MSG_SERIAL_HAPTIC_INIT,
             "Initializing arduino device for haptic effects."
         );
+        assert_eq!(MSG_SIMLED_INIT, "Initializing arduino device for simled.");
         assert_eq!(MSG_SERIAL_HAPTIC_UPDATING, "arduino haptic device updating");
         assert_eq!(MSG_SERIAL_HAPTIC_ZERO, "set zero to arduino device");
         const HAPTIC_SAMPLE_SPEED: i32 = 255;
