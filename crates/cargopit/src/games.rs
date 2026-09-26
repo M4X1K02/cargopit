@@ -389,6 +389,23 @@ pub fn p1000_init_result_message(code: i32) -> String {
     format!("Initialization returned {code}")
 }
 
+pub const MSG_SIMNET_INIT: &str = "initializing simnet pedals...";
+pub const MSG_SIMNET_MISSING: &str = "Could not find attached Simnet Pedals";
+pub const SIMNET_CAPTURED_HANDLE: i32 = 0;
+
+pub fn simnet_found_message(handle: i32) -> String {
+    format!("Found Simnet Pedals handle {handle}...")
+}
+
+pub fn simnet_write_message(report: &[u8]) -> String {
+    let mut message = String::from("writing bytes ");
+    for index in 0..cargopit_devices::usb::SIMNET_TRACE_LEN {
+        let byte = report.get(index).copied().unwrap_or(0);
+        message.push_str(&format!("x{byte:02x}"));
+    }
+    message
+}
+
 pub fn usb_init_error_message(code: i32) -> String {
     format!("Did not initialize usb device due to error code {code}")
 }
@@ -990,6 +1007,25 @@ mod tests {
         assert_eq!(
             p1000_bytes_message(&cargopit_devices::usb::p1000_init_report()),
             "sent bytes f1 f1 17 00 00 00 01"
+        );
+        assert_eq!(MSG_SIMNET_INIT, "initializing simnet pedals...");
+        assert_eq!(MSG_SIMNET_MISSING, "Could not find attached Simnet Pedals");
+        assert_eq!(
+            simnet_found_message(SIMNET_CAPTURED_HANDLE),
+            "Found Simnet Pedals handle 0..."
+        );
+        const SIMNET_SAMPLE_MOTOR: u32 = 1;
+        const SIMNET_SAMPLE_FREQ: u32 = 40;
+        const SIMNET_SAMPLE_AMP: u32 = 100;
+        let sample = cargopit_devices::usb::simnet_report(
+            SIMNET_SAMPLE_MOTOR,
+            SIMNET_SAMPLE_FREQ,
+            SIMNET_SAMPLE_AMP,
+            true,
+        );
+        assert_eq!(
+            simnet_write_message(&sample),
+            "writing bytes x01x00x01x28x64x00x00x00x00"
         );
         assert_eq!(USB_INIT_LUA_FAILED, -1);
         assert_eq!(
