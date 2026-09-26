@@ -3,7 +3,8 @@
 //! Cammus C12 open and write their LED reports on each tick. A C12 with a Lua file
 //! writes one packet per shift light. A Simagic GT Neo with a Lua file sends
 //! feature reports for all 73 LEDs. A Fanatec CSL Elite V3 opens its sysfs rumble
-//! file and writes the haptic value when that value changes. A Moza R9 serial wheel opens its port and
+//! file and writes the haptic value when that value changes. A Simagic P1000 opens
+//! over HID and sends feature reports when that play value changes. A Moza R9 serial wheel opens its port and
 //! writes the new-firmware LED frames. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
@@ -75,6 +76,7 @@ pub struct LoadedDevices {
     c12: Vec<bool>,
     gt: Vec<bool>,
     csl: Vec<Option<CslPedal>>,
+    p1000: Vec<Option<P1000Pedal>>,
     luas: Vec<Option<LuaHost>>,
 }
 
@@ -121,6 +123,7 @@ impl LoadedDevices {
             c12: Vec::new(),
             gt: Vec::new(),
             csl: Vec::new(),
+            p1000: Vec::new(),
             luas: Vec::new(),
         }
     }
@@ -191,6 +194,7 @@ impl LoadedDevices {
         notices.extend(self.write_c12(index, frame));
         notices.extend(self.write_gt(index, frame));
         notices.extend(self.write_csl(index, frame, now_ns));
+        notices.extend(self.write_p1000(index, frame, now_ns));
         self.update_sound(index, frame, now_ns);
         notices
     }
@@ -327,6 +331,41 @@ impl LoadedDevices {
         write_csl_bytes(&mut pedal.file, text.as_bytes());
         pedal.state = play;
         Vec::new()
+    }
+
+    fn write_p1000(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
+        let Some(reports) = self.p1000_changes(index, frame, now_ns) else {
+            return Vec::new();
+        };
+        if reports.is_empty() {
+            return Vec::new();
+        }
+        let mut notices = Vec::new();
+        let Some(port) = self.ports.get_mut(index) else {
+            return notices;
+        };
+        for report in &reports {
+            let _ = record_p1000(port, report, &mut notices);
+        }
+        notices
+    }
+
+    fn p1000_changes(
+        &mut self,
+        index: usize,
+        frame: &Telemetry,
+        now_ns: u64,
+    ) -> Option<Vec<[u8; usb::P1000_LEN]>> {
+        let pedal = self.p1000.get_mut(index)?.as_mut()?;
+        let clock = VirtualClock::from_monotonic_ns(now_ns);
+        let play = haptic_play(&mut pedal.effect, frame, &clock)?;
+        if play == pedal.state {
+            return None;
+        }
+        let kind = pedal.effect.as_ref()?.effect();
+        let reports = usb::p1000_reports(kind, play);
+        pedal.state = play;
+        Some(reports)
     }
 
     fn close_csl(&mut self) {
@@ -755,6 +794,7 @@ fn open_profile_with(
     let mut c12 = Vec::new();
     let mut gt = Vec::new();
     let mut csl = Vec::new();
+    let mut p1000 = Vec::new();
     let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
@@ -789,6 +829,7 @@ fn open_profile_with(
         c12.push(considered.c12);
         gt.push(considered.gt);
         csl.push(considered.csl);
+        p1000.push(considered.p1000);
         luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
@@ -821,6 +862,7 @@ fn open_profile_with(
             c12,
             gt,
             csl,
+            p1000,
             luas,
         },
         setup_notices,
@@ -862,6 +904,7 @@ struct Considered {
     lua: Option<LuaHost>,
     gt: bool,
     csl: Option<CslPedal>,
+    p1000: Option<P1000Pedal>,
 }
 
 enum SerialPort {
@@ -902,6 +945,9 @@ fn consider_entry(
     }
     if csl_entry(entry) {
         return consider_csl(entry, slot, id, disable_audio, supports_haptics, attempt);
+    }
+    if p1000_entry(entry) {
+        return consider_p1000(entry, slot, id, disable_audio, supports_haptics, attempt);
     }
     consider_closed(entry, slot, disable_audio)
 }
@@ -978,6 +1024,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1036,6 +1083,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1056,6 +1104,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1076,6 +1125,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1218,6 +1268,7 @@ fn revburner_attempt(
                 lua: None,
                 gt: false,
                 csl: None,
+                p1000: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1236,6 +1287,7 @@ fn revburner_attempt(
             lua: None,
             gt: false,
             csl: None,
+            p1000: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1253,6 +1305,7 @@ fn revburner_attempt(
             lua: None,
             gt: false,
             csl: None,
+            p1000: None,
         },
     }
 }
@@ -1296,6 +1349,100 @@ fn csl_entry(entry: &DeviceEntry) -> bool {
     usb_wheel_hardware(entry, names::HARDWARE_CSL_ELITE)
 }
 
+fn p1000_entry(entry: &DeviceEntry) -> bool {
+    usb_wheel_hardware(entry, names::HARDWARE_SIMAGIC_P1000)
+}
+
+fn consider_p1000(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    supports_haptics: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let effect = device_effect(entry);
+    let mut notices = Vec::new();
+    if !supports_haptics {
+        notices.push(notice(Level::Info, games::MSG_USB_NO_HAPTICS));
+    }
+    let arm = supports_haptics && effect.is_some();
+    if let Some(effect_id) = effect.filter(|_| arm) {
+        notices.extend(csl_haptic_notices(entry, effect_id));
+    }
+    notices.extend([
+        notice(Level::Info, games::MSG_INIT_USB),
+        notice(Level::Info, games::MSG_INIT_WHEEL),
+        notice(Level::Info, games::p1000_init_message()),
+    ]);
+    let armed = effect
+        .filter(|_| arm)
+        .and_then(|effect_id| csl_effect(entry, effect_id));
+    match open_hid(attempt, usb::P1000_VID, usb::P1000_PID) {
+        OpenedHid::Missing => {
+            notices.push(notice(Level::Error, games::p1000_missing_message()));
+            usb_not_initialized(notices, games::ERROR_UNKNOWN)
+        }
+        OpenedHid::Live(hid) => finish_p1000(entry, id, notices, HidPort::Live(hid), armed),
+        OpenedHid::Simulated => {
+            finish_p1000(entry, id, notices, HidPort::Captured(Vec::new()), armed)
+        }
+    }
+}
+
+fn finish_p1000(
+    entry: &DeviceEntry,
+    id: i32,
+    mut notices: Vec<InitNotice>,
+    mut port: HidPort,
+    effect: Option<HapticEffect>,
+) -> Considered {
+    let init = usb::p1000_init_report();
+    let code = record_p1000(&mut port, &init, &mut notices);
+    notices.push(notice(Level::Debug, games::p1000_init_result_message(code)));
+    if code != usb::P1000_REPORT_OK {
+        notices.push(notice(Level::Warn, games::p1000_problem_message()));
+        notices.push(notice(Level::Debug, games::p1000_found_message()));
+        drop(port);
+        return usb_not_initialized(notices, games::ERROR_UNKNOWN);
+    }
+    notices.push(notice(Level::Debug, games::p1000_found_message()));
+    p1000_ready(entry, id, notices, port, effect)
+}
+
+fn p1000_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: HidPort,
+    effect: Option<HapticEffect>,
+) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port,
+        tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: None,
+        gt: false,
+        csl: None,
+        p1000: Some(P1000Pedal {
+            effect,
+            state: HAPTIC_STATE_IDLE,
+        }),
+    }
+}
+
 enum CslAttach {
     Captured,
     Missing,
@@ -1318,6 +1465,11 @@ enum CslFile {
 
 struct CslPedal {
     file: CslFile,
+    effect: Option<HapticEffect>,
+    state: f64,
+}
+
+struct P1000Pedal {
     effect: Option<HapticEffect>,
     state: f64,
 }
@@ -1398,6 +1550,7 @@ fn csl_ready(
             effect,
             state: HAPTIC_STATE_IDLE,
         }),
+        p1000: None,
     }
 }
 
@@ -1443,8 +1596,15 @@ fn open_csl_file(path: &str) -> CslOpen {
 }
 
 fn csl_play(pedal: &mut CslPedal, frame: &Telemetry, clock: &VirtualClock) -> Option<f64> {
-    let effect = pedal.effect.as_mut()?;
-    Some(effect.play_with_clock(frame, clock))
+    haptic_play(&mut pedal.effect, frame, clock)
+}
+
+fn haptic_play(
+    effect: &mut Option<HapticEffect>,
+    frame: &Telemetry,
+    clock: &VirtualClock,
+) -> Option<f64> {
+    Some(effect.as_mut()?.play_with_clock(frame, clock))
 }
 
 fn write_csl_bytes(file: &mut CslFile, bytes: &[u8]) {
@@ -1764,6 +1924,7 @@ fn gt_ready(
         lua: None,
         gt: true,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1838,6 +1999,7 @@ fn g29_ready(
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1864,6 +2026,7 @@ fn c5_ready(
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1890,6 +2053,7 @@ fn c12_ready(
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -1993,6 +2157,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -2065,6 +2230,7 @@ fn finish_moza(
         lua: None,
         gt: false,
         csl: None,
+        p1000: None,
     }
 }
 
@@ -2152,18 +2318,45 @@ fn notice(level: Level, message: impl Into<String>) -> InitNotice {
     }
 }
 
+enum FeatureWrite {
+    Wrote(usize),
+    Failed,
+    Closed,
+}
+
 fn feature_port(port: &mut HidPort, report: &[u8], notices: &mut Vec<InitNotice>) -> bool {
+    matches!(feature_write(port, report, notices), FeatureWrite::Wrote(_))
+}
+
+fn feature_write(port: &mut HidPort, report: &[u8], notices: &mut Vec<InitNotice>) -> FeatureWrite {
     match port {
-        HidPort::Live(hid) => hid.send_feature(report).is_ok(),
+        HidPort::Live(hid) => match hid.send_feature(report) {
+            Ok(len) => FeatureWrite::Wrote(len),
+            Err(_) => FeatureWrite::Failed,
+        },
         HidPort::Captured(log) => {
             log.push(report.to_vec());
-            true
+            FeatureWrite::Wrote(report.len())
         }
         HidPort::Closed => {
             notices.push(notice(Level::Debug, games::MSG_REVBURNER_NO_HANDLE));
-            false
+            FeatureWrite::Closed
         }
     }
+}
+
+fn record_p1000(port: &mut HidPort, report: &[u8], notices: &mut Vec<InitNotice>) -> i32 {
+    let wrote = feature_write(port, report, notices);
+    if matches!(wrote, FeatureWrite::Closed) {
+        return usb::P1000_REPORT_FAILED;
+    }
+    let nbytes = i32::try_from(usb::P1000_LEN).unwrap_or(i32::MAX);
+    notices.push(notice(Level::Debug, games::p1000_sent_message(nbytes)));
+    notices.push(notice(Level::Trace, games::p1000_bytes_message(report)));
+    if matches!(wrote, FeatureWrite::Wrote(len) if len == usb::P1000_LEN) {
+        return usb::P1000_REPORT_OK;
+    }
+    usb::P1000_REPORT_FAILED
 }
 
 fn write_port(port: &mut HidPort, report: &[u8], notices: &mut Vec<InitNotice>) {
@@ -3192,9 +3385,240 @@ mod tests {
         );
     }
 
+    #[test]
+    fn p1000_missing_pedal_is_not_scheduled() {
+        let config = p1000_config();
+        let mut seen = (0u16, 0u16);
+        let missing = open_p1000(&config, true, |vendor, product| {
+            seen = (vendor, product);
+            false
+        });
+        assert_eq!(seen, (usb::P1000_VID, usb::P1000_PID));
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, &games::p1000_init_message()));
+        assert!(notice_has(
+            &missing.notices,
+            &games::p1000_missing_message()
+        ));
+        assert!(notice_has(
+            &missing.notices,
+            &games::usb_init_error_message(games::ERROR_UNKNOWN)
+        ));
+        assert!(notice_has(
+            &missing.notices,
+            &games::could_not_initialize_message(CLASS_USB)
+        ));
+        assert!(notice_absent(
+            &missing.notices,
+            &games::p1000_found_message()
+        ));
+        assert!(notice_absent(
+            &missing.notices,
+            &games::p1000_sent_message(p1000_nbytes())
+        ));
+    }
+
+    #[test]
+    fn p1000_slip_sends_feature_reports_when_play_changes() {
+        const P1000_SPEED: u32 = 80;
+        const P1000_Y_VELOCITY: f64 = 1.0;
+        const P1000_GAS: f64 = 0.2;
+        const P1000_GAS_OFF: f64 = 0.0;
+        const P1000_SLIP: f64 = -0.4;
+        const P1000_SLIP_MORE: f64 = -0.8;
+        const WHEEL_FRONT_LEFT: usize = 0;
+        let config = p1000_config();
+        let loaded = open_p1000(&config, true, |vendor, product| {
+            vendor == usb::P1000_VID && product == usb::P1000_PID
+        });
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP),
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_INIT_USB,
+            &games::p1000_found_message()
+        ));
+        assert!(notice_has(&loaded.notices, &games::p1000_init_message()));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::p1000_sent_message(p1000_nbytes())
+        ));
+        let init = usb::p1000_init_report();
+        assert!(notice_has(
+            &loaded.notices,
+            &games::p1000_bytes_message(&init)
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::p1000_init_result_message(usb::P1000_REPORT_OK)
+        ));
+        assert!(notice_absent(
+            &loaded.notices,
+            &games::p1000_problem_message()
+        ));
+        let mut devices = loaded.devices;
+        assert_eq!(
+            devices
+                .captured_reports(0)
+                .and_then(|frames| frames.first()),
+            Some(&init.to_vec())
+        );
+        let active = usb::p1000_reports(VibrationEffect::TyreSlip, P1000_GAS);
+        let frame = csl_frame(
+            P1000_SPEED,
+            P1000_Y_VELOCITY,
+            P1000_GAS,
+            WHEEL_FRONT_LEFT,
+            P1000_SLIP,
+        );
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_has(
+            &tick,
+            &games::p1000_sent_message(p1000_nbytes())
+        ));
+        assert!(notice_has(
+            &tick,
+            &games::p1000_bytes_message(active.first().expect("slip report"))
+        ));
+        const INIT_REPORTS: usize = 1;
+        let after_slip = devices.captured_reports(0).map(|frames| frames.len());
+        assert_eq!(after_slip, Some(INIT_REPORTS.saturating_add(active.len())));
+        let expected_active = active.first().expect("slip report").to_vec();
+        assert_eq!(
+            devices.captured_reports(0).and_then(|frames| frames.last()),
+            Some(&expected_active)
+        );
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            after_slip
+        );
+        let stronger = csl_frame(
+            P1000_SPEED,
+            P1000_Y_VELOCITY,
+            P1000_GAS,
+            WHEEL_FRONT_LEFT,
+            P1000_SLIP_MORE,
+        );
+        let _ = devices.tick(0, &stronger, PROBE_OPEN_NS);
+        let after_stronger = after_slip.map(|count| count.saturating_add(active.len()));
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            after_stronger
+        );
+        let coast = csl_frame(
+            P1000_SPEED,
+            P1000_Y_VELOCITY,
+            P1000_GAS_OFF,
+            WHEEL_FRONT_LEFT,
+            P1000_SLIP,
+        );
+        let idle = usb::p1000_reports(VibrationEffect::TyreSlip, P1000_GAS_OFF);
+        const IDLE_PAIR: usize = 2;
+        assert_eq!(idle.len(), IDLE_PAIR);
+        let _ = devices.tick(0, &coast, PROBE_OPEN_NS);
+        let expected_len = after_stronger.unwrap_or(0).saturating_add(idle.len());
+        let (before, idle_matches) = {
+            let frames = devices.captured_reports(0).expect("captured");
+            let tail = frames.len().saturating_sub(idle.len());
+            let lock = frames.get(tail).map(Vec::as_slice) == Some(idle[0].as_slice());
+            let slip =
+                frames.get(tail.saturating_add(1)).map(Vec::as_slice) == Some(idle[1].as_slice());
+            let matches = lock && slip;
+            (frames.len(), matches)
+        };
+        assert_eq!(before, expected_len);
+        assert!(idle_matches);
+        let _ = devices.release(PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            Some(before)
+        );
+    }
+
+    #[test]
+    fn p1000_without_haptic_support_sends_init_and_stays_quiet() {
+        const P1000_SPEED: u32 = 80;
+        const P1000_Y_VELOCITY: f64 = 1.0;
+        const P1000_GAS: f64 = 0.2;
+        const P1000_SLIP: f64 = -0.4;
+        const WHEEL_FRONT_LEFT: usize = 0;
+        const INIT_ONLY: usize = 1;
+        let config = p1000_config();
+        let loaded = open_p1000(&config, false, |vendor, product| {
+            vendor == usb::P1000_VID && product == usb::P1000_PID
+        });
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_USB_NO_HAPTICS,
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_has(&loaded.notices, &games::p1000_found_message()));
+        assert!(notice_absent(
+            &loaded.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP)
+        ));
+        let mut devices = loaded.devices;
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            Some(INIT_ONLY)
+        );
+        let frame = csl_frame(
+            P1000_SPEED,
+            P1000_Y_VELOCITY,
+            P1000_GAS,
+            WHEEL_FRONT_LEFT,
+            P1000_SLIP,
+        );
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            Some(INIT_ONLY)
+        );
+    }
+
+    fn p1000_nbytes() -> i32 {
+        i32::try_from(usb::P1000_LEN).unwrap_or(i32::MAX)
+    }
+
+    fn p1000_config() -> CargopitConfig {
+        const P1000_FPS: i64 = 60;
+        haptic_wheel_config(P1000_FPS, names::HARDWARE_SIMAGIC_P1000)
+    }
+
+    fn open_p1000(
+        config: &CargopitConfig,
+        supports_haptics: bool,
+        mut hid: impl FnMut(u16, u16) -> bool,
+    ) -> ProfileLoad {
+        open_profile_with(
+            config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            supports_haptics,
+            None,
+            &mut HidAttempt::Probe {
+                hid: &mut hid,
+                serial: &mut |_path| false,
+                sysfs: None,
+                now_ns: PROBE_OPEN_NS,
+            },
+        )
+    }
+
     fn csl_config() -> CargopitConfig {
         const CSL_FPS: i64 = 60;
-        let mut config = wheel_config(CSL_FPS, names::HARDWARE_CSL_ELITE);
+        haptic_wheel_config(CSL_FPS, names::HARDWARE_CSL_ELITE)
+    }
+
+    fn haptic_wheel_config(fps: i64, hardware: i32) -> CargopitConfig {
+        let mut config = wheel_config(fps, hardware);
         let effect = names::name_for(names::EFFECTS, names::EFFECT_TYRE_SLIP).expect("slip name");
         config.profiles[0].devices[0].set_str(keys::KEY_EFFECT, effect);
         config

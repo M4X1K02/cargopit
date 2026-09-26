@@ -282,6 +282,7 @@ pub const MSG_CSL_FOUND: &str = "CSL Elite V3 Pedals Successfully initialized...
 pub const MSG_CSL_MISSING: &str = "Could not find attached Club Sport Elite V3 Pedals";
 pub const MSG_CSL_PERMISSION: &str = "Permissions issue finding Club Sport Elite V3 Pedals";
 pub const MSG_CSL_OPEN: &str = "Could not open pedal device...";
+pub const P1000_DEVICE_NAME: &str = "SIMAGIC P1000 Pedals";
 pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
 pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
 pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
@@ -348,6 +349,44 @@ pub fn c12_write_message(report: &[u8], rpm: i32, velocity: i32, gear: i32) -> S
         byte(cargopit_devices::usb::C12_BYTE_VELOCITY_HIGH),
         byte(cargopit_devices::usb::C12_BYTE_GEAR),
     )
+}
+
+pub fn p1000_init_message() -> String {
+    format!("initializing {P1000_DEVICE_NAME}...")
+}
+
+pub fn p1000_missing_message() -> String {
+    format!("Could not find attached {P1000_DEVICE_NAME}")
+}
+
+pub fn p1000_found_message() -> String {
+    format!("Found {P1000_DEVICE_NAME}...")
+}
+
+pub fn p1000_problem_message() -> String {
+    format!("Problem with initialization of {P1000_DEVICE_NAME}")
+}
+
+pub fn p1000_sent_message(nbytes: i32) -> String {
+    format!("sent {nbytes} bytes to {P1000_DEVICE_NAME}")
+}
+
+pub fn p1000_bytes_message(report: &[u8]) -> String {
+    let byte = |index: usize| report.get(index).copied().unwrap_or(0);
+    format!(
+        "sent bytes {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+        byte(cargopit_devices::usb::P1000_BYTE_MARK),
+        byte(cargopit_devices::usb::P1000_BYTE_CMD),
+        byte(cargopit_devices::usb::P1000_BYTE_KIND),
+        byte(cargopit_devices::usb::P1000_BYTE_FLAG0),
+        byte(cargopit_devices::usb::P1000_BYTE_FLAG1),
+        byte(cargopit_devices::usb::P1000_BYTE_FLAG2),
+        byte(cargopit_devices::usb::P1000_BYTE_INIT0),
+    )
+}
+
+pub fn p1000_init_result_message(code: i32) -> String {
+    format!("Initialization returned {code}")
 }
 
 pub fn usb_init_error_message(code: i32) -> String {
@@ -929,6 +968,29 @@ mod tests {
             "Permissions issue finding Club Sport Elite V3 Pedals"
         );
         assert_eq!(MSG_CSL_OPEN, "Could not open pedal device...");
+        assert_eq!(P1000_DEVICE_NAME, "SIMAGIC P1000 Pedals");
+        assert_eq!(p1000_init_message(), "initializing SIMAGIC P1000 Pedals...");
+        assert_eq!(
+            p1000_missing_message(),
+            "Could not find attached SIMAGIC P1000 Pedals"
+        );
+        assert_eq!(p1000_found_message(), "Found SIMAGIC P1000 Pedals...");
+        assert_eq!(
+            p1000_problem_message(),
+            "Problem with initialization of SIMAGIC P1000 Pedals"
+        );
+        assert_eq!(
+            p1000_sent_message(cargopit_devices::usb::P1000_LEN as i32),
+            "sent 49 bytes to SIMAGIC P1000 Pedals"
+        );
+        assert_eq!(
+            p1000_init_result_message(cargopit_devices::usb::P1000_REPORT_OK),
+            "Initialization returned 0"
+        );
+        assert_eq!(
+            p1000_bytes_message(&cargopit_devices::usb::p1000_init_report()),
+            "sent bytes f1 f1 17 00 00 00 01"
+        );
         assert_eq!(USB_INIT_LUA_FAILED, -1);
         assert_eq!(
             usb_init_error_message(USB_INIT_LUA_FAILED),
