@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" role="img" aria-labelledby="title desc">
   <title id="title">Cargopit telemetry gateway</title>
-  <desc id="desc">Shared-memory sims pass through simshmbridge into simd and SIMAPI. Cargopit reads that gateway and drives USB, serial, sound, and tachometer devices. On a Moza wheel, cargopit and Boxflat share one serial port: cargopit writes telemetry LEDs, Boxflat keeps force feedback and base settings.</desc>
+  <desc id="desc">Shared-memory sims pass through simshmbridge into simd and SIMAPI. UDP titles skip that bridge and enter cargopit, which binds their ports. Cargopit then drives USB, serial, sound, and tachometer devices. On a Moza wheel, cargopit and Boxflat share one serial port: cargopit writes telemetry LEDs, Boxflat keeps force feedback and base settings.</desc>
   <rect width="960" height="700" fill="#f6f3ec"/>
   <text x="32" y="40" fill="#1c1917" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="700">Telemetry gateway</text>
   <text x="32" y="64" fill="#57534e" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14">Sim data in. Devices out. Boxflat stays on the Moza wheel.</text>
@@ -11,6 +11,9 @@
     </marker>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
       <path d="M 0 1.2 L 10 5 L 0 8.8 Z" fill="#1e3a8a"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 1.2 L 10 5 L 0 8.8 Z" fill="#14532d"/>
     </marker>
   </defs>
 
@@ -44,7 +47,12 @@
     <text x="782" y="246" text-anchor="middle" fill="#fff7ed" font-size="16" font-weight="700">cargopit</text>
     <text x="782" y="268" text-anchor="middle" fill="#ffedd5" font-size="12">reads SIMAPI, drives hardware</text>
 
-    <text x="28" y="206" fill="#57534e" font-size="13">UDP titles skip simshmbridge. Cargopit binds those ports.</text>
+    <rect x="28" y="200" width="230" height="72" rx="12" fill="#ffffff" stroke="#14532d" stroke-width="1.75" stroke-dasharray="6 4"/>
+    <text x="143" y="230" text-anchor="middle" fill="#14532d" font-size="15" font-weight="700">UDP titles</text>
+    <text x="143" y="250" text-anchor="middle" fill="#57534e" font-size="12">Dirt Rally 2, F1, others</text>
+
+    <path d="M 258 236 L 624 236" fill="none" stroke="#14532d" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrow-green)"/>
+    <text x="430" y="226" text-anchor="middle" fill="#14532d" font-size="12">skips simshmbridge, cargopit binds the port</text>
 
     <line x1="782" y1="292" x2="782" y2="328" stroke="#44403c" stroke-width="1.6"/>
     <line x1="118" y1="328" x2="782" y2="328" stroke="#44403c" stroke-width="1.6"/>

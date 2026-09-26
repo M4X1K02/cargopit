@@ -34,7 +34,7 @@ A single node can leave that chain. Carla, Easy Effects, or a WirePlumber rule c
 
 ![Haptic streams into a shared filter chain, and one tyre stream on its own EQ](docs/diagrams/audio-filters.svg)
 
-## Calibrating bass shakers
+## Calibrating bass shakers: Work in progress
 
 Seat response depends on the seat, the mount, and the amplifier. Cargopit does not ship a curve. Measure the seat, fit a filter, and keep both files with your own config.
 
@@ -125,7 +125,7 @@ echo stop | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/cargopit.sock
 
 Logs: `~/.cache/cargopit/*.log`.
 
-## cargopit-tui
+## cargopit-tui: Work in progress
 
 `cargopit-tui` is the manager. It starts, tests, restarts, and stops the stack, edits one device profile shared across games, and follows the title that is actually running. Play and test flags, `simd.config`, Lua scripts, tachometer calibration, and tyre diameters are edited in the TUI. The on-disk config is shown read-only. Set `CARGOPIT_BIN` to the host the TUI should launch.
 
@@ -161,15 +161,19 @@ Settings follow the sim that is playing. The device profile does not. Flags, `si
 
 ![Settings bound to the running sim](docs/tui/settings.png)
 
-| Keys | Action |
-| --- | --- |
-| `1`–`5` or Tab | Dashboard, Devices, Settings, Telemetry, Logs |
-| Enter | Run the selected action, or open tune |
-| `t` | Start or stop a hardware test |
-| `a` `e` `y` `d` | Add, edit, duplicate, delete a device |
-| `T` | Insert a device template |
-| `,` `.` | Previous or next profile |
-| `q` | Quit |
+
+| Keys            | Action                                        |
+| --------------- | --------------------------------------------- |
+| `1`–`5` or Tab  | Dashboard, Devices, Settings, Telemetry, Logs |
+| Enter           | Run the selected action, or open tune         |
+| `t`             | Start or stop a hardware test                 |
+| `a` `e` `y` `d` | Add, edit, duplicate, delete a device         |
+| `T`             | Insert a device template                      |
+| `,` `.`         | Previous or next profile                      |
+| `q`             | Quit                                          |
+
+
+
 
 ## Features
 
@@ -180,11 +184,13 @@ Settings follow the sim that is playing. The device profile does not. Flags, `si
 - Serial output to Arduino and ESP32. Sample sketches for shift lights, simwind, and motor haptics live in `src/arduino/`. Custom serial devices use a [Lua payload format](https://spacefreak18.github.io/simapi/serial_custom).
 - Wheels and pedals including Clubsport Elite V3, [Logitech G29](https://spacefreak18.github.io/simapi/logitechg29), Moza R3/R5/R8/R9/KS Pro, Cammus C5/C12, Simagic GT Neo / P1000, and Simnet. Full list: [third-party devices](https://spacefreak18.github.io/simapi/thirdpartydevices).
 
+
+
 ## Adding More Devices
 
 If a device is not already supported, a USB HID pcap or a pull request with working code is the fastest path.
 
-https://santeri.pikarinen.com/pages/usb_hid_reverse_engineering/
+[https://santeri.pikarinen.com/pages/usb_hid_reverse_engineering/](https://santeri.pikarinen.com/pages/usb_hid_reverse_engineering/)
 
 ## Building
 
@@ -234,7 +240,7 @@ pacman -S --needed git cmake base-devel curl libuv argtable libserialport libcon
 dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel cargo clang-devel libudev-devel
 ```
 
-`yder-devel` (needed to build simd) is often missing from Fedora repos. `install.sh` builds yder from source when the package is absent. Extra packages: https://repo.spacefreak18.xyz/Packages/Fedora/43/
+`yder-devel` (needed to build simd) is often missing from Fedora repos. `install.sh` builds yder from source when the package is absent. Extra packages: [https://repo.spacefreak18.xyz/Packages/Fedora/43/](https://repo.spacefreak18.xyz/Packages/Fedora/43/)
 
 **Debian / Ubuntu / Mint**
 
@@ -251,6 +257,8 @@ Ubuntu 24.04's default `cargo` / `rustc` packages are 1.75 and cannot build the 
 ```bash
 zypper install git cmake gcc gcc-c++ make pkg-config cargo rust libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel clang-devel libudev-devel
 ```
+
+
 
 ## Testing
 
@@ -275,48 +283,26 @@ Hardware check (config must list only connected devices):
 ./cargopit test -vv
 ```
 
-### Static Analysis
-
-```bash
-./tools/static-analysis.sh
-```
-
-This configures a C-only analysis build with GCC's `-fanalyzer`, high-signal
-buffer and format warnings, and a first-pass audit for unsafe legacy C APIs.
-Use `--strict` or `--ci` to make compiler warnings and unsafe-API findings
-fail the command. `--ci` is what pull-request CI runs. The simapi submodule
-is not part of that gate. `--skip-build` runs only the source audit.
-
-Rust workspace analysis (Clippy with warnings denied, plus rustfmt):
-
-```bash
-./tools/rust-static-analysis.sh
-```
-
-Pull-request CI runs that command on the workspace, including `cargopit-tui`.
-
-### Valgrind
-
-```bash
-cd build
-valgrind -v --leak-check=full --show-leak-kinds=all --suppressions=../.valgrindrc ./cargopit play
-```
-
 ## License
 
 The program is GNU GPL v3 or later. Keep `LICENSE.rst` intact; that file is
 the GPL text. Debian-format inventory of this tree and bundled works:
 `tools/distro/debian/dpkg/copyright`.
 
-| Component | License | Where |
-| --- | --- | --- |
-| cargopit (this fork) | GPL-3.0-or-later | `LICENSE.rst` |
-| slog | MIT | `src/cargopit/slog/slog.h` |
-| simapi (submodule) | LGPL-3.0 | https://github.com/Spacefreak18/simapi |
-| Lua 5.4 | MIT | `packaging/licenses/lua-5.4-LICENSE.txt` |
-| ratatui / crossterm (TUI) | MIT | Cargo crates linked into `cargopit-tui` |
+
+| Component                 | License          | Where                                                                            |
+| ------------------------- | ---------------- | -------------------------------------------------------------------------------- |
+| cargopit (this fork)      | GPL-3.0-or-later | `LICENSE.rst`                                                                    |
+| slog                      | MIT              | `src/cargopit/slog/slog.h`                                                       |
+| simapi (submodule)        | LGPL-3.0         | [https://github.com/Spacefreak18/simapi](https://github.com/Spacefreak18/simapi) |
+| Lua 5.4                   | MIT              | `packaging/licenses/lua-5.4-LICENSE.txt`                                         |
+| ratatui / crossterm (TUI) | MIT              | Cargo crates linked into `cargopit-tui`                                          |
+
+
+
 
 ## ToDo
 
 - road and kerb sound haptic effects
 - in-project bass-shaker calibration: play the sweep, import a phyphox CSV, write the filter-chain, reload the sound device
+
