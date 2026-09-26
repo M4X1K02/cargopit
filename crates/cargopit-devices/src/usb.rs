@@ -11,9 +11,14 @@ const ORIGIN_US: u64 = 1_000_000;
 const TICK_US: u64 = 16_000;
 const CLOCK_MONOTONIC: i32 = 1;
 const TACH_POINTS: usize = 9;
-const TACH_RPM_STEP: u32 = 1000;
-const TACH_IDLE_RPM: u32 = 500;
-const REVBURNER_LEN: usize = 8;
+pub const TACH_RPM_STEP: u32 = 1000;
+pub const TACH_IDLE_RPM: u32 = 500;
+const GRANULARITY_DIRECT: u32 = 0;
+pub const REVBURNER_LEN: usize = 8;
+const REVBURNER_PULSE_LOW: usize = 2;
+const REVBURNER_PULSE_HIGH: usize = 3;
+const PULSE_BYTE_MASK: u32 = 0xff;
+const PULSE_HIGH_SHIFT: u32 = 8;
 const REVBURNER_VID: u16 = 0x04d8;
 const REVBURNER_PID: u16 = 0x0102;
 const G29_LEN: usize = 7;
@@ -216,34 +221,78 @@ fn tach_table(granularity: u32) -> [u32; TACH_POINTS] {
     pulses
 }
 
+pub enum TachPulses {
+    Frame(u32),
+    Idle(u32),
+    Indexed { pulses: u32, element: u32 },
+}
+
+impl TachPulses {
+    pub fn pulses(&self) -> u32 {
+        match self {
+            Self::Frame(pulses) | Self::Idle(pulses) | Self::Indexed { pulses, .. } => *pulses,
+        }
+    }
+}
+
+pub fn lookup_tach_pulses(
+    rpms: u32,
+    frame_pulses: u32,
+    granularity: u32,
+    table: &[u32],
+    use_pulses: bool,
+) -> Option<TachPulses> {
+    if use_pulses {
+        return Some(TachPulses::Frame(frame_pulses));
+    }
+    let &idle = table.first()?;
+    if rpms < TACH_IDLE_RPM {
+        return Some(TachPulses::Idle(idle));
+    }
+    let element = tach_element(rpms, granularity, table.len());
+    Some(TachPulses::Indexed {
+        pulses: table[element as usize],
+        element,
+    })
+}
+
+fn tach_element(rpms: u32, granularity: u32, len: usize) -> u32 {
+    let mut element = rpms / TACH_RPM_STEP;
+    if granularity > GRANULARITY_DIRECT {
+        let step = TACH_RPM_STEP / granularity;
+        if let Some(indexed) = rpms.checked_div(step) {
+            element = indexed;
+        }
+    }
+    let last = (len - 1) as u32;
+    if element >= last {
+        return last;
+    }
+    element
+}
+
+pub fn revburner_report(pulses: u32) -> [u8; REVBURNER_LEN] {
+    let mut bytes = [0; REVBURNER_LEN];
+    if pulses > 0 {
+        bytes[REVBURNER_PULSE_LOW] = (pulses & PULSE_BYTE_MASK) as u8;
+        bytes[REVBURNER_PULSE_HIGH] = ((pulses >> PULSE_HIGH_SHIFT) & PULSE_BYTE_MASK) as u8;
+    }
+    bytes
+}
+
 fn tach_pulses(
     frame: &Telemetry,
     granularity: u32,
     table: &[u32; TACH_POINTS],
     use_pulses: bool,
 ) -> u32 {
-    if use_pulses {
-        return frame.pulses();
-    }
-    if frame.rpms() < TACH_IDLE_RPM {
-        return table[0];
-    }
-    let divisor = TACH_RPM_STEP / granularity;
-    let mut element = frame.rpms() / divisor;
-    let last = (table.len() - 1) as u32;
-    if element >= last {
-        element = last;
-    }
-    table[element as usize]
+    lookup_tach_pulses(frame.rpms(), frame.pulses(), granularity, table, use_pulses)
+        .map(|sample| sample.pulses())
+        .unwrap_or(0)
 }
 
 fn revburner_bytes(pulses: u32) -> [u8; REVBURNER_LEN] {
-    let mut bytes = [0; REVBURNER_LEN];
-    if pulses > 0 {
-        bytes[2] = (pulses & 0xff) as u8;
-        bytes[3] = ((pulses >> 8) & 0xff) as u8;
-    }
-    bytes
+    revburner_report(pulses)
 }
 
 fn run_tach(log: &Log, frames: &[Telemetry], granularity: u32, use_pulses: bool) {
@@ -522,4 +571,56 @@ fn run_simnet(log: &Log, frames: &[Telemetry]) {
         }
     });
     log.hid_close(id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TABLE_IDLE: u32 = 10;
+    const TABLE_NEXT: u32 = 20;
+    const FRAME_PULSES: u32 = 7;
+    const RPM_IDLE: u32 = 0;
+    const RPM_INDEXED: u32 = 1000;
+    const GRANULARITY_ONE: u32 = 1;
+    const REPORT_PULSES: u32 = 0x0102;
+    const REPORT_LOW: u8 = 0x02;
+    const REPORT_HIGH: u8 = 0x01;
+    const INDEX_SECOND: u32 = 1;
+
+    #[test]
+    fn revburner_report_packs_pulses_like_the_c_update() {
+        let idle = [TABLE_IDLE, TABLE_NEXT];
+        let sample = lookup_tach_pulses(RPM_IDLE, FRAME_PULSES, GRANULARITY_ONE, &idle, false)
+            .expect("idle");
+        assert_eq!(sample.pulses(), TABLE_IDLE);
+        let indexed = lookup_tach_pulses(RPM_INDEXED, FRAME_PULSES, GRANULARITY_ONE, &idle, false)
+            .expect("index");
+        assert!(matches!(
+            indexed,
+            TachPulses::Indexed {
+                element: INDEX_SECOND,
+                ..
+            }
+        ));
+        let direct =
+            lookup_tach_pulses(RPM_INDEXED, FRAME_PULSES, GRANULARITY_DIRECT, &idle, false)
+                .expect("direct");
+        assert!(matches!(
+            direct,
+            TachPulses::Indexed {
+                element: INDEX_SECOND,
+                ..
+            }
+        ));
+        let from_frame =
+            lookup_tach_pulses(RPM_INDEXED, FRAME_PULSES, GRANULARITY_ONE, &idle, true)
+                .expect("frame");
+        assert_eq!(from_frame.pulses(), FRAME_PULSES);
+        assert!(lookup_tach_pulses(RPM_IDLE, RPM_IDLE, GRANULARITY_ONE, &[], false).is_none());
+        let report = revburner_report(REPORT_PULSES);
+        assert_eq!(report[REVBURNER_PULSE_LOW], REPORT_LOW);
+        assert_eq!(report[REVBURNER_PULSE_HIGH], REPORT_HIGH);
+        assert_eq!(revburner_report(0), [0; REVBURNER_LEN]);
+    }
 }
