@@ -14,12 +14,16 @@
 //! haptics and writes an eight-byte motor report on each tick. SimLED opens its
 //! serial port and writes a shift-light packet on each tick. A custom SimLED queries the LED
 //! count, loads its Lua file, and writes a script-painted packet on each tick. A custom Arduino
-//! loads its Lua file and writes the script Message on each tick. A sound device logs the C init sequence,
-//! connects its Pulse playback stream, and renders haptic samples on each tick.
+//! loads its Lua file and writes the script Message on each tick. Serial devices that name the
+//! same port share one open, keep the baud from the first open, and close when the last device
+//! releases. A sound device logs the C init sequence, connects its Pulse playback stream, and
+//! renders haptic samples on each tick.
 
+use std::cell::{Cell, RefCell};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use cargopit_config::config::{CargopitConfig, DeviceEntry};
 use cargopit_config::keys::{self, CLASS_SERIAL, CLASS_SOUND, CLASS_USB};
@@ -72,6 +76,9 @@ const CSL_PROBE_CAPTURED: i32 = 0;
 const CSL_PROBE_MISSING: i32 = 1;
 const CSL_PROBE_PERMISSION: i32 = 2;
 const CSL_PROBE_OPEN_FAILED: i32 = 3;
+const SERIAL_DEVICE_CAPACITY: usize = 20;
+const SERIAL_REF_NONE: u32 = 0;
+const SERIAL_REF_ONE: u32 = 1;
 
 pub struct LoadedDevices {
     devices: Vec<SimDevice>,
@@ -190,10 +197,20 @@ impl LoadedDevices {
         }
     }
 
-    pub fn captured_serial(&self, index: usize) -> Option<&[Vec<u8>]> {
-        match self.serials.get(index) {
-            Some(SerialPort::Captured { frames, .. }) => Some(frames),
-            _ => None,
+    pub fn captured_serial(&self, index: usize) -> Option<Vec<Vec<u8>>> {
+        let SerialPort::Shared(shared) = self.serials.get(index)? else {
+            return None;
+        };
+        let SharedBody::Captured { frames, .. } = &shared.body else {
+            return None;
+        };
+        Some(frames.borrow().clone())
+    }
+
+    pub fn opened_serial_baud(&self, index: usize) -> Option<u32> {
+        match self.serials.get(index)? {
+            SerialPort::Shared(shared) => Some(shared.baud),
+            SerialPort::Closed => None,
         }
     }
 
@@ -865,12 +882,9 @@ impl LoadedDevices {
             }
         }
         for port in &mut self.serials {
-            let path = serial_path_of(port);
-            if path.is_empty() {
-                *port = SerialPort::Closed;
-                continue;
+            if let Some(path) = final_serial_path(port) {
+                notices.push(notice(Level::Debug, games::serial_free_message(&path)));
             }
-            notices.push(notice(Level::Debug, games::serial_free_message(&path)));
             *port = SerialPort::Closed;
         }
     }
@@ -882,11 +896,14 @@ fn disarm_wheel(wheels: &mut [Option<MozaNewWheel>], index: usize) {
     }
 }
 
-fn serial_path_of(port: &SerialPort) -> String {
-    match port {
-        SerialPort::Captured { path, .. } | SerialPort::Live { path, .. } => path.clone(),
-        SerialPort::Closed => String::new(),
+fn final_serial_path(port: &SerialPort) -> Option<String> {
+    let SerialPort::Shared(shared) = port else {
+        return None;
+    };
+    if shared.refs.get() != SERIAL_REF_ONE {
+        return None;
     }
+    Some(shared.path.clone())
 }
 
 fn moza_step_notices(step: &cargopit_devices::serial::MozaNewStep) -> Vec<InitNotice> {
@@ -932,13 +949,15 @@ fn write_arduino_message(port: Option<&mut SerialPort>, message: &str) -> Vec<In
 }
 
 fn write_serial_frame(port: &mut SerialPort, frame: &[u8]) -> bool {
-    match port {
-        SerialPort::Live { port, .. } => port.write(frame).is_ok(),
-        SerialPort::Captured { frames, .. } => {
-            frames.push(frame.to_vec());
+    let SerialPort::Shared(shared) = port else {
+        return false;
+    };
+    match &shared.body {
+        SharedBody::Live(port) => port.borrow_mut().write(frame).is_ok(),
+        SharedBody::Captured { frames, .. } => {
+            frames.borrow_mut().push(frame.to_vec());
             true
         }
-        SerialPort::Closed => false,
     }
 }
 
@@ -1130,6 +1149,7 @@ fn open_profile_with(
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
     let mut initialized = 0i32;
+    let mut registry = SerialRegistry::new();
     for (slot, entry) in profile.devices.iter().enumerate() {
         let slot = i32::try_from(slot).unwrap_or(i32::MAX);
         let mut considered = consider_entry(
@@ -1140,6 +1160,7 @@ fn open_profile_with(
             use_pulses,
             supports_haptics,
             attempt,
+            &mut registry,
         );
         if !link_prepared_sound(&mut pulse, &mut considered) {
             considered.prepared = None;
@@ -1268,17 +1289,105 @@ struct Considered {
 
 enum SerialPort {
     Closed,
-    Captured {
-        path: String,
-        frames: Vec<Vec<u8>>,
-        led_reply: Option<Vec<u8>>,
-    },
-    Live {
-        path: String,
-        port: RealSerial,
-    },
+    Shared(Rc<SharedSerial>),
 }
 
+enum SharedBody {
+    Captured {
+        frames: RefCell<Vec<Vec<u8>>>,
+        led_reply: Option<Vec<u8>>,
+    },
+    Live(RefCell<RealSerial>),
+}
+
+struct SharedSerial {
+    path: String,
+    baud: u32,
+    refs: Cell<u32>,
+    body: SharedBody,
+}
+
+struct SerialRegistry {
+    slots: [Option<Rc<SharedSerial>>; SERIAL_DEVICE_CAPACITY],
+}
+
+impl SerialRegistry {
+    fn new() -> Self {
+        Self {
+            slots: std::array::from_fn(|_| None),
+        }
+    }
+
+    fn find(&self, path: &str) -> Option<Rc<SharedSerial>> {
+        self.slots.iter().find_map(|slot| shared_named(slot, path))
+    }
+
+    fn has_room(&self) -> bool {
+        self.slots.iter().any(slot_is_free)
+    }
+
+    fn insert(&mut self, shared: Rc<SharedSerial>) -> bool {
+        let Some(slot) = self.slots.iter_mut().find(|slot| slot_is_free(slot)) else {
+            return false;
+        };
+        *slot = Some(shared);
+        true
+    }
+}
+
+fn slot_is_free(slot: &Option<Rc<SharedSerial>>) -> bool {
+    match slot {
+        None => true,
+        Some(existing) => existing.refs.get() == SERIAL_REF_NONE,
+    }
+}
+
+fn shared_named(slot: &Option<Rc<SharedSerial>>, path: &str) -> Option<Rc<SharedSerial>> {
+    let shared = slot.as_ref()?;
+    if shared.refs.get() == SERIAL_REF_NONE {
+        return None;
+    }
+    if shared.path.eq_ignore_ascii_case(path) {
+        return Some(Rc::clone(shared));
+    }
+    None
+}
+
+fn shared_live(path: &str, baud: u32, port: RealSerial) -> Rc<SharedSerial> {
+    Rc::new(SharedSerial {
+        path: path.to_string(),
+        baud,
+        refs: Cell::new(SERIAL_REF_ONE),
+        body: SharedBody::Live(RefCell::new(port)),
+    })
+}
+
+fn shared_captured(path: &str, baud: u32, led_reply: Option<Vec<u8>>) -> Rc<SharedSerial> {
+    Rc::new(SharedSerial {
+        path: path.to_string(),
+        baud,
+        refs: Cell::new(SERIAL_REF_ONE),
+        body: SharedBody::Captured {
+            frames: RefCell::new(Vec::new()),
+            led_reply,
+        },
+    })
+}
+
+impl Drop for SerialPort {
+    fn drop(&mut self) {
+        let SerialPort::Shared(shared) = self else {
+            return;
+        };
+        let refs = shared.refs.get();
+        if refs == SERIAL_REF_NONE {
+            return;
+        }
+        shared.refs.set(refs.saturating_sub(SERIAL_REF_ONE));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn consider_entry(
     entry: &DeviceEntry,
     slot: i32,
@@ -1287,36 +1396,45 @@ fn consider_entry(
     use_pulses: bool,
     supports_haptics: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(prep) = revburner_prep(entry, use_pulses) {
         return consider_tach(entry, slot, id, disable_audio, attempt, prep);
     }
     if shiftlights_entry(entry) {
-        return consider_shiftlights(entry, slot, id, disable_audio, attempt);
+        return consider_shiftlights(entry, slot, id, disable_audio, attempt, registry);
     }
     if simwind_entry(entry) {
-        return consider_simwind(entry, slot, id, disable_audio, attempt);
+        return consider_simwind(entry, slot, id, disable_audio, attempt, registry);
     }
     if serial_haptic_entry(entry) {
-        return consider_serial_haptic(entry, slot, id, disable_audio, supports_haptics, attempt);
+        return consider_serial_haptic(
+            entry,
+            slot,
+            id,
+            disable_audio,
+            supports_haptics,
+            attempt,
+            registry,
+        );
     }
     if simled_custom_entry(entry) {
-        return consider_simled_custom(entry, slot, id, disable_audio, attempt);
+        return consider_simled_custom(entry, slot, id, disable_audio, attempt, registry);
     }
     if simled_entry(entry) {
-        return consider_simled(entry, slot, id, disable_audio, attempt);
+        return consider_simled(entry, slot, id, disable_audio, attempt, registry);
     }
     if arduino_custom_entry(entry) {
-        return consider_arduino_custom(entry, slot, id, disable_audio, attempt);
+        return consider_arduino_custom(entry, slot, id, disable_audio, attempt, registry);
     }
     if moza_new_entry(entry) {
-        return consider_moza(entry, slot, id, disable_audio, attempt);
+        return consider_moza(entry, slot, id, disable_audio, attempt, registry);
     }
     if moza_r5_entry(entry) {
-        return consider_moza_r5(entry, slot, id, disable_audio, attempt);
+        return consider_moza_r5(entry, slot, id, disable_audio, attempt, registry);
     }
     if moza_ks_entry(entry) {
-        return consider_moza_ks(entry, slot, id, disable_audio, attempt);
+        return consider_moza_ks(entry, slot, id, disable_audio, attempt, registry);
     }
     if sound_entry(entry) {
         return consider_sound(entry, slot, id, disable_audio, supports_haptics);
@@ -2694,6 +2812,7 @@ fn consider_shiftlights(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
@@ -2705,19 +2824,19 @@ fn consider_shiftlights(
             .get_i64(keys::KEY_NUMLIGHTS)
             .unwrap_or(keys::NUMLIGHTS_DEFAULT),
     );
-    let mut notices = serial_lookup_notices(
+    let notices = serial_lookup_notices(
         &path,
         configured,
         names::SUBTYPE_SHIFT_LIGHTS,
         games::MSG_SHIFTLIGHTS_INIT.to_string(),
     );
     let baud = serial_baud(configured);
-    match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => serial_open_failed(notices),
-        OpenedSerial::Ready(port) => {
-            notices.extend(moza_ready_notices(baud));
+    let opened = open_serial(registry, attempt, &path, baud);
+    match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => {
             shiftlights_ready(entry, id, notices, port, lights)
         }
+        AcceptedSerial::Rejected(rejected) => *rejected,
     }
 }
 
@@ -2728,7 +2847,7 @@ fn serial_lookup_notices(
     init: String,
 ) -> Vec<InitNotice> {
     let mut notices = serial_preamble(subtype, init);
-    notices.extend(serial_open_attempt_notices(path, configured));
+    notices.extend(serial_open_head(path, configured));
     notices
 }
 
@@ -2739,7 +2858,7 @@ fn serial_preamble(subtype: i32, init: String) -> Vec<InitNotice> {
     ]
 }
 
-fn serial_open_attempt_notices(path: &str, configured: i64) -> Vec<InitNotice> {
+fn serial_open_head(path: &str, configured: i64) -> Vec<InitNotice> {
     vec![
         notice(Level::Info, games::MSG_SERIAL_START),
         notice(
@@ -2747,6 +2866,11 @@ fn serial_open_attempt_notices(path: &str, configured: i64) -> Vec<InitNotice> {
             games::serial_init_port_message(path, configured),
         ),
         notice(Level::Info, games::serial_looking_message(path)),
+    ]
+}
+
+fn serial_create_notices(path: &str) -> Vec<InitNotice> {
+    vec![
         notice(Level::Debug, games::MSG_SERIAL_NO_EXISTING),
         notice(Level::Info, games::MSG_SERIAL_OPENING),
         notice(Level::Debug, games::serial_looking_for_port_message(path)),
@@ -2825,6 +2949,7 @@ fn consider_simwind(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
@@ -2834,19 +2959,19 @@ fn consider_simwind(
     let fanpower = entry
         .get_f64(keys::KEY_FANPOWER)
         .unwrap_or(keys::FANPOWER_DEFAULT);
-    let mut notices = serial_lookup_notices(
+    let notices = serial_lookup_notices(
         &path,
         configured,
         names::SUBTYPE_SIM_WIND,
         games::simwind_init_message(fanpower),
     );
     let baud = serial_baud(configured);
-    match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => serial_open_failed(notices),
-        OpenedSerial::Ready(port) => {
-            notices.extend(moza_ready_notices(baud));
+    let opened = open_serial(registry, attempt, &path, baud);
+    match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => {
             simwind_ready(entry, id, notices, port, fanpower)
         }
+        AcceptedSerial::Rejected(rejected) => *rejected,
     }
 }
 
@@ -2901,6 +3026,7 @@ fn consider_serial_haptic(
     disable_audio: bool,
     supports_haptics: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
@@ -2916,15 +3042,15 @@ fn consider_serial_haptic(
     notices.extend(csl_haptic_notices(entry, effect_id));
     let path = device_port(entry);
     let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
-    notices.extend(serial_open_attempt_notices(&path, configured));
+    notices.extend(serial_open_head(&path, configured));
     let baud = serial_baud(configured);
     let haptic = serial_haptic_from(entry, effect_id);
-    match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => serial_open_failed(notices),
-        OpenedSerial::Ready(port) => {
-            notices.extend(moza_ready_notices(baud));
+    let opened = open_serial(registry, attempt, &path, baud);
+    match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => {
             serial_haptic_ready(entry, id, notices, port, haptic)
         }
+        AcceptedSerial::Rejected(rejected) => *rejected,
     }
 }
 
@@ -3065,6 +3191,7 @@ fn consider_arduino_custom(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
@@ -3074,19 +3201,19 @@ fn consider_arduino_custom(
     let Some(script) = device_script_path(entry) else {
         return arduino_custom_without_script(&path, configured);
     };
-    let mut notices = serial_lookup_notices(
+    let notices = serial_lookup_notices(
         &path,
         configured,
         names::SUBTYPE_ARDUINO_CUSTOM,
         games::MSG_ARDUINO_CUSTOM_INIT.to_string(),
     );
     let baud = serial_baud(configured);
-    let port = match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => return serial_open_failed(notices),
-        OpenedSerial::Ready(port) => port,
+    let opened = open_serial(registry, attempt, &path, baud);
+    let (notices, port) = match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => (notices, port),
+        AcceptedSerial::Rejected(rejected) => return *rejected,
     };
-    notices.extend(moza_ready_notices(baud));
-    load_arduino_script(entry, id, notices, port, &path, script)
+    load_arduino_script(entry, id, notices, port, script)
 }
 
 fn arduino_custom_without_script(path: &str, configured: i64) -> Considered {
@@ -3107,7 +3234,6 @@ fn load_arduino_script(
     id: i32,
     mut notices: Vec<InitNotice>,
     port: SerialPort,
-    path: &str,
     script: PathBuf,
 ) -> Considered {
     notices.push(notice(Level::Info, games::MSG_SIMLED_LUA_INIT));
@@ -3118,8 +3244,7 @@ fn load_arduino_script(
         }
         Err(detail) => {
             eprintln!("{}", games::lua_load_failed_message(&detail));
-            drop(port);
-            reject_opened_serial(path, notices)
+            reject_opened_serial(port, notices)
         }
     }
 }
@@ -3174,43 +3299,47 @@ fn consider_simled_custom(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
     }
     let path = device_port(entry);
     let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
-    let mut notices = serial_lookup_notices(
+    let notices = serial_lookup_notices(
         &path,
         configured,
         names::SUBTYPE_SIMLED,
         games::MSG_SIMLED_CUSTOM_INIT.to_string(),
     );
     let baud = serial_baud(configured);
-    let mut port = match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => return serial_open_failed(notices),
-        OpenedSerial::Ready(port) => port,
+    let opened = open_serial(registry, attempt, &path, baud);
+    let (mut notices, mut port) = match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => (notices, port),
+        AcceptedSerial::Rejected(rejected) => return *rejected,
     };
-    notices.extend(moza_ready_notices(baud));
     let query = query_simled_count(&mut port);
     notices.extend(query.notices);
     let Some(count) = query.count else {
-        return reject_simled_count(&path, notices);
+        return reject_simled_count(port, notices);
     };
     notices.push(notice(Level::Info, games::simled_count_message(count)));
-    load_simled_script(entry, id, notices, port, count, &path)
+    load_simled_script(entry, id, notices, port, count)
 }
 
-fn reject_simled_count(path: &str, mut notices: Vec<InitNotice>) -> Considered {
+fn reject_simled_count(port: SerialPort, mut notices: Vec<InitNotice>) -> Considered {
     notices.push(notice(
         Level::Info,
         games::simled_count_message(SIMLED_COUNT_UNSET),
     ));
-    reject_opened_serial(path, notices)
+    reject_opened_serial(port, notices)
 }
 
-fn reject_opened_serial(path: &str, mut notices: Vec<InitNotice>) -> Considered {
-    notices.push(notice(Level::Debug, games::serial_free_message(path)));
+fn reject_opened_serial(port: SerialPort, mut notices: Vec<InitNotice>) -> Considered {
+    if let Some(path) = final_serial_path(&port) {
+        notices.push(notice(Level::Debug, games::serial_free_message(&path)));
+    }
+    drop(port);
     serial_rejected(notices, games::SERIAL_OPEN_ERROR)
 }
 
@@ -3220,10 +3349,9 @@ fn load_simled_script(
     mut notices: Vec<InitNotice>,
     port: SerialPort,
     count: i32,
-    path: &str,
 ) -> Considered {
     let Some(script) = device_script_path(entry) else {
-        return reject_opened_serial(path, notices);
+        return reject_opened_serial(port, notices);
     };
     notices.push(notice(Level::Info, games::MSG_SIMLED_LUA_INIT));
     match LuaHost::load_file(&script, LuaLedMode::Serial) {
@@ -3233,8 +3361,7 @@ fn load_simled_script(
         }
         Err(detail) => {
             eprintln!("{}", games::lua_load_failed_message(&detail));
-            drop(port);
-            reject_opened_serial(path, notices)
+            reject_opened_serial(port, notices)
         }
     }
 }
@@ -3305,10 +3432,17 @@ impl SimLedQuery {
 }
 
 fn query_simled_count(port: &mut SerialPort) -> SimLedQuery {
-    if matches!(port, SerialPort::Live { .. }) {
+    if serial_is_live(port) {
         return query_live_simled(port);
     }
     query_captured_simled(port)
+}
+
+fn serial_is_live(port: &SerialPort) -> bool {
+    let SerialPort::Shared(shared) = port else {
+        return false;
+    };
+    matches!(shared.body, SharedBody::Live(_))
 }
 
 fn query_captured_simled(port: &mut SerialPort) -> SimLedQuery {
@@ -3372,11 +3506,14 @@ fn record_count_attempt(notices: &mut Vec<InitNotice>) {
 }
 
 fn captured_led_reply(port: &SerialPort) -> Vec<u8> {
-    match port {
-        SerialPort::Captured { led_reply, .. } => led_reply
+    let SerialPort::Shared(shared) = port else {
+        return Vec::new();
+    };
+    match &shared.body {
+        SharedBody::Captured { led_reply, .. } => led_reply
             .clone()
             .unwrap_or_else(|| serial::SIMLED_COUNT_REPLY.to_vec()),
-        SerialPort::Live { .. } | SerialPort::Closed => Vec::new(),
+        SharedBody::Live(_) => Vec::new(),
     }
 }
 
@@ -3387,10 +3524,13 @@ enum LiveReply {
 }
 
 fn read_live_reply(port: &mut SerialPort) -> LiveReply {
-    let SerialPort::Live { port, .. } = port else {
+    let SerialPort::Shared(shared) = port else {
         return LiveReply::Failed;
     };
-    read_count_bytes(port)
+    let SharedBody::Live(serial) = &shared.body else {
+        return LiveReply::Failed;
+    };
+    read_count_bytes(&mut serial.borrow_mut())
 }
 
 fn read_count_bytes(port: &mut RealSerial) -> LiveReply {
@@ -3436,6 +3576,7 @@ fn consider_simled(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
@@ -3459,19 +3600,17 @@ fn consider_simled(
                 .unwrap_or(keys::ENDLED_DEFAULT),
         ),
     };
-    let mut notices = serial_lookup_notices(
+    let notices = serial_lookup_notices(
         &path,
         configured,
         names::SUBTYPE_SIMLED,
         games::MSG_SIMLED_INIT.to_string(),
     );
     let baud = serial_baud(configured);
-    match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => serial_open_failed(notices),
-        OpenedSerial::Ready(port) => {
-            notices.extend(moza_ready_notices(baud));
-            simled_ready(entry, id, notices, port, simled)
-        }
+    let opened = open_serial(registry, attempt, &path, baud);
+    match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => simled_ready(entry, id, notices, port, simled),
+        AcceptedSerial::Rejected(rejected) => *rejected,
     }
 }
 
@@ -3531,11 +3670,12 @@ fn consider_moza(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
     }
-    open_moza_new(entry, id, attempt)
+    open_moza_new(entry, id, attempt, registry)
 }
 
 fn moza_new_entry(entry: &DeviceEntry) -> bool {
@@ -3564,25 +3704,24 @@ fn consider_moza_r5(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
     }
     let path = device_port(entry);
     let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
-    let mut notices = serial_lookup_notices(
+    let notices = serial_lookup_notices(
         &path,
         configured,
         names::SUBTYPE_SERIAL_WHEEL,
         games::MSG_MOZA_R5_INIT.to_string(),
     );
     let baud = serial_baud(configured);
-    match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => serial_open_failed(notices),
-        OpenedSerial::Ready(port) => {
-            notices.extend(moza_ready_notices(baud));
-            moza_r5_ready(entry, id, notices, port)
-        }
+    let opened = open_serial(registry, attempt, &path, baud);
+    match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => moza_r5_ready(entry, id, notices, port),
+        AcceptedSerial::Rejected(rejected) => *rejected,
     }
 }
 
@@ -3631,6 +3770,7 @@ fn consider_moza_ks(
     id: i32,
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
 ) -> Considered {
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(Vec::new(), skip, slot);
@@ -3644,24 +3784,21 @@ fn consider_moza_ks(
         games::MSG_MOZA_NEW_INIT.to_string(),
     );
     let baud = serial_baud(configured);
-    match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => serial_open_failed(notices),
-        OpenedSerial::Ready(port) => finish_moza_ks(entry, id, path, notices, port, baud),
+    let opened = open_serial(registry, attempt, &path, baud);
+    match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => finish_moza_ks(entry, id, notices, port),
+        AcceptedSerial::Rejected(rejected) => *rejected,
     }
 }
 
 fn finish_moza_ks(
     entry: &DeviceEntry,
     id: i32,
-    path: String,
-    mut notices: Vec<InitNotice>,
+    notices: Vec<InitNotice>,
     mut port: SerialPort,
-    baud: u32,
 ) -> Considered {
-    notices.extend(moza_ready_notices(baud));
     if !write_ks_init(&mut port) {
-        drop(port);
-        return reject_opened_serial(&path, notices);
+        return reject_opened_serial(port, notices);
     }
     moza_ks_ready(entry, id, notices, port)
 }
@@ -3710,17 +3847,22 @@ fn moza_ks_ready(
     }
 }
 
-fn open_moza_new(entry: &DeviceEntry, id: i32, attempt: &mut HidAttempt<'_>) -> Considered {
+fn open_moza_new(
+    entry: &DeviceEntry,
+    id: i32,
+    attempt: &mut HidAttempt<'_>,
+    registry: &mut SerialRegistry,
+) -> Considered {
     let path = device_port(entry);
     let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
     let baud = serial::moza_r9_open_baud(configured);
-    let mut notices = moza_lookup_notices(&path, configured);
-    match open_serial(attempt, &path, baud) {
-        OpenedSerial::Missing => serial_open_failed(notices),
-        OpenedSerial::Ready(port) => {
-            notices.extend(moza_ready_notices(baud));
+    let notices = moza_lookup_notices(&path, configured);
+    let opened = open_serial(registry, attempt, &path, baud);
+    match accept_serial(notices, opened, &path, baud) {
+        AcceptedSerial::Ready { notices, port } => {
             finish_moza(entry, id, path, port, notices, attempt_now(attempt))
         }
+        AcceptedSerial::Rejected(rejected) => *rejected,
     }
 }
 
@@ -3737,7 +3879,7 @@ fn moza_lookup_notices(path: &str, configured: i64) -> Vec<InitNotice> {
         names::SUBTYPE_SERIAL_WHEEL,
         games::MSG_MOZA_NEW_INIT.to_string(),
     );
-    notices.extend(serial_open_attempt_notices(path, configured));
+    notices.extend(serial_open_head(path, configured));
     notices
 }
 
@@ -3751,32 +3893,102 @@ fn moza_ready_notices(baud: u32) -> Vec<InitNotice> {
 
 enum OpenedSerial {
     Missing,
-    Ready(SerialPort),
+    Exhausted,
+    Fresh(SerialPort),
+    Shared(SerialPort),
 }
 
-fn open_serial(attempt: &mut HidAttempt<'_>, path: &str, baud: u32) -> OpenedSerial {
+enum AcceptedSerial {
+    Ready {
+        notices: Vec<InitNotice>,
+        port: SerialPort,
+    },
+    Rejected(Box<Considered>),
+}
+
+fn accept_serial(
+    mut notices: Vec<InitNotice>,
+    opened: OpenedSerial,
+    path: &str,
+    baud: u32,
+) -> AcceptedSerial {
+    match opened {
+        OpenedSerial::Missing => {
+            notices.extend(serial_create_notices(path));
+            AcceptedSerial::Rejected(Box::new(serial_open_failed(notices)))
+        }
+        OpenedSerial::Exhausted => AcceptedSerial::Rejected(Box::new(serial_slots_full(notices))),
+        OpenedSerial::Shared(port) => {
+            notices.push(notice(Level::Debug, games::serial_found_message(path)));
+            AcceptedSerial::Ready { notices, port }
+        }
+        OpenedSerial::Fresh(port) => {
+            notices.extend(serial_create_notices(path));
+            notices.extend(moza_ready_notices(baud));
+            AcceptedSerial::Ready { notices, port }
+        }
+    }
+}
+
+fn serial_slots_full(mut notices: Vec<InitNotice>) -> Considered {
+    notices.push(notice(Level::Debug, games::MSG_SERIAL_NO_EXISTING));
+    notices.push(notice(Level::Error, games::MSG_SERIAL_NO_SLOTS));
+    serial_rejected(notices, games::SERIAL_OPEN_ERROR)
+}
+
+fn open_serial(
+    registry: &mut SerialRegistry,
+    attempt: &mut HidAttempt<'_>,
+    path: &str,
+    baud: u32,
+) -> OpenedSerial {
     if path.is_empty() {
         return OpenedSerial::Missing;
     }
+    if let Some(existing) = registry.find(path) {
+        let next = existing.refs.get().saturating_add(SERIAL_REF_ONE);
+        existing.refs.set(next);
+        return OpenedSerial::Shared(SerialPort::Shared(existing));
+    }
+    open_new_serial(registry, attempt, path, baud)
+}
+
+fn open_new_serial(
+    registry: &mut SerialRegistry,
+    attempt: &mut HidAttempt<'_>,
+    path: &str,
+    baud: u32,
+) -> OpenedSerial {
+    if !registry.has_room() {
+        return OpenedSerial::Exhausted;
+    }
+    let shared = match create_shared(attempt, path, baud) {
+        None => return OpenedSerial::Missing,
+        Some(shared) => shared,
+    };
+    if !registry.insert(Rc::clone(&shared)) {
+        return OpenedSerial::Exhausted;
+    }
+    OpenedSerial::Fresh(SerialPort::Shared(shared))
+}
+
+fn create_shared(attempt: &mut HidAttempt<'_>, path: &str, baud: u32) -> Option<Rc<SharedSerial>> {
     match attempt {
         HidAttempt::Live { .. } => match RealSerial::open(path, baud) {
-            Ok(port) => OpenedSerial::Ready(SerialPort::Live {
-                path: path.to_string(),
-                port,
-            }),
-            Err(_) => OpenedSerial::Missing,
+            Ok(port) => Some(shared_live(path, baud, port)),
+            Err(_) => None,
         },
         HidAttempt::Probe {
             serial, led_reply, ..
         } => {
-            if serial(path) {
-                return OpenedSerial::Ready(SerialPort::Captured {
-                    path: path.to_string(),
-                    frames: Vec::new(),
-                    led_reply: led_reply.map(|bytes| bytes.to_vec()),
-                });
+            if !serial(path) {
+                return None;
             }
-            OpenedSerial::Missing
+            Some(shared_captured(
+                path,
+                baud,
+                led_reply.map(|bytes| bytes.to_vec()),
+            ))
         }
     }
 }
@@ -3835,10 +4047,18 @@ fn finish_moza(
 }
 
 fn share_notices(port: &mut SerialPort) -> Vec<InitNotice> {
-    let SerialPort::Live { port, .. } = port else {
+    let SerialPort::Shared(shared) = port else {
         return Vec::new();
     };
-    port.share().into_iter().map(share_notice).collect()
+    let SharedBody::Live(serial) = &shared.body else {
+        return Vec::new();
+    };
+    serial
+        .borrow_mut()
+        .share()
+        .into_iter()
+        .map(share_notice)
+        .collect()
 }
 
 fn share_notice(warning: ShareWarning) -> InitNotice {
@@ -4040,6 +4260,7 @@ mod tests {
     const ELEMENT_AT_1000: i32 = 1;
     const GRANULARITY_ONE: i64 = 1;
     const GRANULARITY_REJECTED_VALUE: i64 = 3;
+    const SHARED_DEVICE_COUNT: usize = 2;
 
     fn entry(kind: &str, fps: i64, enabled: bool) -> DeviceEntry {
         let mut device = DeviceEntry::new();
@@ -4501,6 +4722,190 @@ mod tests {
             &games::simwind_speed_message(i32::from(expected[serial::SIMWIND_BYTE_SPEED]))
         ));
         assert!(devices.captured_serial(0).is_none());
+    }
+
+    #[test]
+    fn shared_serial_port_keeps_the_first_baud() {
+        const PORT: &str = "/dev/ttySHARED-TEST";
+        const SAMPLE_RPM: u32 = 4_000;
+        const SAMPLE_MAX_RPM: u32 = 8_000;
+        const SAMPLE_KPH: u32 = 80;
+        let first_baud = keys::BAUD_DEFAULT;
+        let second_baud = i64::from(serial::moza_r9_open_baud(keys::BAUD_DEFAULT));
+        let other = PORT.to_ascii_uppercase();
+        let config = append_device(
+            shiftlights_config(PORT, first_baud, keys::NUMLIGHTS_DEFAULT),
+            simwind_config(&other, second_baud),
+        );
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| path.eq_ignore_ascii_case(PORT),
+        );
+        let opened = serial_baud(first_baud);
+        assert_eq!(loaded.devices.len(), SHARED_DEVICE_COUNT);
+        assert_eq!(
+            notice_count(&loaded.notices, games::MSG_SERIAL_NO_EXISTING),
+            1
+        );
+        assert_eq!(
+            notice_count(&loaded.notices, &games::serial_found_message(&other)),
+            1
+        );
+        assert_eq!(
+            notice_count(&loaded.notices, &games::serial_baud_message(opened)),
+            1
+        );
+        assert!(notice_absent(
+            &loaded.notices,
+            &games::serial_baud_message(serial_baud(second_baud))
+        ));
+        assert_eq!(loaded.devices.opened_serial_baud(0), Some(opened));
+        assert_eq!(loaded.devices.opened_serial_baud(1), Some(opened));
+        let mut devices = loaded.devices;
+        let shift = shift_frame(SAMPLE_RPM, SAMPLE_MAX_RPM);
+        let mut wind = Telemetry::new();
+        wind.set_velocity(SAMPLE_KPH);
+        let _ = devices.tick(0, &shift, PROBE_OPEN_NS);
+        let _ = devices.tick(1, &wind, PROBE_OPEN_NS);
+        let lit = serial::shiftlights_byte(
+            SAMPLE_RPM,
+            SAMPLE_MAX_RPM,
+            config_i32(keys::NUMLIGHTS_DEFAULT),
+        );
+        let report = serial::simwind_report(SAMPLE_KPH, keys::FANPOWER_DEFAULT);
+        let frames = devices.captured_serial(0).expect("captured");
+        assert_eq!(frames, vec![vec![lit], report.to_vec()]);
+        assert_eq!(devices.captured_serial(1).expect("captured"), frames);
+        let released = devices.release(PROBE_OPEN_NS);
+        assert_eq!(
+            notice_count(&released, &games::serial_free_message(PORT)),
+            1
+        );
+        assert!(notice_absent(
+            &released,
+            &games::serial_free_message(&other)
+        ));
+    }
+
+    #[test]
+    fn separate_serial_ports_keep_their_own_opens() {
+        const FIRST: &str = "/dev/ttySHARED-A";
+        const SECOND: &str = "/dev/ttySHARED-B";
+        const SAMPLE_RPM: u32 = 4_000;
+        const SAMPLE_MAX_RPM: u32 = 8_000;
+        let second_baud = i64::from(serial::moza_r9_open_baud(keys::BAUD_DEFAULT));
+        let config = append_device(
+            shiftlights_config(FIRST, keys::BAUD_DEFAULT, keys::NUMLIGHTS_DEFAULT),
+            shiftlights_config(SECOND, second_baud, keys::NUMLIGHTS_DEFAULT),
+        );
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| true,
+        );
+        assert_eq!(loaded.devices.len(), SHARED_DEVICE_COUNT);
+        assert_eq!(
+            notice_count(&loaded.notices, games::MSG_SERIAL_NO_EXISTING),
+            SHARED_DEVICE_COUNT
+        );
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_baud_message(serial_baud(keys::BAUD_DEFAULT))
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_baud_message(serial_baud(second_baud))
+        ));
+        assert_eq!(
+            notice_count(&loaded.notices, &games::serial_found_message(FIRST)),
+            0
+        );
+        assert_eq!(
+            notice_count(&loaded.notices, &games::serial_found_message(SECOND)),
+            0
+        );
+        let mut devices = loaded.devices;
+        let frame = shift_frame(SAMPLE_RPM, SAMPLE_MAX_RPM);
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(devices.captured_serial(0).expect("captured").len(), 1);
+        assert_eq!(devices.captured_serial(1).expect("captured").len(), 0);
+        let released = devices.release(PROBE_OPEN_NS);
+        assert!(notice_has(&released, &games::serial_free_message(FIRST)));
+        assert!(notice_has(&released, &games::serial_free_message(SECOND)));
+    }
+
+    #[test]
+    fn serial_table_rejects_the_device_past_capacity() {
+        const SLOT_PORT_PREFIX: &str = "/dev/ttySLOT-";
+        let mut devices = Vec::new();
+        for index in 0..=SERIAL_DEVICE_CAPACITY {
+            let path = format!("{SLOT_PORT_PREFIX}{index}");
+            let config = shiftlights_config(&path, keys::BAUD_DEFAULT, keys::NUMLIGHTS_DEFAULT);
+            devices.push(config.profiles[0].devices[0].clone());
+        }
+        let config = CargopitConfig {
+            profiles: vec![SimProfile {
+                devices,
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        };
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| true,
+        );
+        assert_eq!(loaded.devices.len(), SERIAL_DEVICE_CAPACITY);
+        assert_eq!(notice_count(&loaded.notices, games::MSG_SERIAL_NO_SLOTS), 1);
+        assert_eq!(
+            notice_count(&loaded.notices, games::MSG_SERIAL_OPEN_ERROR),
+            0
+        );
+        assert_eq!(
+            notice_count(&loaded.notices, games::MSG_SERIAL_OPENING),
+            SERIAL_DEVICE_CAPACITY
+        );
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_init_error_message(games::SERIAL_OPEN_ERROR)
+        ));
+    }
+
+    #[test]
+    fn rejected_serial_open_frees_the_slot_for_the_next_device() {
+        const PORT: &str = "/dev/ttySHARED-TEST";
+        const INVALID_LED_REPLY: &[u8] = b"nope";
+        let _script = custom_script(CUSTOM_INVALID_SCRIPT_NAME, CUSTOM_SIMLED_LUA);
+        let lights = shiftlights_config(PORT, keys::BAUD_DEFAULT, keys::NUMLIGHTS_DEFAULT);
+        let config = append_device(
+            custom_simled_config(PORT, CUSTOM_INVALID_SCRIPT_NAME),
+            lights,
+        );
+        let loaded = open_simled(&config, |_path| true, Some(INVALID_LED_REPLY));
+        let baud = games::serial_baud_message(serial_baud(keys::BAUD_DEFAULT));
+        assert_eq!(loaded.devices.len(), 1);
+        assert_eq!(notice_count(&loaded.notices, &baud), SHARED_DEVICE_COUNT);
+        assert_eq!(
+            notice_count(&loaded.notices, &games::serial_found_message(PORT)),
+            0
+        );
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_free_message(PORT)
+        ));
     }
 
     #[test]
@@ -5472,6 +5877,16 @@ mod tests {
             .iter()
             .filter(|notice| notice.message == message)
             .count()
+    }
+
+    fn append_device(mut config: CargopitConfig, extra: CargopitConfig) -> CargopitConfig {
+        let Some(profile) = extra.profiles.into_iter().next() else {
+            return config;
+        };
+        if let Some(target) = config.profiles.first_mut() {
+            target.devices.extend(profile.devices);
+        }
+        config
     }
 
     fn simwind_config(path: &str, baud: i64) -> CargopitConfig {
