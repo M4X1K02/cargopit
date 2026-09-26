@@ -104,14 +104,27 @@ struct PreparedDevice {
     effect: Option<i32>,
 }
 
-fn device_from_entry(entry: &DeviceEntry, id: i32, disable_audio: bool) -> Option<PreparedDevice> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceSkip {
+    Disabled,
+    AudioDisabled,
+}
+
+pub fn device_skip(entry: &DeviceEntry, disable_audio: bool) -> Option<DeviceSkip> {
     if entry.get_bool(keys::KEY_ENABLED) == Some(false) {
+        return Some(DeviceSkip::Disabled);
+    }
+    if disable_audio && entry_kind(entry) == DeviceKind::Sound {
+        return Some(DeviceSkip::AudioDisabled);
+    }
+    None
+}
+
+fn device_from_entry(entry: &DeviceEntry, id: i32, disable_audio: bool) -> Option<PreparedDevice> {
+    if device_skip(entry, disable_audio).is_some() {
         return None;
     }
     let kind = entry_kind(entry);
-    if disable_audio && kind == DeviceKind::Sound {
-        return None;
-    }
     let fps = scheduler::clamp_fps(entry.get_i64(keys::KEY_FPS).unwrap_or(0) as i32);
     let mut device = SimDevice::new(id, fps, kind);
     device.set_initialized(true);
@@ -182,6 +195,11 @@ mod tests {
         assert_eq!(loaded.device(1).unwrap().kind(), DeviceKind::Serial);
         assert_eq!(loaded.device(1).unwrap().fps(), 1);
         assert!(profile_index(1, 4).is_none());
+        let disabled = entry("sound", 60, false);
+        assert_eq!(device_skip(&disabled, true), Some(DeviceSkip::Disabled));
+        let muted = entry("sound", 60, true);
+        assert_eq!(device_skip(&muted, true), Some(DeviceSkip::AudioDisabled));
+        assert_eq!(device_skip(&muted, false), None);
         loaded_tick_counts();
     }
 
