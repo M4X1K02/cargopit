@@ -19,6 +19,7 @@ const BAUD_R9_FLOOR: i32 = 115_200;
 const SHIFT_LIGHTS: i32 = 8;
 const SIMLED_COUNT: i32 = 8;
 const LED_FIRST: i32 = 1;
+const SIMLED_END_ALL: i32 = 0;
 const FAN_POWER: f64 = 0.5;
 const AMP_FACTOR: f64 = 1.0;
 const KPH_TO_MPH: f64 = 0.621317;
@@ -57,7 +58,18 @@ const MOTOR_RIGHT_MID: u32 = 6;
 const MOTOR_RIGHT_FRONT: u32 = 9;
 const MOTOR_RIGHT_ALL: u32 = 12;
 const HAPTIC_MOTORS: usize = 4;
-const HAPTIC_PACKET: usize = HAPTIC_MOTORS * 2;
+const HAPTIC_MOTOR_STRIDE: usize = 2;
+const HAPTIC_EFFECT_OFFSET: usize = 1;
+const HAPTIC_PACKET: usize = HAPTIC_MOTORS * HAPTIC_MOTOR_STRIDE;
+pub const HAPTIC_PACKET_LEN: i32 = HAPTIC_PACKET as i32;
+const HAPTIC_MOTOR_FLAG: u8 = 1;
+const HAPTIC_CHANNEL_SLOTS: usize = 2;
+const HAPTIC_SLOT_ONE: usize = 0;
+const HAPTIC_SLOT_THREE: usize = 1;
+const HAPTIC_LOG_MOTOR_ONE: i32 = 1;
+const HAPTIC_LOG_MOTOR_THREE: i32 = 3;
+const HAPTIC_MOTOR_ONE_INDEX: usize = 0;
+const HAPTIC_MOTOR_THREE_INDEX: usize = 2;
 const MOZA_MAGIC: u32 = 0x0d;
 const MOZA_START: u8 = 0x7e;
 const MOZA_R5_TEMPLATE: [u8; 11] = [0x7e, 0x06, 0x41, 0x13, 0xfd, 0xde, 0, 0, 0, 0, 0];
@@ -455,47 +467,102 @@ fn motor_three(position: u32) -> bool {
     )
 }
 
-fn haptic_packet(effect: u8, motor: u32, enabled: bool) -> [u8; HAPTIC_PACKET] {
-    let mut bytes = [0; HAPTIC_PACKET];
-    if !enabled {
-        return bytes;
+#[derive(Clone, Copy)]
+pub struct SerialHapticChannel {
+    pub motor: i32,
+    pub speed: u8,
+}
+
+#[derive(Clone, Copy)]
+pub struct SerialHapticStep {
+    pub packet: [u8; HAPTIC_PACKET],
+    pub channels: [Option<SerialHapticChannel>; HAPTIC_CHANNEL_SLOTS],
+}
+
+#[derive(Default)]
+pub struct SerialHapticState {
+    packet: [u8; HAPTIC_PACKET],
+    scaled: f64,
+}
+
+impl SerialHapticState {
+    pub fn new() -> Self {
+        Self::default()
     }
-    if motor_one(motor) {
-        bytes[0] = 1;
-        bytes[1] = effect;
+
+    pub fn tick(&mut self, raw_play: f64, ampfactor: f64, motor: u32) -> SerialHapticStep {
+        clear_haptic_motors(&mut self.packet);
+        let scaled = clamp_haptic_play(raw_play * ampfactor);
+        let mut channels = [None; HAPTIC_CHANNEL_SLOTS];
+        if scaled != self.scaled {
+            let speed = haptic_effect_speed(scaled);
+            if motor_one(motor) {
+                set_haptic_channel(&mut self.packet, HAPTIC_MOTOR_ONE_INDEX, speed);
+                channels[HAPTIC_SLOT_ONE] = Some(SerialHapticChannel {
+                    motor: HAPTIC_LOG_MOTOR_ONE,
+                    speed,
+                });
+            }
+            if motor_three(motor) {
+                set_haptic_channel(&mut self.packet, HAPTIC_MOTOR_THREE_INDEX, speed);
+                channels[HAPTIC_SLOT_THREE] = Some(SerialHapticChannel {
+                    motor: HAPTIC_LOG_MOTOR_THREE,
+                    speed,
+                });
+            }
+            self.scaled = scaled;
+        }
+        SerialHapticStep {
+            packet: self.packet,
+            channels,
+        }
     }
-    if motor_three(motor) {
-        bytes[4] = 1;
-        bytes[5] = effect;
+}
+
+pub fn haptic_stop_packet() -> [u8; HAPTIC_PACKET] {
+    let mut stopped = [0; HAPTIC_PACKET];
+    for index in 0..HAPTIC_MOTORS {
+        stopped[index * HAPTIC_MOTOR_STRIDE] = HAPTIC_MOTOR_FLAG;
     }
-    bytes
+    stopped
+}
+
+fn clamp_haptic_play(play: f64) -> f64 {
+    if play > PLAY_LIMIT {
+        return PLAY_LIMIT;
+    }
+    play
+}
+
+fn haptic_effect_speed(play: f64) -> u8 {
+    (EFFECT_BYTE_SCALE * play).ceil() as u8
+}
+
+fn clear_haptic_motors(packet: &mut [u8; HAPTIC_PACKET]) {
+    for index in 0..HAPTIC_MOTORS {
+        packet[index * HAPTIC_MOTOR_STRIDE] = 0;
+    }
+}
+
+fn set_haptic_channel(packet: &mut [u8; HAPTIC_PACKET], motor_index: usize, speed: u8) {
+    let motor = motor_index * HAPTIC_MOTOR_STRIDE;
+    packet[motor] = HAPTIC_MOTOR_FLAG;
+    packet[motor + HAPTIC_EFFECT_OFFSET] = speed;
 }
 
 fn run_haptic(log: &Log, frames: &[Telemetry]) {
     let id = log.open_port(CAPTURE_PORT, BAUD_DEFAULT);
     let clock = Trace { log };
     let mut effect = HapticEffect::new(&haptic_settings());
-    let mut state = 0.0;
+    let mut state = SerialHapticState::new();
     each_frame(log, frames, |_log, frame| {
-        let mut play = effect.play_with_clock(frame, &clock) * AMP_FACTOR;
-        if play > PLAY_LIMIT {
-            play = PLAY_LIMIT;
-        }
-        let changed = play != state;
-        if changed {
-            state = play;
-        }
-        let speed = (EFFECT_BYTE_SCALE * play).ceil() as u8;
-        let packet = haptic_packet(speed, MOTOR_1, changed);
+        let raw = effect.play_with_clock(frame, &clock);
+        let step = state.tick(raw, AMP_FACTOR, MOTOR_1);
         let _ = ARDUINO_TIMEOUT_MS;
-        log.write_port(id, &packet);
+        log.write_port(id, &step.packet);
     });
-    let mut stopped = [0; HAPTIC_PACKET];
-    for motor in 0..HAPTIC_MOTORS {
-        stopped[motor * 2] = 1;
-    }
     let _ = HAPTIC_ZERO_TIMEOUT_MS;
-    log.write_port(id, &stopped);
+    log.write_port(id, &haptic_stop_packet());
     log.close_port(id);
 }
 
@@ -514,9 +581,72 @@ fn led_packet(total: usize, rgb: &[u8]) -> Vec<u8> {
     bytes
 }
 
-fn simled_rgb(lit: i32, total: i32, startled: i32) -> Vec<u8> {
+pub struct SimLedReport {
+    pub lit: i32,
+    pub bytes: Vec<u8>,
+}
+
+pub fn simled_report(
+    rpm: u32,
+    maxrpm: u32,
+    total: i32,
+    startled: i32,
+    endled: i32,
+) -> Option<SimLedReport> {
+    let span = simled_span(total, startled, endled)?;
+    let lit = if rpm > 0 && maxrpm > 0 {
+        revlights_lit(rpm as i32, maxrpm as i32, span.avail)
+    } else {
+        0
+    };
+    let rgb = simled_rgb(lit, span.total, span.avail, span.start);
+    Some(SimLedReport {
+        lit,
+        bytes: led_packet(span.total as usize, &rgb),
+    })
+}
+
+pub fn simled_blank(total: i32) -> Option<Vec<u8>> {
+    let count = usize::try_from(total).ok()?;
+    Some(led_packet(count, &[]))
+}
+
+struct SimLedSpan {
+    total: i32,
+    start: i32,
+    avail: i32,
+}
+
+fn simled_span(total: i32, startled: i32, endled: i32) -> Option<SimLedSpan> {
+    if total < LED_FIRST {
+        return None;
+    }
+    let mut end = endled;
+    if end == SIMLED_END_ALL {
+        end = total;
+    }
+    let mut start = startled;
+    if start < LED_FIRST {
+        start = LED_FIRST;
+    }
+    if end > total {
+        end = total;
+    }
+    let avail = end - start + 1;
+    if avail < LED_FIRST {
+        return None;
+    }
+    Some(SimLedSpan {
+        total,
+        start,
+        avail,
+    })
+}
+
+fn simled_rgb(lit: i32, total: i32, avail: i32, startled: i32) -> Vec<u8> {
     let mut rgb = vec![0; total as usize * RGB_CHANNELS];
-    let half = total / 2;
+    let half = avail / 2;
+    let last = avail - 1;
     for index in 0..lit {
         let led = index + startled - LED_FIRST;
         if led < 0 || led >= total {
@@ -525,11 +655,11 @@ fn simled_rgb(lit: i32, total: i32, startled: i32) -> Vec<u8> {
         let base = led as usize * RGB_CHANNELS;
         if index < half {
             rgb[base + GREEN_CHANNEL] = MARK_BYTE;
-        } else if index < total - 1 {
+        } else if index < last {
             rgb[base + RED_CHANNEL] = MARK_BYTE;
             rgb[base + GREEN_CHANNEL] = MARK_BYTE;
         }
-        if index == total - 1 {
+        if index == last {
             rgb[base + RED_CHANNEL] = MARK_BYTE;
             rgb[base + GREEN_CHANNEL] = 0;
         }
@@ -540,17 +670,16 @@ fn simled_rgb(lit: i32, total: i32, startled: i32) -> Vec<u8> {
 fn run_simled(log: &Log, frames: &[Telemetry]) {
     let id = log.open_port(CAPTURE_PORT, BAUD_DEFAULT);
     let total = SIMLED_COUNT;
-    let avail = total - LED_FIRST + 1;
     each_frame(log, frames, |_log, frame| {
-        let lit = if frame.rpms() > 0 && frame.maxrpm() > 0 {
-            revlights_lit(frame.rpms() as i32, frame.maxrpm() as i32, avail)
-        } else {
-            0
+        let Some(report) = simled_report(frame.rpms(), frame.maxrpm(), total, LED_FIRST, total)
+        else {
+            return;
         };
-        let rgb = simled_rgb(lit, total, LED_FIRST);
-        log.write_port(id, &led_packet(total as usize, &rgb));
+        log.write_port(id, &report.bytes);
     });
-    log.write_port(id, &led_packet(total as usize, &[]));
+    if let Some(blank) = simled_blank(total) {
+        log.write_port(id, &blank);
+    }
     log.close_port(id);
 }
 
@@ -1397,5 +1526,144 @@ mod tests {
         assert_eq!(report[SIMWIND_BYTE_SPEED], SAMPLE_MPH);
         assert_eq!(report[SIMWIND_BYTE_FAN], SAMPLE_FAN_BYTE);
         assert_eq!(report.len(), SIMWIND_LEN);
+    }
+
+    #[test]
+    fn haptic_keeps_effect_bytes_when_play_is_unchanged() {
+        const FULL_SPEED: u8 = 255;
+        let mut state = SerialHapticState::new();
+        let first = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_1);
+        assert_eq!(
+            first.packet,
+            [HAPTIC_MOTOR_FLAG, FULL_SPEED, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            first.channels[HAPTIC_SLOT_ONE].map(|channel| channel.speed),
+            Some(FULL_SPEED)
+        );
+        let held = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_1);
+        assert_eq!(held.packet, [0, FULL_SPEED, 0, 0, 0, 0, 0, 0]);
+        assert!(held.channels.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn haptic_default_motor_enables_no_channel() {
+        const MOTOR_CONFIG_DEFAULT: u32 = 1;
+        let mut state = SerialHapticState::new();
+        let step = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_CONFIG_DEFAULT);
+        assert_eq!(step.packet, [0; HAPTIC_PACKET]);
+        assert!(step.channels.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn haptic_front_axle_sets_both_channels() {
+        const FULL_SPEED: u8 = 255;
+        let mut state = SerialHapticState::new();
+        let step = state.tick(PLAY_LIMIT, AMP_FACTOR, MOTOR_FRONT_AXLE);
+        assert_eq!(
+            step.packet,
+            [
+                HAPTIC_MOTOR_FLAG,
+                FULL_SPEED,
+                0,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                FULL_SPEED,
+                0,
+                0
+            ]
+        );
+        assert_eq!(
+            step.channels[HAPTIC_SLOT_THREE].map(|channel| channel.motor),
+            Some(HAPTIC_LOG_MOTOR_THREE)
+        );
+    }
+
+    #[test]
+    fn haptic_stop_packet_enables_every_motor() {
+        assert_eq!(
+            haptic_stop_packet(),
+            [
+                HAPTIC_MOTOR_FLAG,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                0,
+                HAPTIC_MOTOR_FLAG,
+                0
+            ]
+        );
+    }
+
+    #[test]
+    fn haptic_return_to_zero_still_flags_the_motor() {
+        const SAMPLE_PLAY: f64 = 0.4;
+        const SAMPLE_SPEED: u8 = 102;
+        let mut state = SerialHapticState::new();
+        let active = state.tick(SAMPLE_PLAY, AMP_FACTOR, MOTOR_1);
+        assert_eq!(
+            active.packet,
+            [HAPTIC_MOTOR_FLAG, SAMPLE_SPEED, 0, 0, 0, 0, 0, 0]
+        );
+        let idle = state.tick(0.0, AMP_FACTOR, MOTOR_1);
+        assert_eq!(idle.packet, [HAPTIC_MOTOR_FLAG, 0, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn simled_report_paints_green_then_the_last_led_red() {
+        const TOTAL: i32 = 8;
+        const SAMPLE_RPM: u32 = 4_000;
+        const SAMPLE_MAX: u32 = 8_000;
+        const SAMPLE_LIT: i32 = 4;
+        let report = simled_report(SAMPLE_RPM, SAMPLE_MAX, TOTAL, LED_FIRST, TOTAL).expect("span");
+        assert_eq!(report.lit, SAMPLE_LIT);
+        let mut expected = vec![MARK_BYTE; HEADER_MARKS];
+        expected.extend_from_slice(SLED_TAG);
+        for led in 0..TOTAL {
+            if led < SAMPLE_LIT {
+                expected.extend_from_slice(&[0, MARK_BYTE, 0]);
+            } else {
+                expected.extend_from_slice(&[0, 0, 0]);
+            }
+        }
+        expected.extend_from_slice(&LED_PACKET_TAIL);
+        assert_eq!(report.bytes, expected);
+    }
+
+    #[test]
+    fn simled_endled_zero_uses_every_led() {
+        const TOTAL: i32 = 8;
+        let all = simled_report(8_000, 8_000, TOTAL, LED_FIRST, SIMLED_END_ALL).expect("all");
+        let explicit = simled_report(8_000, 8_000, TOTAL, LED_FIRST, TOTAL).expect("explicit");
+        assert_eq!(all.bytes, explicit.bytes);
+    }
+
+    #[test]
+    fn simled_single_available_led_is_red() {
+        const TOTAL: i32 = 6;
+        const ONE: i32 = 1;
+        const SAMPLE_RPM: u32 = 8_000;
+        let report = simled_report(SAMPLE_RPM, SAMPLE_RPM, TOTAL, ONE, ONE).expect("one");
+        assert_eq!(report.lit, ONE);
+        assert_eq!(report.bytes[HEADER_MARKS + SLED_TAG.len()], MARK_BYTE);
+        assert_eq!(
+            report.bytes[HEADER_MARKS + SLED_TAG.len() + GREEN_CHANNEL],
+            0
+        );
+    }
+
+    #[test]
+    fn simled_without_leds_does_not_build_a_frame() {
+        assert!(simled_report(4_000, 8_000, 0, LED_FIRST, SIMLED_END_ALL).is_none());
+    }
+
+    #[test]
+    fn simled_blank_clears_the_color_bytes() {
+        const TOTAL: i32 = 8;
+        let blank = simled_blank(TOTAL).expect("blank");
+        let dark = simled_report(0, 8_000, TOTAL, LED_FIRST, TOTAL).expect("dark");
+        assert_eq!(dark.lit, 0);
+        assert_eq!(blank, dark.bytes);
     }
 }

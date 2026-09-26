@@ -427,7 +427,12 @@ pub const MSG_TACH_GRANULARITY_INVALID: &str =
 pub const MSG_TACH_GETTING_PULSES: &str = "Getting pulses for current tachometer revs";
 pub const MSG_REVBURNER_NO_HANDLE: &str = "no handle";
 pub const SERIAL_OPEN_ERROR: i32 = -1;
+pub const UNSUPPORTED_SIM_FEATURE: i32 = 6;
 pub const MSG_SHIFTLIGHTS_INIT: &str = "Initializing arduino device for shiftlights.";
+pub const MSG_SERIAL_HAPTIC_INIT: &str = "Initializing arduino device for haptic effects.";
+pub const MSG_SIMLED_INIT: &str = "Initializing arduino device for simled.";
+pub const MSG_SERIAL_HAPTIC_UPDATING: &str = "arduino haptic device updating";
+pub const MSG_SERIAL_HAPTIC_ZERO: &str = "set zero to arduino device";
 pub const MSG_MOZA_NEW_INIT: &str = "Initializing new firmware Moza serial wheel device.";
 pub const MSG_SERIAL_START: &str = "Starting serial device initialization";
 pub const MSG_SERIAL_NO_EXISTING: &str = "no existing connections found, looking to create new";
@@ -581,6 +586,18 @@ pub fn simwind_speed_message(mph: i32) -> String {
 
 pub fn simwind_fan_message(fan: i32, configured: f64) -> String {
     format!("Sending fanpower: {fan} (from config: {configured:.6})")
+}
+
+pub fn serial_haptic_channel_message(
+    effect: i32,
+    speed: i32,
+    motor: i32,
+    raw_play: f64,
+    ampfactor: f64,
+) -> String {
+    format!(
+        "Updating arduino haptic device with effect type {effect} speed motor speed {speed} on motor {motor} from original effect {raw_play:.6} with ampfactor {ampfactor:.6}"
+    )
 }
 
 pub fn tach_config_load_message(path: &str) -> String {
@@ -1126,6 +1143,7 @@ mod tests {
         );
         assert_eq!(MSG_REVBURNER_NO_HANDLE, "no handle");
         assert_eq!(SERIAL_OPEN_ERROR, -1);
+        assert_eq!(UNSUPPORTED_SIM_FEATURE, 6);
         assert_eq!(
             serial_init_error_message(SERIAL_OPEN_ERROR),
             "Did not initialize serial device due to error code -1"
@@ -1255,6 +1273,34 @@ mod tests {
         assert_eq!(
             simwind_fan_message(SIMWIND_SAMPLE_FAN, cargopit_config::keys::FANPOWER_DEFAULT),
             "Sending fanpower: 153 (from config: 0.600000)"
+        );
+        assert_eq!(
+            MSG_SERIAL_HAPTIC_INIT,
+            "Initializing arduino device for haptic effects."
+        );
+        assert_eq!(MSG_SIMLED_INIT, "Initializing arduino device for simled.");
+        assert_eq!(MSG_SERIAL_HAPTIC_UPDATING, "arduino haptic device updating");
+        assert_eq!(MSG_SERIAL_HAPTIC_ZERO, "set zero to arduino device");
+        const HAPTIC_SAMPLE_SPEED: i32 = 255;
+        const HAPTIC_SAMPLE_MOTOR: i32 = 1;
+        const HAPTIC_SAMPLE_PLAY: f64 = 1.0;
+        assert_eq!(
+            serial_haptic_channel_message(
+                cargopit_config::names::EFFECT_TYRE_SLIP,
+                HAPTIC_SAMPLE_SPEED,
+                HAPTIC_SAMPLE_MOTOR,
+                HAPTIC_SAMPLE_PLAY,
+                cargopit_config::keys::AMPFACTOR_DEFAULT,
+            ),
+            "Updating arduino haptic device with effect type 3 speed motor speed 255 on motor 1 from original effect 1.000000 with ampfactor 1.000000"
+        );
+        assert_eq!(
+            serial_init_error_message(UNSUPPORTED_SIM_FEATURE),
+            "Did not initialize serial device due to error code 6"
+        );
+        assert_eq!(
+            arduino_copy_message(cargopit_devices::serial::HAPTIC_PACKET_LEN),
+            "copying 8 bytes to arduino device"
         );
         assert_eq!(MSG_MOZA_ARM_FAILED, "Moza R9 telemetry arm failed");
         assert_eq!(MSG_MOZA_ARMED, "Moza R9 telemetry mode armed");
