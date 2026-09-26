@@ -2,10 +2,13 @@
 //! and writes its pulse report on each tick. A Logitech G29, a Cammus C5, and a
 //! Cammus C12 open and write their LED reports on each tick. A C12 with a Lua file
 //! writes one packet per shift light. A Simagic GT Neo with a Lua file sends
-//! feature reports for all 73 LEDs. A Moza R9 serial wheel opens its port and
+//! feature reports for all 73 LEDs. A Fanatec CSL Elite V3 opens its sysfs rumble
+//! file and writes the haptic value when that value changes. A Moza R9 serial wheel opens its port and
 //! writes the new-firmware LED frames. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use cargopit_config::config::{CargopitConfig, DeviceEntry};
@@ -14,6 +17,7 @@ use cargopit_config::names;
 use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
 use cargopit_devices::clock::{SystemClock, VirtualClock};
+use cargopit_devices::haptic::{HapticEffect, HapticSettings, TyreId, VibrationEffect};
 use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedMode};
 use cargopit_devices::serial::{self, MozaNewWheel};
 use cargopit_devices::sound::SharedShaker;
@@ -44,6 +48,17 @@ const C5_RELEASE_RPM: u32 = 0;
 const C5_RELEASE_GEAR: u32 = 0;
 const C5_RELEASE_VELOCITY: u32 = 0;
 const ASSUME_SIM_SUPPORTS_HAPTICS: bool = true;
+const HAPTIC_AMPLITUDE_UNITY: i64 = 100;
+const HAPTIC_MOTOR_DEFAULT: i64 = 1;
+const HAPTIC_FREQUENCY_DEFAULT: i64 = 0;
+const HAPTIC_DURATION_UNSET: f64 = 0.0;
+const GEAR_DURATION_DEFAULT_S: f64 = 0.125;
+const HAPTIC_THRESHOLD_DEFAULT: f64 = 0.0;
+const HAPTIC_STATE_IDLE: f64 = 0.0;
+const CSL_PROBE_CAPTURED: i32 = 0;
+const CSL_PROBE_MISSING: i32 = 1;
+const CSL_PROBE_PERMISSION: i32 = 2;
+const CSL_PROBE_OPEN_FAILED: i32 = 3;
 
 pub struct LoadedDevices {
     devices: Vec<SimDevice>,
@@ -59,6 +74,7 @@ pub struct LoadedDevices {
     c5: Vec<bool>,
     c12: Vec<bool>,
     gt: Vec<bool>,
+    csl: Vec<Option<CslPedal>>,
     luas: Vec<Option<LuaHost>>,
 }
 
@@ -104,6 +120,7 @@ impl LoadedDevices {
             c5: Vec::new(),
             c12: Vec::new(),
             gt: Vec::new(),
+            csl: Vec::new(),
             luas: Vec::new(),
         }
     }
@@ -129,6 +146,14 @@ impl LoadedDevices {
         match self.ports.get(index) {
             Some(HidPort::Captured(log)) => Some(log),
             _ => None,
+        }
+    }
+
+    pub fn captured_sysfs(&self, index: usize) -> Option<&[Vec<u8>]> {
+        let pedal = self.csl.get(index)?.as_ref()?;
+        match &pedal.file {
+            CslFile::Captured { frames } => Some(frames),
+            CslFile::Live { .. } | CslFile::Closed => None,
         }
     }
 
@@ -165,6 +190,7 @@ impl LoadedDevices {
         notices.extend(self.write_c5(index, frame));
         notices.extend(self.write_c12(index, frame));
         notices.extend(self.write_gt(index, frame));
+        notices.extend(self.write_csl(index, frame, now_ns));
         self.update_sound(index, frame, now_ns);
         notices
     }
@@ -187,6 +213,7 @@ impl LoadedDevices {
         self.blank_moza(now_ns, &mut notices);
         self.close_ports(&mut notices);
         self.close_c12_lua(&mut notices);
+        self.close_csl();
         notices
     }
 
@@ -280,6 +307,35 @@ impl LoadedDevices {
             self.write_index(index, &report, &mut notices);
         }
         notices
+    }
+
+    fn write_csl(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
+        let Some(pedal) = self.csl.get_mut(index).and_then(Option::as_mut) else {
+            return Vec::new();
+        };
+        let clock = VirtualClock::from_monotonic_ns(now_ns);
+        let Some(play) = csl_play(pedal, frame, &clock) else {
+            return Vec::new();
+        };
+        if play == pedal.state {
+            return Vec::new();
+        }
+        let Some(kind) = pedal.effect.as_ref().map(HapticEffect::effect) else {
+            return Vec::new();
+        };
+        let text = usb::csl_rumble_text(kind, play);
+        write_csl_bytes(&mut pedal.file, text.as_bytes());
+        pedal.state = play;
+        Vec::new()
+    }
+
+    fn close_csl(&mut self) {
+        for slot in &mut self.csl {
+            let Some(pedal) = slot else {
+                continue;
+            };
+            close_csl_file(&mut pedal.file);
+        }
     }
 
     fn write_gt(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
@@ -664,6 +720,7 @@ where
         &mut HidAttempt::Probe {
             hid: &mut hid,
             serial: &mut serial,
+            sysfs: None,
             now_ns,
         },
     )
@@ -697,6 +754,7 @@ fn open_profile_with(
     let mut c5 = Vec::new();
     let mut c12 = Vec::new();
     let mut gt = Vec::new();
+    let mut csl = Vec::new();
     let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
@@ -730,6 +788,7 @@ fn open_profile_with(
         c5.push(considered.c5);
         c12.push(considered.c12);
         gt.push(considered.gt);
+        csl.push(considered.csl);
         luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
@@ -761,6 +820,7 @@ fn open_profile_with(
             c5,
             c12,
             gt,
+            csl,
             luas,
         },
         setup_notices,
@@ -775,6 +835,7 @@ enum HidAttempt<'a> {
     Probe {
         hid: &'a mut dyn FnMut(u16, u16) -> bool,
         serial: &'a mut dyn FnMut(&str) -> bool,
+        sysfs: Option<&'a mut dyn FnMut(&str) -> i32>,
         now_ns: u64,
     },
 }
@@ -800,6 +861,7 @@ struct Considered {
     c12: bool,
     lua: Option<LuaHost>,
     gt: bool,
+    csl: Option<CslPedal>,
 }
 
 enum SerialPort {
@@ -837,6 +899,9 @@ fn consider_entry(
     }
     if gt_entry(entry) {
         return consider_gt(entry, slot, id, disable_audio, attempt);
+    }
+    if csl_entry(entry) {
+        return consider_csl(entry, slot, id, disable_audio, supports_haptics, attempt);
     }
     consider_closed(entry, slot, disable_audio)
 }
@@ -912,6 +977,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -969,6 +1035,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -988,6 +1055,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -1007,6 +1075,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -1148,6 +1217,7 @@ fn revburner_attempt(
                 c12: false,
                 lua: None,
                 gt: false,
+                csl: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1165,6 +1235,7 @@ fn revburner_attempt(
             c12: false,
             lua: None,
             gt: false,
+            csl: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1181,6 +1252,7 @@ fn revburner_attempt(
             c12: false,
             lua: None,
             gt: false,
+            csl: None,
         },
     }
 }
@@ -1218,6 +1290,292 @@ fn c12_entry(entry: &DeviceEntry) -> bool {
 
 fn gt_entry(entry: &DeviceEntry) -> bool {
     usb_wheel_hardware(entry, names::HARDWARE_SIMAGIC_GT_NEO)
+}
+
+fn csl_entry(entry: &DeviceEntry) -> bool {
+    usb_wheel_hardware(entry, names::HARDWARE_CSL_ELITE)
+}
+
+enum CslAttach {
+    Captured,
+    Missing,
+    Permission,
+    OpenFailed,
+}
+
+enum CslOpen {
+    Ready(CslFile),
+    Missing,
+    Permission,
+    OpenFailed,
+}
+
+enum CslFile {
+    Closed,
+    Captured { frames: Vec<Vec<u8>> },
+    Live { file: std::fs::File },
+}
+
+struct CslPedal {
+    file: CslFile,
+    effect: Option<HapticEffect>,
+    state: f64,
+}
+
+fn consider_csl(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    supports_haptics: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let effect = device_effect(entry);
+    let mut notices = Vec::new();
+    if !supports_haptics {
+        notices.push(notice(Level::Info, games::MSG_USB_NO_HAPTICS));
+    }
+    let arm = supports_haptics && effect.is_some();
+    if arm {
+        if let Some(effect_id) = effect {
+            notices.extend(csl_haptic_notices(entry, effect_id));
+        }
+    }
+    notices.extend([
+        notice(Level::Info, games::MSG_INIT_USB),
+        notice(Level::Info, games::MSG_INIT_WHEEL),
+        notice(Level::Info, games::MSG_CSL_ATTEMPT),
+        notice(Level::Info, games::MSG_CSL_INIT),
+    ]);
+    let armed = effect
+        .filter(|_| arm)
+        .and_then(|effect_id| csl_effect(entry, effect_id));
+    match attach_csl(attempt) {
+        CslOpen::Missing => csl_failed(notices, games::MSG_CSL_MISSING, games::ERROR_UNKNOWN),
+        CslOpen::Permission => csl_failed(
+            notices,
+            games::MSG_CSL_PERMISSION,
+            games::USB_INIT_CSL_PERMISSION,
+        ),
+        CslOpen::OpenFailed => csl_failed(notices, games::MSG_CSL_OPEN, games::ERROR_UNKNOWN),
+        CslOpen::Ready(file) => csl_ready(entry, id, notices, file, armed),
+    }
+}
+
+fn csl_failed(mut notices: Vec<InitNotice>, message: &str, code: i32) -> Considered {
+    notices.push(notice(Level::Error, message));
+    usb_not_initialized(notices, code)
+}
+
+fn csl_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    mut notices: Vec<InitNotice>,
+    file: CslFile,
+    effect: Option<HapticEffect>,
+) -> Considered {
+    notices.push(notice(Level::Debug, games::MSG_CSL_FOUND));
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: None,
+        gt: false,
+        csl: Some(CslPedal {
+            file,
+            effect,
+            state: HAPTIC_STATE_IDLE,
+        }),
+    }
+}
+
+fn attach_csl(attempt: &mut HidAttempt<'_>) -> CslOpen {
+    match attempt {
+        HidAttempt::Live { .. } => match usb::locate_csl_pedals() {
+            usb::CslLocate::Missing => CslOpen::Missing,
+            usb::CslLocate::Permission => CslOpen::Permission,
+            usb::CslLocate::Found(path) => open_csl_file(&path),
+        },
+        HidAttempt::Probe { sysfs, .. } => {
+            let Some(probe) = sysfs else {
+                return CslOpen::Missing;
+            };
+            match csl_attach(probe(usb::CSL_SYSFS_GLOB)) {
+                CslAttach::Captured => CslOpen::Ready(CslFile::Captured { frames: Vec::new() }),
+                CslAttach::Missing => CslOpen::Missing,
+                CslAttach::Permission => CslOpen::Permission,
+                CslAttach::OpenFailed => CslOpen::OpenFailed,
+            }
+        }
+    }
+}
+
+fn csl_attach(code: i32) -> CslAttach {
+    match code {
+        CSL_PROBE_CAPTURED => CslAttach::Captured,
+        CSL_PROBE_PERMISSION => CslAttach::Permission,
+        CSL_PROBE_OPEN_FAILED => CslAttach::OpenFailed,
+        CSL_PROBE_MISSING => CslAttach::Missing,
+        _ => CslAttach::Missing,
+    }
+}
+
+fn open_csl_file(path: &str) -> CslOpen {
+    if path.is_empty() {
+        return CslOpen::Missing;
+    }
+    match OpenOptions::new().write(true).open(path) {
+        Ok(file) => CslOpen::Ready(CslFile::Live { file }),
+        Err(_) => CslOpen::OpenFailed,
+    }
+}
+
+fn csl_play(pedal: &mut CslPedal, frame: &Telemetry, clock: &VirtualClock) -> Option<f64> {
+    let effect = pedal.effect.as_mut()?;
+    Some(effect.play_with_clock(frame, clock))
+}
+
+fn write_csl_bytes(file: &mut CslFile, bytes: &[u8]) {
+    match file {
+        CslFile::Captured { frames } => frames.push(bytes.to_vec()),
+        CslFile::Live { file } => {
+            let _ = file.write_all(bytes);
+            let _ = file.flush();
+        }
+        CslFile::Closed => {}
+    }
+}
+
+fn close_csl_file(file: &mut CslFile) {
+    if let CslFile::Live { file } = file {
+        let _ = file.flush();
+    }
+    if matches!(file, CslFile::Live { .. }) {
+        *file = CslFile::Closed;
+    }
+}
+
+fn csl_haptic_notices(entry: &DeviceEntry, effect: i32) -> Vec<InitNotice> {
+    let tyre = csl_tyre(entry, effect);
+    let duration = csl_duration(entry, effect);
+    let frequency = entry
+        .get_i64(keys::KEY_FREQUENCY)
+        .unwrap_or(HAPTIC_FREQUENCY_DEFAULT);
+    let amplitude = entry
+        .get_i64(keys::KEY_AMPLITUDE)
+        .unwrap_or(HAPTIC_AMPLITUDE_UNITY);
+    let motor = entry
+        .get_i64(keys::KEY_MOTORS)
+        .unwrap_or(HAPTIC_MOTOR_DEFAULT);
+    let mut notices = Vec::new();
+    match csl_vibration_phrase(effect) {
+        Some(phrase) => notices.push(notice(Level::Info, games::haptic_effect_message(phrase))),
+        None => notices.push(notice(Level::Warn, games::unknown_haptic_message(effect))),
+    }
+    notices.push(notice(
+        Level::Info,
+        games::haptic_summary_message(effect, tyre),
+    ));
+    notices.push(notice(
+        Level::Trace,
+        games::haptic_duration_message(duration),
+    ));
+    notices.push(notice(
+        Level::Trace,
+        games::haptic_frequency_message(frequency),
+    ));
+    notices.push(notice(
+        Level::Trace,
+        games::haptic_amplitude_message(amplitude),
+    ));
+    notices.push(notice(Level::Trace, games::haptic_motor_message(motor)));
+    notices
+}
+
+fn csl_effect(entry: &DeviceEntry, effect: i32) -> Option<HapticEffect> {
+    let kind = VibrationEffect::from_id(effect)?;
+    Some(HapticEffect::new(&HapticSettings {
+        effect: kind,
+        tyre: TyreId::from_id(csl_tyre(entry, effect)),
+        threshold: entry
+            .get_f64(keys::KEY_THRESHOLD)
+            .unwrap_or(HAPTIC_THRESHOLD_DEFAULT),
+        frequency: u32_from_i64(
+            entry
+                .get_i64(keys::KEY_FREQUENCY)
+                .unwrap_or(HAPTIC_FREQUENCY_DEFAULT),
+        ),
+        amplitude: u32_from_i64(
+            entry
+                .get_i64(keys::KEY_AMPLITUDE)
+                .unwrap_or(HAPTIC_AMPLITUDE_UNITY),
+        ),
+        duration: csl_duration(entry, effect),
+        motor_position: u32_from_i64(
+            entry
+                .get_i64(keys::KEY_MOTORS)
+                .unwrap_or(HAPTIC_MOTOR_DEFAULT),
+        ),
+        ..HapticSettings::default()
+    }))
+}
+
+fn csl_tyre(entry: &DeviceEntry, effect: i32) -> i32 {
+    if !csl_effect_uses_tyre(effect) {
+        return names::TYRE_FRONT_LEFT;
+    }
+    let Some(name) = entry.get_str(keys::KEY_TYRE) else {
+        return names::TYRE_FRONT_LEFT;
+    };
+    names::lookup(names::TYRES, name).unwrap_or(names::TYRE_ALL_FOUR)
+}
+
+fn csl_effect_uses_tyre(effect: i32) -> bool {
+    matches!(
+        effect,
+        names::EFFECT_TYRE_SLIP
+            | names::EFFECT_TYRE_LOCK
+            | names::EFFECT_ABS
+            | names::EFFECT_SUSPENSION
+    )
+}
+
+fn csl_duration(entry: &DeviceEntry, effect: i32) -> f64 {
+    if let Some(value) = entry.get_f64(keys::KEY_DURATION) {
+        return value;
+    }
+    if effect == names::EFFECT_GEAR {
+        return GEAR_DURATION_DEFAULT_S;
+    }
+    HAPTIC_DURATION_UNSET
+}
+
+fn csl_vibration_phrase(effect: i32) -> Option<&'static str> {
+    match effect {
+        names::EFFECT_ENGINE => Some(games::VIBRATION_ENGINE),
+        names::EFFECT_GEAR => Some(games::VIBRATION_GEAR),
+        names::EFFECT_TYRE_SLIP => Some(games::VIBRATION_SLIP),
+        names::EFFECT_TYRE_LOCK => Some(games::VIBRATION_LOCK),
+        names::EFFECT_ABS => Some(games::VIBRATION_ABS),
+        names::EFFECT_SUSPENSION => Some(games::VIBRATION_SUSPENSION),
+        _ => None,
+    }
+}
+
+fn u32_from_i64(value: i64) -> u32 {
+    u32::try_from(value).unwrap_or(0)
 }
 
 fn usb_wheel_hardware(entry: &DeviceEntry, hardware: i32) -> bool {
@@ -1405,6 +1763,7 @@ fn gt_ready(
         c12: false,
         lua: None,
         gt: true,
+        csl: None,
     }
 }
 
@@ -1478,6 +1837,7 @@ fn g29_ready(
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -1503,6 +1863,7 @@ fn c5_ready(
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -1528,6 +1889,7 @@ fn c12_ready(
         c12: true,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -1630,6 +1992,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -1701,6 +2064,7 @@ fn finish_moza(
         c12: false,
         lua: None,
         gt: false,
+        csl: None,
     }
 }
 
@@ -2685,6 +3049,195 @@ mod tests {
             &loaded.notices,
             &games::could_not_initialize_message(CLASS_USB)
         ));
+    }
+
+    #[test]
+    fn csl_missing_pedal_is_not_scheduled() {
+        let config = csl_config();
+        let missing = open_csl(&config, true, |_pattern| CSL_PROBE_MISSING);
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_CSL_INIT));
+        assert!(notice_has(&missing.notices, games::MSG_CSL_MISSING));
+        assert!(notice_has(
+            &missing.notices,
+            &games::usb_init_error_message(games::ERROR_UNKNOWN)
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_CSL_FOUND));
+        let permission = open_csl(&config, true, |_pattern| CSL_PROBE_PERMISSION);
+        assert!(permission.devices.is_empty());
+        assert!(notice_has(&permission.notices, games::MSG_CSL_PERMISSION));
+        assert!(notice_has(
+            &permission.notices,
+            &games::usb_init_error_message(games::USB_INIT_CSL_PERMISSION)
+        ));
+        let unreadable = open_csl(&config, true, |_pattern| CSL_PROBE_OPEN_FAILED);
+        assert!(unreadable.devices.is_empty());
+        assert!(notice_has(&unreadable.notices, games::MSG_CSL_OPEN));
+        assert!(notice_has(
+            &unreadable.notices,
+            &games::usb_init_error_message(games::ERROR_UNKNOWN)
+        ));
+    }
+
+    #[test]
+    fn csl_slip_writes_rumble_when_the_effect_changes() {
+        const CSL_SPEED: u32 = 80;
+        const CSL_Y_VELOCITY: f64 = 1.0;
+        const CSL_GAS: f64 = 0.2;
+        const CSL_GAS_OFF: f64 = 0.0;
+        const CSL_SLIP: f64 = -0.4;
+        const CSL_SLIP_MORE: f64 = -0.8;
+        const WHEEL_FRONT_LEFT: usize = 0;
+        let config = csl_config();
+        let mut pattern = String::new();
+        let loaded = open_csl(&config, true, |seen| {
+            pattern = seen.to_string();
+            CSL_PROBE_CAPTURED
+        });
+        assert_eq!(pattern, usb::CSL_SYSFS_GLOB);
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP),
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_INIT_USB,
+            games::MSG_CSL_FOUND
+        ));
+        assert!(notice_has(&loaded.notices, games::MSG_CSL_ATTEMPT));
+        assert!(notice_has(&loaded.notices, games::MSG_CSL_INIT));
+        let slip = usb::csl_rumble_text(VibrationEffect::TyreSlip, CSL_GAS);
+        let idle = usb::csl_rumble_text(VibrationEffect::TyreSlip, CSL_GAS_OFF);
+        let slip_bytes = slip.into_bytes();
+        let idle_bytes = idle.into_bytes();
+        let mut devices = loaded.devices;
+        let frame = csl_frame(
+            CSL_SPEED,
+            CSL_Y_VELOCITY,
+            CSL_GAS,
+            WHEEL_FRONT_LEFT,
+            CSL_SLIP,
+        );
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_sysfs(0).and_then(|frames| frames.last()),
+            Some(&slip_bytes)
+        );
+        let once = devices.captured_sysfs(0).map(|frames| frames.len());
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(devices.captured_sysfs(0).map(|frames| frames.len()), once);
+        let stronger = csl_frame(
+            CSL_SPEED,
+            CSL_Y_VELOCITY,
+            CSL_GAS,
+            WHEEL_FRONT_LEFT,
+            CSL_SLIP_MORE,
+        );
+        let _ = devices.tick(0, &stronger, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_sysfs(0).map(|frames| frames.len()),
+            once.map(|count| count.saturating_add(1))
+        );
+        let coast = csl_frame(
+            CSL_SPEED,
+            CSL_Y_VELOCITY,
+            CSL_GAS_OFF,
+            WHEEL_FRONT_LEFT,
+            CSL_SLIP,
+        );
+        let _ = devices.tick(0, &coast, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_sysfs(0).and_then(|frames| frames.last()),
+            Some(&idle_bytes)
+        );
+        let before = devices.captured_sysfs(0).map(|frames| frames.len());
+        let _ = devices.release(PROBE_OPEN_NS);
+        assert_eq!(devices.captured_sysfs(0).map(|frames| frames.len()), before);
+    }
+
+    #[test]
+    fn csl_without_haptic_support_opens_and_stays_quiet() {
+        const CSL_SPEED: u32 = 80;
+        const CSL_Y_VELOCITY: f64 = 1.0;
+        const CSL_GAS: f64 = 0.2;
+        const CSL_SLIP: f64 = -0.4;
+        const WHEEL_FRONT_LEFT: usize = 0;
+        let config = csl_config();
+        let loaded = open_csl(&config, false, |_pattern| CSL_PROBE_CAPTURED);
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_USB_NO_HAPTICS,
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_has(&loaded.notices, games::MSG_CSL_FOUND));
+        assert!(notice_absent(
+            &loaded.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP)
+        ));
+        let mut devices = loaded.devices;
+        let frame = csl_frame(
+            CSL_SPEED,
+            CSL_Y_VELOCITY,
+            CSL_GAS,
+            WHEEL_FRONT_LEFT,
+            CSL_SLIP,
+        );
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_sysfs(0).map(|frames| frames.len()),
+            Some(0)
+        );
+    }
+
+    fn csl_config() -> CargopitConfig {
+        const CSL_FPS: i64 = 60;
+        let mut config = wheel_config(CSL_FPS, names::HARDWARE_CSL_ELITE);
+        let effect = names::name_for(names::EFFECTS, names::EFFECT_TYRE_SLIP).expect("slip name");
+        config.profiles[0].devices[0].set_str(keys::KEY_EFFECT, effect);
+        config
+    }
+
+    fn csl_frame(speed: u32, y_velocity: f64, gas: f64, wheel: usize, slip: f64) -> Telemetry {
+        let mut frame = Telemetry::new();
+        frame.set_velocity(speed);
+        frame.set_y_velocity(y_velocity);
+        frame.set_gas(gas);
+        frame.set_tyre_slip(wheel, slip);
+        frame
+    }
+
+    fn open_csl(
+        config: &CargopitConfig,
+        supports_haptics: bool,
+        mut sysfs: impl FnMut(&str) -> i32,
+    ) -> ProfileLoad {
+        open_profile_with(
+            config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            supports_haptics,
+            None,
+            &mut HidAttempt::Probe {
+                hid: &mut |_vendor, _product| panic!("hid open"),
+                serial: &mut |_path| false,
+                sysfs: Some(&mut sysfs),
+                now_ns: PROBE_OPEN_NS,
+            },
+        )
+    }
+
+    fn notice_before(notices: &[InitNotice], earlier: &str, later: &str) -> bool {
+        let Some(first) = notices.iter().position(|notice| notice.message == earlier) else {
+            return false;
+        };
+        let Some(second) = notices.iter().position(|notice| notice.message == later) else {
+            return false;
+        };
+        first < second
     }
 
     fn notice_has(notices: &[InitNotice], message: &str) -> bool {

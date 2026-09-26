@@ -54,6 +54,7 @@ pub const KEY_FREQUENCY: &str = "frequency";
 pub const KEY_FREQUENCY_MAX: &str = "frequencyMax";
 pub const KEY_DURATION: &str = "duration";
 pub const KEY_MOTORS: &str = "motors";
+pub const KEY_AMPLITUDE: &str = "amplitude";
 pub const KEY_VOLUME: &str = "volume";
 pub const KEY_STREAM_VOLUME: &str = "streamVolume";
 pub const KEY_PAN: &str = "pan";
