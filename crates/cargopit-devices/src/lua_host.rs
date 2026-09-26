@@ -46,12 +46,21 @@ impl LuaHost {
     pub fn load(source: &str, mode: LuaLedMode) -> LuaResult<Self> {
         let lua = Lua::new();
         let chunk: Function = lua.load(source).into_function()?;
-        lua.globals().set("myFunc", chunk)?;
-        Ok(Self {
-            lua,
-            leds: Rc::new(RefCell::new(Vec::new())),
-            mode,
-        })
+        Self::install(lua, chunk, mode)
+    }
+
+    pub fn load_file(path: &std::path::Path, mode: LuaLedMode) -> Result<Self, String> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(err) => return Err(cannot_open(path, &err)),
+        };
+        let lua = Lua::new();
+        let name = format!("@{}", path.display());
+        let chunk = match lua.load(&bytes).set_name(name).into_function() {
+            Ok(chunk) => chunk,
+            Err(err) => return Err(lua_detail(&err)),
+        };
+        Self::install(lua, chunk, mode).map_err(|err| lua_detail(&err))
     }
 
     pub fn call(
@@ -60,6 +69,19 @@ impl LuaHost {
         total_leds: i64,
         clock: &impl Clock,
     ) -> LuaResult<LuaTick> {
+        let (tick, failure) = self.call_script(sim, total_leds, clock)?;
+        match failure {
+            Some(err) => Err(err),
+            None => Ok(tick),
+        }
+    }
+
+    pub fn call_script(
+        &mut self,
+        sim: &mut Telemetry,
+        total_leds: i64,
+        clock: &impl Clock,
+    ) -> LuaResult<(LuaTick, Option<mlua::Error>)> {
         if sim.mtick() == 0 {
             sim.set_mtick(clock.wall_ms());
         }
@@ -71,15 +93,26 @@ impl LuaHost {
         self.register_leds()?;
         self.set_colors()?;
         let func: Function = self.lua.globals().get("myFunc")?;
-        func.call::<()>(())?;
-        let message = match self.lua.globals().get(MESSAGE_GLOBAL)? {
-            Value::String(text) => Some(text.to_str()?.to_string()),
-            _ => None,
-        };
-        Ok(LuaTick {
-            message,
-            leds: self.leds.borrow().clone(),
+        let invoked = func.call::<()>(());
+        let message = self.script_message()?;
+        let leds = self.leds.borrow().clone();
+        Ok((LuaTick { message, leds }, invoked.err()))
+    }
+
+    fn install(lua: Lua, chunk: Function, mode: LuaLedMode) -> LuaResult<Self> {
+        lua.globals().set("myFunc", chunk)?;
+        Ok(Self {
+            lua,
+            leds: Rc::new(RefCell::new(Vec::new())),
+            mode,
         })
+    }
+
+    fn script_message(&self) -> LuaResult<Option<String>> {
+        match self.lua.globals().get(MESSAGE_GLOBAL)? {
+            Value::String(text) => Ok(Some(text.to_str()?.to_string())),
+            _ => Ok(None),
+        }
     }
 
     fn publish_simdata(&self, sim: &Telemetry) -> LuaResult<()> {
@@ -287,6 +320,35 @@ fn clear_count(leds: &Rc<RefCell<Vec<u8>>>, lua: &Lua, _ignored_start: i32, coun
     }
 }
 
+const LUA_SYNTAX_PREFIX: &str = "syntax error: ";
+const LUA_RUNTIME_PREFIX: &str = "runtime error: ";
+const LUA_CANNOT_OPEN: &str = "cannot open";
+
+fn cannot_open(path: &std::path::Path, err: &std::io::Error) -> String {
+    format!("{LUA_CANNOT_OPEN} {}: {}", path.display(), os_reason(err))
+}
+
+fn os_reason(err: &std::io::Error) -> String {
+    let Some(code) = err.raw_os_error() else {
+        return err.to_string();
+    };
+    let reason = unsafe { libc::strerror(code) };
+    if reason.is_null() {
+        return err.to_string();
+    }
+    unsafe { std::ffi::CStr::from_ptr(reason) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+pub fn lua_detail(err: &mlua::Error) -> String {
+    let text = err.to_string();
+    let text = text.strip_prefix(LUA_SYNTAX_PREFIX).unwrap_or(&text);
+    text.strip_prefix(LUA_RUNTIME_PREFIX)
+        .unwrap_or(text)
+        .to_string()
+}
+
 fn write_led(buf: &mut [u8], index: usize, rgb: [u8; RGB_CHANNELS]) {
     let base = index * RGB_CHANNELS;
     if base + RGB_BLUE >= buf.len() {
@@ -345,5 +407,17 @@ mod tests {
         host.call(&mut sim, 4, &clock).expect("define");
         let tick = host.call(&mut sim, 4, &clock).expect("run");
         assert!(tick.leds.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn load_file_matches_luas_missing_path_message() {
+        let path = std::path::Path::new("/tmp/cargopit-c12-missing.lua");
+        let Err(err) = LuaHost::load_file(path, LuaLedMode::Usb) else {
+            panic!("missing file loaded");
+        };
+        assert_eq!(
+            err,
+            format!("cannot open {}: No such file or directory", path.display())
+        );
     }
 }

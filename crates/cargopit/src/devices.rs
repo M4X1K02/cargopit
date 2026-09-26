@@ -1,9 +1,9 @@
 //! Configured devices for one play session. A USB tachometer opens the RevBurner
 //! and writes its pulse report on each tick. A Logitech G29, a Cammus C5, and a
-//! Cammus C12 open and write their LED reports on each tick. A Moza R9 serial wheel
-//! opens its port and writes the new-firmware LED frames. A sound device logs the
-//! C init sequence, connects its Pulse playback stream, and renders haptic samples
-//! on each tick.
+//! Cammus C12 open and write their LED reports on each tick. A C12 with a Lua file
+//! writes one packet per shift light. A Moza R9 serial wheel opens its port and
+//! writes the new-firmware LED frames. A sound device logs the C init sequence,
+//! connects its Pulse playback stream, and renders haptic samples on each tick.
 
 use std::path::{Path, PathBuf};
 
@@ -12,7 +12,8 @@ use cargopit_config::keys::{self, CLASS_SERIAL, CLASS_SOUND, CLASS_USB};
 use cargopit_config::names;
 use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
-use cargopit_devices::clock::VirtualClock;
+use cargopit_devices::clock::{SystemClock, VirtualClock};
+use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedMode};
 use cargopit_devices::serial::{self, MozaNewWheel};
 use cargopit_devices::sound::SharedShaker;
 use cargopit_devices::telemetry::Telemetry;
@@ -56,6 +57,7 @@ pub struct LoadedDevices {
     g29: Vec<bool>,
     c5: Vec<bool>,
     c12: Vec<bool>,
+    luas: Vec<Option<LuaHost>>,
 }
 
 pub struct InitNotice {
@@ -99,6 +101,7 @@ impl LoadedDevices {
             g29: Vec::new(),
             c5: Vec::new(),
             c12: Vec::new(),
+            luas: Vec::new(),
         }
     }
 
@@ -179,6 +182,7 @@ impl LoadedDevices {
         self.blank_c5(&mut notices);
         self.blank_moza(now_ns, &mut notices);
         self.close_ports(&mut notices);
+        self.close_c12_lua(&mut notices);
         notices
     }
 
@@ -244,6 +248,9 @@ impl LoadedDevices {
         if !self.c12.get(index).copied().unwrap_or(false) {
             return Vec::new();
         }
+        if self.luas.get(index).and_then(Option::as_ref).is_some() {
+            return self.write_c12_lua(index, frame);
+        }
         let report = usb::c12_report(frame.rpms(), frame.maxrpm(), frame.gear(), frame.velocity());
         let mut notices = vec![notice(
             Level::Trace,
@@ -256,6 +263,45 @@ impl LoadedDevices {
         )];
         self.write_index(index, &report, &mut notices);
         notices
+    }
+
+    fn write_c12_lua(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+        let painted = self.c12_lua_colors(index, frame);
+        if let Some(detail) = painted.failure {
+            eprintln!("{}", games::lua_call_failed_message(&detail));
+        }
+        let mut notices = Vec::new();
+        for report in usb::c12_led_reports(&painted.leds) {
+            notices.push(notice(Level::Trace, games::c12_led_message(&report)));
+            self.write_index(index, &report, &mut notices);
+        }
+        notices
+    }
+
+    fn c12_lua_colors(&mut self, index: usize, frame: &Telemetry) -> LuaPaint {
+        let Some(host) = self.luas.get_mut(index).and_then(Option::as_mut) else {
+            return LuaPaint::blank();
+        };
+        let clock = SystemClock::new();
+        let mut sim = frame.clone_buf();
+        let script = host.call_script(&mut sim, usb::C12_LED_TOTAL, &clock);
+        let Ok((tick, failure)) = script else {
+            return LuaPaint::blank();
+        };
+        LuaPaint {
+            leds: tick.leds,
+            failure: failure.map(|err| lua_detail(&err)),
+        }
+    }
+
+    fn close_c12_lua(&mut self, notices: &mut Vec<InitNotice>) {
+        for slot in &mut self.luas {
+            if slot.is_none() {
+                continue;
+            }
+            notices.push(notice(Level::Trace, games::MSG_C12_LUA_CLOSE));
+            slot.take();
+        }
     }
 
     fn blank_c5(&mut self, notices: &mut Vec<InitNotice>) {
@@ -465,10 +511,24 @@ enum HidPort {
     Captured(Vec<Vec<u8>>),
 }
 
-enum TachSource {
+enum ConfigSource {
     Unset,
     NamedNone,
     File(PathBuf),
+}
+
+struct LuaPaint {
+    leds: Vec<u8>,
+    failure: Option<String>,
+}
+
+impl LuaPaint {
+    fn blank() -> Self {
+        Self {
+            leds: Vec::new(),
+            failure: None,
+        }
+    }
 }
 
 struct TachPrep {
@@ -588,6 +648,7 @@ fn open_profile_with(
     let mut g29 = Vec::new();
     let mut c5 = Vec::new();
     let mut c12 = Vec::new();
+    let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
     let mut initialized = 0i32;
@@ -619,6 +680,7 @@ fn open_profile_with(
         g29.push(considered.g29);
         c5.push(considered.c5);
         c12.push(considered.c12);
+        luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
         initialized = initialized.saturating_add(1);
@@ -648,6 +710,7 @@ fn open_profile_with(
             g29,
             c5,
             c12,
+            luas,
         },
         setup_notices,
         notices,
@@ -684,6 +747,7 @@ struct Considered {
     g29: bool,
     c5: bool,
     c12: bool,
+    lua: Option<LuaHost>,
 }
 
 enum SerialPort {
@@ -791,6 +855,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         g29: false,
         c5: false,
         c12: false,
+        lua: None,
     }
 }
 
@@ -846,6 +911,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         g29: false,
         c5: false,
         c12: false,
+        lua: None,
     }
 }
 
@@ -863,6 +929,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         g29: false,
         c5: false,
         c12: false,
+        lua: None,
     }
 }
 
@@ -880,6 +947,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         g29: false,
         c5: false,
         c12: false,
+        lua: None,
     }
 }
 
@@ -891,8 +959,8 @@ fn revburner_prep(entry: &DeviceEntry, use_pulses: bool) -> Option<TachPrep> {
 }
 
 fn prepare_tach(entry: &DeviceEntry, use_pulses: bool) -> TachPrep {
-    match tach_source(entry) {
-        TachSource::Unset => TachPrep {
+    match config_source(entry) {
+        ConfigSource::Unset => TachPrep {
             notices: vec![
                 notice(Level::Trace, games::MSG_TACH_CONFIG_NONE),
                 notice(Level::Warn, games::MSG_TACH_CONFIG_REQUIRED),
@@ -900,12 +968,12 @@ fn prepare_tach(entry: &DeviceEntry, use_pulses: bool) -> TachPrep {
             ready: false,
             map: inactive_tach(),
         },
-        TachSource::NamedNone => TachPrep {
+        ConfigSource::NamedNone => TachPrep {
             notices: vec![notice(Level::Warn, games::MSG_TACH_CONFIG_REQUIRED)],
             ready: false,
             map: inactive_tach(),
         },
-        TachSource::File(path) => prep_from_file(entry, use_pulses, &path),
+        ConfigSource::File(path) => prep_from_file(entry, use_pulses, &path),
     }
 }
 
@@ -935,11 +1003,13 @@ fn prep_from_file(entry: &DeviceEntry, use_pulses: bool, path: &Path) -> TachPre
     }
 }
 
-fn tach_source(entry: &DeviceEntry) -> TachSource {
+fn config_source(entry: &DeviceEntry) -> ConfigSource {
     match entry.get_str(keys::KEY_CONFIG) {
-        None => TachSource::Unset,
-        Some(value) if value.eq_ignore_ascii_case(keys::CONFIG_VALUE_NONE) => TachSource::NamedNone,
-        Some(value) => TachSource::File(paths::expand_tilde(value)),
+        None => ConfigSource::Unset,
+        Some(value) if value.eq_ignore_ascii_case(keys::CONFIG_VALUE_NONE) => {
+            ConfigSource::NamedNone
+        }
+        Some(value) => ConfigSource::File(paths::expand_tilde(value)),
     }
 }
 
@@ -1017,6 +1087,7 @@ fn revburner_attempt(
                 g29: false,
                 c5: false,
                 c12: false,
+                lua: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1032,6 +1103,7 @@ fn revburner_attempt(
             g29: false,
             c5: false,
             c12: false,
+            lua: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1046,6 +1118,7 @@ fn revburner_attempt(
             g29: false,
             c5: false,
             c12: false,
+            lua: None,
         },
     }
 }
@@ -1146,8 +1219,9 @@ fn consider_c12(
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
 ) -> Considered {
+    let (setup, lua_path) = c12_config(entry);
     if let Some(skip) = device_skip(entry, disable_audio) {
-        return skipped(Vec::new(), skip, slot);
+        return skipped(setup, skip, slot);
     }
     let notices = vec![
         notice(Level::Info, games::MSG_INIT_USB),
@@ -1155,24 +1229,82 @@ fn consider_c12(
         notice(Level::Info, games::MSG_C12_ATTEMPT),
         notice(Level::Info, games::MSG_C12_INIT),
     ];
-    match open_hid(attempt, usb::C12_VID, usb::C12_PID) {
+    let opened = match open_hid(attempt, usb::C12_VID, usb::C12_PID) {
         OpenedHid::Missing => wheel_missing(notices, games::MSG_C12_MISSING),
-        OpenedHid::Live(hid) => c12_ready(entry, id, notices, HidPort::Live(hid)),
-        OpenedHid::Simulated => c12_ready(entry, id, notices, HidPort::Captured(Vec::new())),
+        OpenedHid::Live(hid) => finish_c12(entry, id, notices, HidPort::Live(hid), lua_path),
+        OpenedHid::Simulated => {
+            finish_c12(entry, id, notices, HidPort::Captured(Vec::new()), lua_path)
+        }
+    };
+    attach_setup(opened, setup)
+}
+
+fn c12_config(entry: &DeviceEntry) -> (Vec<InitNotice>, Option<PathBuf>) {
+    match config_source(entry) {
+        ConfigSource::Unset => (
+            vec![notice(Level::Trace, games::MSG_TACH_CONFIG_NONE)],
+            None,
+        ),
+        ConfigSource::NamedNone => (Vec::new(), None),
+        ConfigSource::File(path) => {
+            let shown = path.display().to_string();
+            (
+                vec![notice(
+                    Level::Trace,
+                    games::tach_config_load_message(&shown),
+                )],
+                Some(path),
+            )
+        }
     }
 }
 
-fn wheel_missing(mut notices: Vec<InitNotice>, missing: &str) -> Considered {
-    notices.push(notice(Level::Error, missing));
-    notices.push(notice(
-        Level::Warn,
-        games::usb_init_error_message(games::ERROR_UNKNOWN),
-    ));
+fn finish_c12(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: HidPort,
+    lua_path: Option<PathBuf>,
+) -> Considered {
+    let mut ready = c12_ready(entry, id, notices, port);
+    let Some(path) = lua_path else {
+        return ready;
+    };
+    ready.notices.push(notice(Level::Trace, games::MSG_C12_LUA));
+    match LuaHost::load_file(&path, LuaLedMode::Usb) {
+        Ok(host) => {
+            ready.lua = Some(host);
+            ready
+        }
+        Err(detail) => {
+            ready
+                .notices
+                .push(notice(Level::Error, games::MSG_C12_LUA_ISSUE));
+            eprintln!("{}", games::lua_load_failed_message(&detail));
+            let notices = std::mem::take(&mut ready.notices);
+            drop(ready);
+            usb_not_initialized(notices, games::USB_INIT_LUA_FAILED)
+        }
+    }
+}
+
+fn attach_setup(mut considered: Considered, setup: Vec<InitNotice>) -> Considered {
+    considered.setup_notices = setup;
+    considered
+}
+
+fn usb_not_initialized(mut notices: Vec<InitNotice>, code: i32) -> Considered {
+    notices.push(notice(Level::Warn, games::usb_init_error_message(code)));
     notices.push(notice(
         Level::Warn,
         games::could_not_initialize_message(CLASS_USB),
     ));
     unopened(notices)
+}
+
+fn wheel_missing(mut notices: Vec<InitNotice>, missing: &str) -> Considered {
+    notices.push(notice(Level::Error, missing));
+    usb_not_initialized(notices, games::ERROR_UNKNOWN)
 }
 
 fn g29_ready(
@@ -1195,6 +1327,7 @@ fn g29_ready(
         g29: true,
         c5: false,
         c12: false,
+        lua: None,
     }
 }
 
@@ -1218,6 +1351,7 @@ fn c5_ready(
         g29: false,
         c5: true,
         c12: false,
+        lua: None,
     }
 }
 
@@ -1241,6 +1375,7 @@ fn c12_ready(
         g29: false,
         c5: false,
         c12: true,
+        lua: None,
     }
 }
 
@@ -1341,6 +1476,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         g29: false,
         c5: false,
         c12: false,
+        lua: None,
     }
 }
 
@@ -1410,6 +1546,7 @@ fn finish_moza(
         g29: false,
         c5: false,
         c12: false,
+        lua: None,
     }
 }
 
@@ -2120,6 +2257,138 @@ mod tests {
             devices.captured_reports(0).and_then(|frames| frames.last()),
             Some(&expected)
         );
+    }
+
+    #[test]
+    fn c12_lua_writes_shift_light_packets() {
+        const C12_FPS: i64 = 60;
+        let path = std::env::temp_dir().join("cargopit-c12-leds.lua");
+        let source = format!(
+            "set_led_to_color({}, RED)\nset_led_to_color({}, BLUE)\n",
+            usb::C12_LED_FIRST + usb::C12_LED_NUMBER_OFFSET,
+            usb::C12_LED_TOTAL,
+        );
+        let _script = TempScript::write(&path, &source);
+        let config = wheel_with_config(C12_FPS, names::HARDWARE_CAMMUS_C12, &path);
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| true,
+            |_path| false,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_FOUND));
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_LUA));
+        let shown = path.display().to_string();
+        assert!(loaded
+            .setup_notices
+            .iter()
+            .any(|notice| notice.message == games::tach_config_load_message(&shown)));
+        let mut devices = loaded.devices;
+        let tick = devices.tick(0, &Telemetry::new(), PROBE_OPEN_NS);
+        let reports = devices.captured_reports(0).expect("captured");
+        assert_eq!(reports.len(), usb::c12_led_reports(&[]).len());
+        let first_led =
+            u8::try_from(usb::C12_LED_FIRST + usb::C12_LED_NUMBER_OFFSET).unwrap_or(u8::MAX);
+        assert_eq!(reports[0][usb::C12_BYTE_LED], first_led);
+        assert_eq!(reports[0][usb::C12_BYTE_RED], u8::MAX);
+        assert_eq!(reports[0][usb::C12_BYTE_GREEN], 0);
+        assert_eq!(reports[0][usb::C12_BYTE_BLUE], 0);
+        let last = reports.last().expect("last led");
+        assert_eq!(
+            last[usb::C12_BYTE_LED],
+            u8::try_from(usb::C12_LED_TOTAL).unwrap_or(u8::MAX)
+        );
+        assert_eq!(last[usb::C12_BYTE_BLUE], u8::MAX);
+        assert_eq!(last[usb::C12_BYTE_RED], 0);
+        assert!(tick
+            .iter()
+            .any(|notice| notice.message == games::c12_led_message(&reports[0])));
+        assert_eq!(
+            games::c12_led_message(&reports[0]),
+            "writing bytes xfaxfbx02x10xffx00x00 from red 255 green 0 blue 0"
+        );
+        let before = reports.len();
+        let released = devices.release(PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            Some(before)
+        );
+        assert!(released
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_LUA_CLOSE));
+    }
+
+    #[test]
+    fn c12_lua_failure_is_not_scheduled() {
+        const C12_FPS: i64 = 60;
+        let path = std::env::temp_dir().join("cargopit-c12-missing.lua");
+        let _ = std::fs::remove_file(&path);
+        let config = wheel_with_config(C12_FPS, names::HARDWARE_CAMMUS_C12, &path);
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| true,
+            |_path| false,
+        );
+        assert!(loaded.devices.is_empty());
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_FOUND));
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_LUA));
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_C12_LUA_ISSUE));
+        assert!(loaded.notices.iter().any(|notice| {
+            notice.message == games::usb_init_error_message(games::USB_INIT_LUA_FAILED)
+        }));
+        assert!(loaded
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::could_not_initialize_message(CLASS_USB)));
+    }
+
+    fn wheel_with_config(fps: i64, hardware: i32, config_path: &Path) -> CargopitConfig {
+        let mut config = wheel_config(fps, hardware);
+        let shown = config_path.display().to_string();
+        config.profiles[0].devices[0].set_str(keys::KEY_CONFIG, &shown);
+        config
+    }
+
+    struct TempScript {
+        path: PathBuf,
+    }
+
+    impl TempScript {
+        fn write(path: &Path, source: &str) -> Self {
+            std::fs::write(path, source).expect("lua script");
+            Self {
+                path: path.to_path_buf(),
+            }
+        }
+    }
+
+    impl Drop for TempScript {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 
     fn wheel_config(fps: i64, hardware: i32) -> CargopitConfig {
