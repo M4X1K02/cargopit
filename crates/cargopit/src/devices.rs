@@ -4,7 +4,8 @@
 //! writes one packet per shift light. A Simagic GT Neo with a Lua file sends
 //! feature reports for all 73 LEDs. A Fanatec CSL Elite V3 opens its sysfs rumble
 //! file and writes the haptic value when that value changes. A Simagic P1000 opens
-//! over HID and sends feature reports when that play value changes. A Moza R9 serial wheel opens its port and
+//! over HID and sends feature reports when that play value changes. A SimNet pedal
+//! opens over HID and writes its motor report when that play value changes. A Moza R9 serial wheel opens its port and
 //! writes the new-firmware LED frames. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
@@ -77,6 +78,7 @@ pub struct LoadedDevices {
     gt: Vec<bool>,
     csl: Vec<Option<CslPedal>>,
     p1000: Vec<Option<P1000Pedal>>,
+    simnet: Vec<Option<SimNetPedal>>,
     luas: Vec<Option<LuaHost>>,
 }
 
@@ -124,6 +126,7 @@ impl LoadedDevices {
             gt: Vec::new(),
             csl: Vec::new(),
             p1000: Vec::new(),
+            simnet: Vec::new(),
             luas: Vec::new(),
         }
     }
@@ -195,6 +198,7 @@ impl LoadedDevices {
         notices.extend(self.write_gt(index, frame));
         notices.extend(self.write_csl(index, frame, now_ns));
         notices.extend(self.write_p1000(index, frame, now_ns));
+        notices.extend(self.write_simnet(index, frame, now_ns));
         self.update_sound(index, frame, now_ns);
         notices
     }
@@ -366,6 +370,46 @@ impl LoadedDevices {
         let reports = usb::p1000_reports(kind, play);
         pedal.state = play;
         Some(reports)
+    }
+
+    fn write_simnet(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
+        let Some(report) = self.simnet_changes(index, frame, now_ns) else {
+            return Vec::new();
+        };
+        let mut notices = Vec::new();
+        let Some(port) = self.ports.get_mut(index) else {
+            return notices;
+        };
+        if matches!(port, HidPort::Closed) {
+            notices.push(notice(Level::Debug, games::MSG_REVBURNER_NO_HANDLE));
+            return notices;
+        }
+        notices.push(notice(Level::Trace, games::simnet_write_message(&report)));
+        write_port(port, &report, &mut notices);
+        notices
+    }
+
+    fn simnet_changes(
+        &mut self,
+        index: usize,
+        frame: &Telemetry,
+        now_ns: u64,
+    ) -> Option<[u8; usb::SIMNET_LEN]> {
+        let pedal = self.simnet.get_mut(index)?.as_mut()?;
+        let clock = VirtualClock::from_monotonic_ns(now_ns);
+        let play = haptic_play(&mut pedal.effect, frame, &clock)?;
+        if play == pedal.state {
+            return None;
+        }
+        let effect = pedal.effect.as_ref()?;
+        let report = usb::simnet_report(
+            effect.motor_position(),
+            effect.frequency(),
+            effect.amplitude(),
+            play > 0.0,
+        );
+        pedal.state = play;
+        Some(report)
     }
 
     fn close_csl(&mut self) {
@@ -795,6 +839,7 @@ fn open_profile_with(
     let mut gt = Vec::new();
     let mut csl = Vec::new();
     let mut p1000 = Vec::new();
+    let mut simnet = Vec::new();
     let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
@@ -830,6 +875,7 @@ fn open_profile_with(
         gt.push(considered.gt);
         csl.push(considered.csl);
         p1000.push(considered.p1000);
+        simnet.push(considered.simnet);
         luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
@@ -863,6 +909,7 @@ fn open_profile_with(
             gt,
             csl,
             p1000,
+            simnet,
             luas,
         },
         setup_notices,
@@ -905,6 +952,7 @@ struct Considered {
     gt: bool,
     csl: Option<CslPedal>,
     p1000: Option<P1000Pedal>,
+    simnet: Option<SimNetPedal>,
 }
 
 enum SerialPort {
@@ -948,6 +996,9 @@ fn consider_entry(
     }
     if p1000_entry(entry) {
         return consider_p1000(entry, slot, id, disable_audio, supports_haptics, attempt);
+    }
+    if simnet_entry(entry) {
+        return consider_simnet(entry, slot, id, disable_audio, supports_haptics, attempt);
     }
     consider_closed(entry, slot, disable_audio)
 }
@@ -1025,6 +1076,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -1084,6 +1136,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -1105,6 +1158,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -1126,6 +1180,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -1269,6 +1324,7 @@ fn revburner_attempt(
                 gt: false,
                 csl: None,
                 p1000: None,
+                simnet: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1288,6 +1344,7 @@ fn revburner_attempt(
             gt: false,
             csl: None,
             p1000: None,
+            simnet: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1306,6 +1363,7 @@ fn revburner_attempt(
             gt: false,
             csl: None,
             p1000: None,
+            simnet: None,
         },
     }
 }
@@ -1440,6 +1498,7 @@ fn p1000_ready(
             effect,
             state: HAPTIC_STATE_IDLE,
         }),
+        simnet: None,
     }
 }
 
@@ -1472,6 +1531,107 @@ struct CslPedal {
 struct P1000Pedal {
     effect: Option<HapticEffect>,
     state: f64,
+}
+
+struct SimNetPedal {
+    effect: Option<HapticEffect>,
+    state: f64,
+}
+
+fn simnet_entry(entry: &DeviceEntry) -> bool {
+    usb_wheel_hardware(entry, names::HARDWARE_SIMNET)
+}
+
+fn consider_simnet(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    supports_haptics: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let effect = device_effect(entry);
+    let mut notices = Vec::new();
+    if !supports_haptics {
+        notices.push(notice(Level::Info, games::MSG_USB_NO_HAPTICS));
+    }
+    let arm = supports_haptics && effect.is_some();
+    if let Some(effect_id) = effect.filter(|_| arm) {
+        notices.extend(csl_haptic_notices(entry, effect_id));
+    }
+    notices.extend([
+        notice(Level::Info, games::MSG_INIT_USB),
+        notice(Level::Info, games::MSG_INIT_WHEEL),
+        notice(Level::Info, games::MSG_SIMNET_INIT),
+    ]);
+    let armed = effect
+        .filter(|_| arm)
+        .and_then(|effect_id| csl_effect(entry, effect_id));
+    match open_hid(attempt, usb::SIMNET_VID, usb::SIMNET_PID) {
+        OpenedHid::Missing => {
+            notices.push(notice(Level::Error, games::MSG_SIMNET_MISSING));
+            usb_not_initialized(notices, games::ERROR_UNKNOWN)
+        }
+        OpenedHid::Live(hid) => finish_simnet(entry, id, notices, HidPort::Live(hid), armed),
+        OpenedHid::Simulated => {
+            finish_simnet(entry, id, notices, HidPort::Captured(Vec::new()), armed)
+        }
+    }
+}
+
+fn finish_simnet(
+    entry: &DeviceEntry,
+    id: i32,
+    mut notices: Vec<InitNotice>,
+    port: HidPort,
+    effect: Option<HapticEffect>,
+) -> Considered {
+    notices.push(notice(
+        Level::Debug,
+        games::simnet_found_message(simnet_handle(&port)),
+    ));
+    simnet_ready(entry, id, notices, port, effect)
+}
+
+fn simnet_handle(port: &HidPort) -> i32 {
+    match port {
+        HidPort::Live(hid) => hid.handle_code(),
+        HidPort::Captured(_) | HidPort::Closed => games::SIMNET_CAPTURED_HANDLE,
+    }
+}
+
+fn simnet_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: HidPort,
+    effect: Option<HapticEffect>,
+) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port,
+        tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: None,
+        gt: false,
+        csl: None,
+        p1000: None,
+        simnet: Some(SimNetPedal {
+            effect,
+            state: HAPTIC_STATE_IDLE,
+        }),
+    }
 }
 
 fn consider_csl(
@@ -1551,6 +1711,7 @@ fn csl_ready(
             state: HAPTIC_STATE_IDLE,
         }),
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -1925,6 +2086,7 @@ fn gt_ready(
         gt: true,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -2000,6 +2162,7 @@ fn g29_ready(
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -2027,6 +2190,7 @@ fn c5_ready(
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -2054,6 +2218,7 @@ fn c12_ready(
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -2158,6 +2323,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -2231,6 +2397,7 @@ fn finish_moza(
         gt: false,
         csl: None,
         p1000: None,
+        simnet: None,
     }
 }
 
@@ -3389,7 +3556,7 @@ mod tests {
     fn p1000_missing_pedal_is_not_scheduled() {
         let config = p1000_config();
         let mut seen = (0u16, 0u16);
-        let missing = open_p1000(&config, true, |vendor, product| {
+        let missing = open_probed_hid(&config, true, |vendor, product| {
             seen = (vendor, product);
             false
         });
@@ -3428,7 +3595,7 @@ mod tests {
         const P1000_SLIP_MORE: f64 = -0.8;
         const WHEEL_FRONT_LEFT: usize = 0;
         let config = p1000_config();
-        let loaded = open_p1000(&config, true, |vendor, product| {
+        let loaded = open_probed_hid(&config, true, |vendor, product| {
             vendor == usb::P1000_VID && product == usb::P1000_PID
         });
         assert_eq!(loaded.devices.len(), 1);
@@ -3549,7 +3716,7 @@ mod tests {
         const WHEEL_FRONT_LEFT: usize = 0;
         const INIT_ONLY: usize = 1;
         let config = p1000_config();
-        let loaded = open_p1000(&config, false, |vendor, product| {
+        let loaded = open_probed_hid(&config, false, |vendor, product| {
             vendor == usb::P1000_VID && product == usb::P1000_PID
         });
         assert_eq!(loaded.devices.len(), 1);
@@ -3582,6 +3749,173 @@ mod tests {
         );
     }
 
+    #[test]
+    fn simnet_missing_pedal_is_not_scheduled() {
+        let config = simnet_config();
+        let mut seen = (0u16, 0u16);
+        let missing = open_probed_hid(&config, true, |vendor, product| {
+            seen = (vendor, product);
+            false
+        });
+        assert_eq!(seen, (usb::SIMNET_VID, usb::SIMNET_PID));
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_SIMNET_INIT));
+        assert!(notice_has(&missing.notices, games::MSG_SIMNET_MISSING));
+        assert!(notice_has(
+            &missing.notices,
+            &games::usb_init_error_message(games::ERROR_UNKNOWN)
+        ));
+        assert!(notice_has(
+            &missing.notices,
+            &games::could_not_initialize_message(CLASS_USB)
+        ));
+        assert!(notice_absent(
+            &missing.notices,
+            &games::simnet_found_message(games::SIMNET_CAPTURED_HANDLE)
+        ));
+    }
+
+    #[test]
+    fn simnet_slip_writes_when_play_changes() {
+        const SIMNET_SPEED: u32 = 80;
+        const SIMNET_Y_VELOCITY: f64 = 1.0;
+        const SIMNET_GAS: f64 = 0.2;
+        const SIMNET_GAS_OFF: f64 = 0.0;
+        const SIMNET_SLIP: f64 = -0.4;
+        const SIMNET_SLIP_MORE: f64 = -0.8;
+        const WHEEL_FRONT_LEFT: usize = 0;
+        const SIMNET_MOTOR: u32 = 1;
+        const SIMNET_FREQUENCY: u32 = 40;
+        const SIMNET_AMPLITUDE: u32 = 100;
+        let config = simnet_config();
+        let loaded = open_probed_hid(&config, true, |vendor, product| {
+            vendor == usb::SIMNET_VID && product == usb::SIMNET_PID
+        });
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP),
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_INIT_USB,
+            &games::simnet_found_message(games::SIMNET_CAPTURED_HANDLE)
+        ));
+        assert!(notice_has(&loaded.notices, games::MSG_SIMNET_INIT));
+        assert!(notice_absent(&loaded.notices, games::MSG_SIMNET_MISSING));
+        let active = usb::simnet_report(SIMNET_MOTOR, SIMNET_FREQUENCY, SIMNET_AMPLITUDE, true);
+        let idle = usb::simnet_report(SIMNET_MOTOR, SIMNET_FREQUENCY, SIMNET_AMPLITUDE, false);
+        let mut devices = loaded.devices;
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            Some(0)
+        );
+        let frame = csl_frame(
+            SIMNET_SPEED,
+            SIMNET_Y_VELOCITY,
+            SIMNET_GAS,
+            WHEEL_FRONT_LEFT,
+            SIMNET_SLIP,
+        );
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_has(&tick, &games::simnet_write_message(&active)));
+        assert_eq!(
+            devices.captured_reports(0).and_then(|frames| frames.last()),
+            Some(&active.to_vec())
+        );
+        let once = devices.captured_reports(0).map(|frames| frames.len());
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(devices.captured_reports(0).map(|frames| frames.len()), once);
+        let stronger = csl_frame(
+            SIMNET_SPEED,
+            SIMNET_Y_VELOCITY,
+            SIMNET_GAS,
+            WHEEL_FRONT_LEFT,
+            SIMNET_SLIP_MORE,
+        );
+        let _ = devices.tick(0, &stronger, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            once.map(|count| count.saturating_add(1))
+        );
+        assert_eq!(
+            devices.captured_reports(0).and_then(|frames| frames.last()),
+            Some(&active.to_vec())
+        );
+        let coast = csl_frame(
+            SIMNET_SPEED,
+            SIMNET_Y_VELOCITY,
+            SIMNET_GAS_OFF,
+            WHEEL_FRONT_LEFT,
+            SIMNET_SLIP,
+        );
+        let _ = devices.tick(0, &coast, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).and_then(|frames| frames.last()),
+            Some(&idle.to_vec())
+        );
+        let before = devices.captured_reports(0).map(|frames| frames.len());
+        let _ = devices.release(PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            before
+        );
+    }
+
+    #[test]
+    fn simnet_without_haptic_support_opens_and_stays_quiet() {
+        const SIMNET_SPEED: u32 = 80;
+        const SIMNET_Y_VELOCITY: f64 = 1.0;
+        const SIMNET_GAS: f64 = 0.2;
+        const SIMNET_SLIP: f64 = -0.4;
+        const WHEEL_FRONT_LEFT: usize = 0;
+        let config = simnet_config();
+        let loaded = open_probed_hid(&config, false, |vendor, product| {
+            vendor == usb::SIMNET_VID && product == usb::SIMNET_PID
+        });
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_USB_NO_HAPTICS,
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::simnet_found_message(games::SIMNET_CAPTURED_HANDLE)
+        ));
+        assert!(notice_absent(
+            &loaded.notices,
+            &games::haptic_effect_message(games::VIBRATION_SLIP)
+        ));
+        let mut devices = loaded.devices;
+        let frame = csl_frame(
+            SIMNET_SPEED,
+            SIMNET_Y_VELOCITY,
+            SIMNET_GAS,
+            WHEEL_FRONT_LEFT,
+            SIMNET_SLIP,
+        );
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            Some(0)
+        );
+    }
+
+    fn simnet_config() -> CargopitConfig {
+        const SIMNET_FPS: i64 = 60;
+        const SIMNET_MOTOR: i64 = 1;
+        const SIMNET_FREQUENCY: i64 = 40;
+        const SIMNET_AMPLITUDE: i64 = 100;
+        let mut config = haptic_wheel_config(SIMNET_FPS, names::HARDWARE_SIMNET);
+        let device = &mut config.profiles[0].devices[0];
+        device.set_int(keys::KEY_MOTORS, SIMNET_MOTOR);
+        device.set_int(keys::KEY_FREQUENCY, SIMNET_FREQUENCY);
+        device.set_int(keys::KEY_AMPLITUDE, SIMNET_AMPLITUDE);
+        config
+    }
+
     fn p1000_nbytes() -> i32 {
         i32::try_from(usb::P1000_LEN).unwrap_or(i32::MAX)
     }
@@ -3591,7 +3925,7 @@ mod tests {
         haptic_wheel_config(P1000_FPS, names::HARDWARE_SIMAGIC_P1000)
     }
 
-    fn open_p1000(
+    fn open_probed_hid(
         config: &CargopitConfig,
         supports_haptics: bool,
         mut hid: impl FnMut(u16, u16) -> bool,

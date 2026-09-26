@@ -112,6 +112,10 @@ impl RealHid {
         Ok(wrote as usize)
     }
 
+    pub fn handle_code(&self) -> i32 {
+        i32::from_ne_bytes((self.device as usize as u32).to_ne_bytes())
+    }
+
     pub fn send_feature(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         if data.is_empty() {
             return Err(TransportError::Failed);

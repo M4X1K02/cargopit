@@ -130,10 +130,21 @@ pub const P1000_INIT_B: u8 = 0x02;
 pub const P1000_TRACE_LEN: usize = 7;
 pub const P1000_REPORT_OK: i32 = 0;
 pub const P1000_REPORT_FAILED: i32 = 1;
-const SIMNET_LEN: usize = 64;
-const SIMNET_VID: u16 = 0xcafe;
-const SIMNET_PID: u16 = 0xa301;
-const SIMNET_REPORT: u8 = 0x01;
+pub const SIMNET_LEN: usize = 64;
+pub const SIMNET_VID: u16 = 0xcafe;
+pub const SIMNET_PID: u16 = 0xa301;
+pub const SIMNET_REPORT: u8 = 0x01;
+pub const SIMNET_FIXED: u8 = 0x00;
+pub const SIMNET_BYTE_REPORT: usize = 0;
+pub const SIMNET_BYTE_FIXED: usize = 1;
+pub const SIMNET_BYTE_MOTOR: usize = 2;
+pub const SIMNET_BYTE_FREQ: usize = 3;
+pub const SIMNET_PAIR: usize = 2;
+pub const SIMNET_AMP_OFFSET: usize = 1;
+pub const SIMNET_MOTOR_QUAD: u32 = 0x04;
+pub const SIMNET_SLOT_QUAD: u8 = 2;
+pub const SIMNET_TRACE_LEN: usize = 9;
+const SIMNET_CAPTURE_MOTOR: u32 = 0;
 const HAPTIC_HZ: u32 = 40;
 const HAPTIC_AMP: u32 = 100;
 const HAPTIC_THRESHOLD: f64 = 0.2;
@@ -755,18 +766,34 @@ fn run_p1000(log: &Log, frames: &[Telemetry]) {
     log.hid_close(id);
 }
 
-fn simnet_bytes(play: bool) -> [u8; SIMNET_LEN] {
+pub fn simnet_report(motor: u32, frequency: u32, amplitude: u32, play: bool) -> [u8; SIMNET_LEN] {
     let mut bytes = [0; SIMNET_LEN];
-    bytes[0] = SIMNET_REPORT;
-    if play {
-        let multiple = 0u8.wrapping_sub(1) as usize;
-        let index = 3 + multiple * 2;
-        if index + 1 < SIMNET_LEN {
-            bytes[index] = HAPTIC_HZ as u8;
-            bytes[index + 1] = HAPTIC_AMP as u8;
-        }
+    bytes[SIMNET_BYTE_REPORT] = SIMNET_REPORT;
+    bytes[SIMNET_BYTE_FIXED] = SIMNET_FIXED;
+    bytes[SIMNET_BYTE_MOTOR] = narrowed_u8(motor);
+    if !play {
+        return bytes;
     }
+    let freq_at =
+        SIMNET_BYTE_FREQ.saturating_add(simnet_motor_slot(motor).saturating_mul(SIMNET_PAIR));
+    let amp_at = freq_at.saturating_add(SIMNET_AMP_OFFSET);
+    if amp_at >= SIMNET_LEN {
+        return bytes;
+    }
+    bytes[freq_at] = narrowed_u8(frequency);
+    bytes[amp_at] = narrowed_u8(amplitude);
     bytes
+}
+
+fn simnet_motor_slot(motor: u32) -> usize {
+    if motor == SIMNET_MOTOR_QUAD {
+        return usize::from(SIMNET_SLOT_QUAD);
+    }
+    usize::from(narrowed_u8(motor.wrapping_sub(1)))
+}
+
+fn narrowed_u8(value: u32) -> u8 {
+    u8::try_from(value & u32::from(u8::MAX)).unwrap_or(0)
 }
 
 fn run_simnet(log: &Log, frames: &[Telemetry]) {
@@ -777,7 +804,10 @@ fn run_simnet(log: &Log, frames: &[Telemetry]) {
     each_frame(log, frames, |log, frame| {
         let play = effect.play_with_clock(frame, &trace);
         if play != state {
-            log.hid_write(id, &simnet_bytes(play > 0.0));
+            log.hid_write(
+                id,
+                &simnet_report(SIMNET_CAPTURE_MOTOR, HAPTIC_HZ, HAPTIC_AMP, play > 0.0),
+            );
             state = play;
         }
     });
@@ -944,5 +974,33 @@ mod tests {
         assert_eq!(idle[1][P1000_BYTE_KIND], P1000_KIND_SLIP);
         assert_eq!(idle[0][P1000_BYTE_FLAG0], P1000_CLEARED);
         assert!(p1000_reports(VibrationEffect::Suspension, PLAYING).is_empty());
+    }
+
+    #[test]
+    fn simnet_reports_follow_the_motor() {
+        const MOTOR_ONE: u32 = 1;
+        const MOTOR_TWO: u32 = 2;
+        const FREQ: u32 = 40;
+        const AMP: u32 = 100;
+        let idle = simnet_report(MOTOR_ONE, FREQ, AMP, false);
+        assert_eq!(idle[SIMNET_BYTE_REPORT], SIMNET_REPORT);
+        assert_eq!(idle[SIMNET_BYTE_FIXED], SIMNET_FIXED);
+        assert_eq!(idle[SIMNET_BYTE_MOTOR], narrowed_u8(MOTOR_ONE));
+        assert_eq!(idle[SIMNET_BYTE_FREQ], 0);
+        let one = simnet_report(MOTOR_ONE, FREQ, AMP, true);
+        assert_eq!(one[SIMNET_BYTE_FREQ], narrowed_u8(FREQ));
+        let amp_one = SIMNET_BYTE_FREQ.saturating_add(SIMNET_AMP_OFFSET);
+        assert_eq!(one[amp_one], narrowed_u8(AMP));
+        let two = simnet_report(MOTOR_TWO, FREQ, AMP, true);
+        let freq_two = SIMNET_BYTE_FREQ.saturating_add(SIMNET_PAIR);
+        assert_eq!(two[freq_two], narrowed_u8(FREQ));
+        let quad = simnet_report(SIMNET_MOTOR_QUAD, FREQ, AMP, true);
+        let freq_quad = SIMNET_BYTE_FREQ
+            .saturating_add(usize::from(SIMNET_SLOT_QUAD).saturating_mul(SIMNET_PAIR));
+        assert_eq!(quad[freq_quad], narrowed_u8(FREQ));
+        let capture = simnet_report(SIMNET_CAPTURE_MOTOR, FREQ, AMP, true);
+        assert_eq!(capture[SIMNET_BYTE_REPORT], SIMNET_REPORT);
+        assert_eq!(capture[SIMNET_BYTE_FREQ], 0);
+        assert_eq!(capture[amp_one], 0);
     }
 }
