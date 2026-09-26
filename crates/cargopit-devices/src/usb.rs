@@ -50,13 +50,22 @@ const C5_LEDS: i32 = 9;
 const C5_LED_STEPS: i32 = C5_LEDS + 1;
 const C5_VELOCITY_SHIFT: u32 = 8;
 const C5_BYTE_MASK: u32 = 0xff;
-const C12_LEN: usize = 16;
-const C12_VID: u16 = 0x3416;
-const C12_PID: u16 = 0x1023;
+pub const C12_LEN: usize = 16;
+pub const C12_VID: u16 = 0x3416;
+pub const C12_PID: u16 = 0x1023;
+pub const C12_BYTE_MARK0: usize = 0;
+pub const C12_BYTE_MARK1: usize = 1;
+pub const C12_BYTE_MARK2: usize = 2;
+pub const C12_BYTE_PERCENT: usize = 3;
+pub const C12_BYTE_VELOCITY_LOW: usize = 4;
+pub const C12_BYTE_VELOCITY_HIGH: usize = 5;
+pub const C12_BYTE_GEAR: usize = 6;
 const C12_B0: u8 = 0xfa;
 const C12_B1: u8 = 0xfb;
 const C12_B2: u8 = 0xd4;
 const C12_PERCENT: f64 = 100.0;
+const C12_VELOCITY_SHIFT: u32 = 8;
+const C12_BYTE_MASK: u32 = 0xff;
 const REDLINE_MARGIN: f64 = 0.05;
 const GT_NEO_VID: u16 = 0x3670;
 const GT_NEO_PID: u16 = 0x0805;
@@ -402,20 +411,20 @@ fn run_c5(log: &Log, frames: &[Telemetry]) {
     log.hid_close(id);
 }
 
-fn c12_bytes(rpm: u32, maxrpm: u32, gear: u32, velocity: u32) -> [u8; C12_LEN] {
+pub fn c12_report(rpm: u32, maxrpm: u32, gear: u32, velocity: u32) -> [u8; C12_LEN] {
     let mut bytes = [0; C12_LEN];
-    bytes[0] = C12_B0;
-    bytes[1] = C12_B1;
-    bytes[2] = C12_B2;
+    bytes[C12_BYTE_MARK0] = C12_B0;
+    bytes[C12_BYTE_MARK1] = C12_B1;
+    bytes[C12_BYTE_MARK2] = C12_B2;
     if rpm > 0 && maxrpm > 0 {
         let percent = f64::from(rpm) / f64::from(maxrpm) * C12_PERCENT;
-        bytes[3] = percent.round_ties_even() as u8;
+        bytes[C12_BYTE_PERCENT] = percent.round_ties_even() as u8;
     }
     if velocity > 0 {
-        bytes[4] = (velocity & 0xff) as u8;
-        bytes[5] = ((velocity >> 8) & 0xff) as u8;
+        bytes[C12_BYTE_VELOCITY_LOW] = (velocity & C12_BYTE_MASK) as u8;
+        bytes[C12_BYTE_VELOCITY_HIGH] = ((velocity >> C12_VELOCITY_SHIFT) & C12_BYTE_MASK) as u8;
     }
-    bytes[6] = (gear as u8).wrapping_sub(1);
+    bytes[C12_BYTE_GEAR] = (gear as u8).wrapping_sub(1);
     bytes
 }
 
@@ -424,7 +433,7 @@ fn run_c12(log: &Log, frames: &[Telemetry]) {
     each_frame(log, frames, |log, frame| {
         log.hid_write(
             id,
-            &c12_bytes(frame.rpms(), frame.maxrpm(), frame.gear(), frame.velocity()),
+            &c12_report(frame.rpms(), frame.maxrpm(), frame.gear(), frame.velocity()),
         );
     });
     log.hid_close(id);
