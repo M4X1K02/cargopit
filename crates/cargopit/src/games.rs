@@ -16,6 +16,12 @@ pub const SIM_NOT_DETECTED: &str = "None Detected";
 pub const QUIT_KEY: u8 = b'q';
 pub const MSG_USER_STOP: &str = "User requested stop, releasing devices";
 pub const MSG_STOPPED_MAPPING: &str = "stopped mapping data, press q again to quit";
+pub const MSG_SEARCHING: &str = "Searching for sim data... Press q to quit...";
+pub const MSG_EXITING: &str = "Cargopit is exiting...";
+pub const MSG_RELEASE_LOOP: &str = "release loop";
+pub const MSG_RELEASING_DEVICES: &str = "releasing devices, please wait";
+pub const MSG_RESTART_CHECK: &str = "restarting checking for data...";
+pub const MSG_RELOAD: &str = "reload requested, releasing devices to load the saved profile";
 pub const MAPPING_START_MS: u64 = 2000;
 const MS_PER_SECOND: f64 = 1000.0;
 const HALF_MS: f64 = 0.5;
@@ -143,6 +149,47 @@ pub enum QuitAction {
     Exit,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileLoadFault {
+    NoProfiles,
+    IndexOutOfRange { configs: i32 },
+}
+
+pub fn signal_stop_message(signum: i32) -> String {
+    format!("signal {signum} received, stopping")
+}
+
+pub fn loading_profile_message(path: &str, config_index: i32) -> String {
+    format!("loading device profile from {path} (config-index {config_index})")
+}
+
+pub fn no_profiles_message(path: &str) -> String {
+    format!("no device profiles in {path}")
+}
+
+pub fn config_index_range_message(index: i32, configs: i32) -> String {
+    format!("config-index {index} is out of range ({configs} configs)")
+}
+
+pub fn no_profile_message(config_index: i32) -> String {
+    format!("no device profile to load (config-index {config_index})")
+}
+
+pub fn profile_load_fault(profile_count: i32, requested: i32) -> Option<ProfileLoadFault> {
+    if profile_count <= 0 {
+        return Some(ProfileLoadFault::NoProfiles);
+    }
+    if requested < 0 {
+        return None;
+    }
+    if requested >= profile_count {
+        return Some(ProfileLoadFault::IndexOutOfRange {
+            configs: profile_count,
+        });
+    }
+    None
+}
+
 pub fn quit_action(key: Option<u8>, signalled: bool, mapping: bool) -> QuitAction {
     if signalled {
         return QuitAction::Exit;
@@ -244,6 +291,64 @@ mod tests {
             MSG_STOPPED_MAPPING,
             "stopped mapping data, press q again to quit"
         );
+    }
+
+    #[test]
+    fn play_announcements_match_the_c_host() {
+        const DEFAULT_INDEX: i32 = -1;
+        const SAMPLE_INDEX: i32 = 3;
+        const SAMPLE_CONFIGS: i32 = 1;
+        const TWO_PROFILES: i32 = 2;
+        const NO_PROFILES: i32 = 0;
+        const SAMPLE_PATH: &str = "/tmp/cargopit.config";
+        assert_eq!(
+            MSG_SEARCHING,
+            "Searching for sim data... Press q to quit..."
+        );
+        assert_eq!(MSG_EXITING, "Cargopit is exiting...");
+        assert_eq!(MSG_RELEASE_LOOP, "release loop");
+        assert_eq!(MSG_RELEASING_DEVICES, "releasing devices, please wait");
+        assert_eq!(MSG_RESTART_CHECK, "restarting checking for data...");
+        assert_eq!(
+            MSG_RELOAD,
+            "reload requested, releasing devices to load the saved profile"
+        );
+        assert_eq!(
+            signal_stop_message(libc::SIGINT),
+            "signal 2 received, stopping"
+        );
+        assert_eq!(
+            signal_stop_message(libc::SIGTERM),
+            "signal 15 received, stopping"
+        );
+        assert_eq!(
+            loading_profile_message(SAMPLE_PATH, DEFAULT_INDEX),
+            "loading device profile from /tmp/cargopit.config (config-index -1)"
+        );
+        assert_eq!(
+            no_profiles_message(SAMPLE_PATH),
+            "no device profiles in /tmp/cargopit.config"
+        );
+        assert_eq!(
+            config_index_range_message(SAMPLE_INDEX, SAMPLE_CONFIGS),
+            "config-index 3 is out of range (1 configs)"
+        );
+        assert_eq!(
+            no_profile_message(DEFAULT_INDEX),
+            "no device profile to load (config-index -1)"
+        );
+        assert_eq!(
+            profile_load_fault(NO_PROFILES, DEFAULT_INDEX),
+            Some(ProfileLoadFault::NoProfiles)
+        );
+        assert_eq!(profile_load_fault(SAMPLE_CONFIGS, DEFAULT_INDEX), None);
+        assert_eq!(
+            profile_load_fault(SAMPLE_CONFIGS, SAMPLE_CONFIGS),
+            Some(ProfileLoadFault::IndexOutOfRange {
+                configs: SAMPLE_CONFIGS
+            })
+        );
+        assert_eq!(profile_load_fault(TWO_PROFILES, SAMPLE_CONFIGS), None);
     }
 
     #[test]

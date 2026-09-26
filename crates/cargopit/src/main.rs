@@ -4,7 +4,7 @@ use std::env;
 use std::io::{self, Read, Write};
 use std::os::fd::AsRawFd;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -24,12 +24,13 @@ use cargopit_devices::clock::{Clock, SystemClock};
 use cargopit_devices::telemetry::Telemetry;
 use simapi_sys::GameSession;
 
-static STOP_SIGNAL: AtomicBool = AtomicBool::new(false);
+const STOP_SIGNAL_NONE: i32 = 0;
+static STOP_SIGNAL: AtomicI32 = AtomicI32::new(STOP_SIGNAL_NONE);
 
 /// # Safety
-/// Installed as a POSIX signal handler. It only stores an atomic flag.
-unsafe extern "C" fn on_stop_signal(_signum: i32) {
-    STOP_SIGNAL.store(true, Ordering::Relaxed);
+/// Installed as a POSIX signal handler. It only stores the signal number.
+unsafe extern "C" fn on_stop_signal(signum: i32) {
+    STOP_SIGNAL.store(signum, Ordering::Relaxed);
 }
 
 fn install_stop_signals() {
@@ -162,6 +163,7 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
         releasing: false,
         sim_exe: 0,
     };
+    println!("{}", games::MSG_SEARCHING);
     loop {
         play = poll_once(
             &mut PlayParts {
@@ -176,6 +178,7 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
             parsed,
         );
         if play.phase == PlayPhase::Exiting {
+            println!();
             return ExitCode::SUCCESS;
         }
         thread::sleep(Duration::from_millis(play.wait_ms));
@@ -207,7 +210,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     parts.devices.tyres.note(observed.flags);
     let seen = bridge_if_needed(observed.seen);
     let play = note_sim(play, seen.sim_exe);
-    let play = apply_quit(play, parsed);
+    let play = apply_quit(play, parsed, parts.devices.loaded.len());
     if play.phase == PlayPhase::Exiting {
         return play;
     }
@@ -237,7 +240,13 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
                 fps,
             );
             if next.phase != PlayPhase::Mapping {
+                announce_release(parsed);
                 release_configured(parts.devices);
+                if next.user_stopped {
+                    slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
+                } else {
+                    slog(parsed, Level::Info, games::MSG_RESTART_CHECK);
+                }
             }
             if next.phase == PlayPhase::Mapping {
                 tick_devices(parts, parsed);
@@ -248,18 +257,23 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     }
 }
 
-fn apply_quit(play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
+fn apply_quit(play: PlayLoop, parsed: &cli::Invocation, device_count: usize) -> PlayLoop {
     let mapping = play.phase == PlayPhase::Mapping;
-    let signalled = STOP_SIGNAL.swap(false, Ordering::Relaxed);
-    match games::quit_action(read_quit_key(), signalled, mapping) {
+    let signum = STOP_SIGNAL.swap(STOP_SIGNAL_NONE, Ordering::Relaxed);
+    let release_devices = mapping && device_count > 0 && !play.releasing;
+    match games::quit_action(read_quit_key(), signum != STOP_SIGNAL_NONE, mapping) {
         games::QuitAction::Continue => play,
-        games::QuitAction::Exit => PlayLoop {
-            phase: PlayPhase::Exiting,
-            ..play
-        },
+        games::QuitAction::Exit => {
+            announce_exit(parsed, signum, release_devices);
+            PlayLoop {
+                phase: PlayPhase::Exiting,
+                ..play
+            }
+        }
         games::QuitAction::Release => {
             println!("{}", games::MSG_USER_STOP);
             slog(parsed, Level::Info, games::MSG_USER_STOP);
+            announce_release(parsed);
             PlayLoop {
                 user_stopped: true,
                 releasing: true,
@@ -267,6 +281,22 @@ fn apply_quit(play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
             }
         }
     }
+}
+
+fn announce_exit(parsed: &cli::Invocation, signum: i32, release_devices: bool) {
+    if signum != STOP_SIGNAL_NONE {
+        slog(parsed, Level::Info, &games::signal_stop_message(signum));
+    }
+    slog(parsed, Level::Info, games::MSG_EXITING);
+    if !release_devices {
+        return;
+    }
+    announce_release(parsed);
+}
+
+fn announce_release(parsed: &cli::Invocation) {
+    slog(parsed, Level::Info, games::MSG_RELEASE_LOOP);
+    slog(parsed, Level::Info, games::MSG_RELEASING_DEVICES);
 }
 
 fn apply_control(
@@ -280,11 +310,21 @@ fn apply_control(
     };
     let status = session_view(&play, devices, parsed);
     match control::try_accept(listener, &status) {
-        Some(ControlEffect::Stop) => PlayLoop {
-            phase: PlayPhase::Exiting,
-            ..play
-        },
+        Some(ControlEffect::Stop) => {
+            let release_devices =
+                play.phase == PlayPhase::Mapping && !devices.loaded.is_empty() && !play.releasing;
+            announce_exit(parsed, STOP_SIGNAL_NONE, release_devices);
+            PlayLoop {
+                phase: PlayPhase::Exiting,
+                ..play
+            }
+        }
         Some(ControlEffect::Reload) => {
+            if play.phase == PlayPhase::Mapping {
+                slog(parsed, Level::Info, games::MSG_RELOAD);
+                announce_release(parsed);
+                slog(parsed, Level::Info, games::MSG_RESTART_CHECK);
+            }
             release_configured(devices);
             devices.pending = true;
             searching(PlayLoop {
@@ -508,10 +548,46 @@ fn load_configured(parsed: &cli::Invocation) -> LoadedDevices {
         .as_deref()
         .map(std::path::PathBuf::from)
         .unwrap_or_else(cargopit_config::paths::default_config_path);
+    let path_text = path.display().to_string();
+    slog(
+        parsed,
+        Level::Info,
+        &games::loading_profile_message(&path_text, parsed.config_index),
+    );
     let Ok(config) = cargopit_config::config::load_file(&path) else {
         return LoadedDevices::empty();
     };
+    let count = i32::try_from(config.profiles.len()).unwrap_or(i32::MAX);
+    if let Some(fault) = games::profile_load_fault(count, parsed.config_index) {
+        log_profile_fault(parsed, &path_text, parsed.config_index, fault);
+        return LoadedDevices::empty();
+    }
     LoadedDevices::from_config(&config, parsed.config_index, parsed.disable_audio)
+}
+
+fn log_profile_fault(
+    parsed: &cli::Invocation,
+    path: &str,
+    config_index: i32,
+    fault: games::ProfileLoadFault,
+) {
+    match fault {
+        games::ProfileLoadFault::NoProfiles => {
+            slog(parsed, Level::Error, &games::no_profiles_message(path));
+        }
+        games::ProfileLoadFault::IndexOutOfRange { configs } => {
+            slog(
+                parsed,
+                Level::Error,
+                &games::config_index_range_message(config_index, configs),
+            );
+        }
+    }
+    slog(
+        parsed,
+        Level::Error,
+        &games::no_profile_message(config_index),
+    );
 }
 
 fn recv_udp(
