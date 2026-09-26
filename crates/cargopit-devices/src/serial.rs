@@ -87,6 +87,10 @@ const MOZA_MAGIC: u32 = 0x0d;
 const MOZA_START: u8 = 0x7e;
 const MOZA_R5_TEMPLATE: [u8; 11] = [0x7e, 0x06, 0x41, 0x13, 0xfd, 0xde, 0, 0, 0, 0, 0];
 const MOZA_R5_SIZE: usize = 11;
+pub const MOZA_R5_PACKET_LEN: i32 = MOZA_R5_SIZE as i32;
+const MOZA_R5_HIGH_BYTE: usize = 8;
+const MOZA_R5_LOW_BYTE: usize = 9;
+const MOZA_R5_CHECK_BYTE: usize = 10;
 const MOZA_BLINK_BIT: u32 = 7;
 const MOZA_PERCENT: f32 = 100.0;
 const KS_MASK_TEMPLATE: [u8; 11] = [0x7e, 0x06, 0x3f, 0x17, 0x1a, 0, 0, 0, 0, 0, 0];
@@ -860,43 +864,76 @@ fn flag_byte(value: i32, bit: u32) -> bool {
     value >= bit as i32
 }
 
+pub struct MozaR5Report {
+    pub rpm: i32,
+    pub maxrpm: i32,
+    pub bytes: [u8; MOZA_R5_SIZE],
+}
+
+pub fn moza_r5_report(rpm: u32, maxrpm: u32) -> MozaR5Report {
+    let rpm = narrow_moza_rpm(rpm);
+    let maxrpm = narrow_moza_rpm(maxrpm);
+    let bytes = if maxrpm == 0 {
+        r5_idle()
+    } else {
+        r5_packet(rpm, maxrpm)
+    };
+    MozaR5Report {
+        rpm: i32::try_from(rpm).unwrap_or(i32::MAX),
+        maxrpm: i32::try_from(maxrpm).unwrap_or(i32::MAX),
+        bytes,
+    }
+}
+
+const MOZA_RPM_MASK: u32 = u16::MAX as u32;
+
+fn narrow_moza_rpm(value: u32) -> u32 {
+    value & MOZA_RPM_MASK
+}
+
+fn r5_idle() -> [u8; MOZA_R5_SIZE] {
+    let mut bytes = MOZA_R5_TEMPLATE;
+    bytes[MOZA_R5_CHECK_BYTE] = moza_checksum(&bytes);
+    bytes
+}
+
 fn r5_packet(rpm: u32, maxrpm: u32) -> [u8; MOZA_R5_SIZE] {
     let mut bytes = MOZA_R5_TEMPLATE;
     let percent = ((rpm as f32) / (maxrpm as f32) * MOZA_PERCENT).round() as i32;
     if flag_byte(percent, 10) {
-        bytes[9] |= 1 << 0;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 0;
     }
     if flag_byte(percent, 20) {
-        bytes[9] |= 1 << 1;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 1;
     }
     if flag_byte(percent, 30) {
-        bytes[9] |= 1 << 2;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 2;
     }
     if flag_byte(percent, 40) {
-        bytes[9] |= 1 << 3;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 3;
     }
     if flag_byte(percent, 50) {
-        bytes[9] |= 1 << 4;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 4;
     }
     if flag_byte(percent, 60) {
-        bytes[9] |= 1 << 5;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 5;
     }
     if flag_byte(percent, 70) {
-        bytes[9] |= 1 << 6;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 6;
     }
     if flag_byte(percent, 80) {
-        bytes[9] |= 1 << 7;
+        bytes[MOZA_R5_LOW_BYTE] |= 1 << 7;
     }
     if flag_byte(percent, 90) {
-        bytes[8] |= 1 << 0;
+        bytes[MOZA_R5_HIGH_BYTE] |= 1 << 0;
     }
     if flag_byte(percent, 92) {
-        bytes[8] |= 1 << 1;
+        bytes[MOZA_R5_HIGH_BYTE] |= 1 << 1;
     }
     if flag_byte(percent, 94) {
-        bytes[8] |= 1 << MOZA_BLINK_BIT;
+        bytes[MOZA_R5_HIGH_BYTE] |= 1 << MOZA_BLINK_BIT;
     }
-    bytes[10] = moza_checksum(&bytes);
+    bytes[MOZA_R5_CHECK_BYTE] = moza_checksum(&bytes);
     bytes
 }
 
@@ -1824,5 +1861,54 @@ mod tests {
             SimLedCount::Invalid
         ));
         assert_eq!(simled_count_text(b"nope"), "nope");
+    }
+
+    #[test]
+    fn moza_r5_dark_packet_matches_a_zero_percentage() {
+        const SAMPLE_MAX: u32 = 8_000;
+        let dark = moza_r5_report(0, SAMPLE_MAX);
+        let idle = r5_idle();
+        assert_eq!(dark.bytes, idle);
+        assert_eq!(dark.rpm, 0);
+        assert_eq!(dark.maxrpm, i32::try_from(SAMPLE_MAX).unwrap_or(i32::MAX));
+        assert_eq!(dark.bytes[MOZA_R5_HIGH_BYTE], 0);
+        assert_eq!(dark.bytes[MOZA_R5_LOW_BYTE], 0);
+        assert_stored_checksum(&dark.bytes);
+    }
+
+    #[test]
+    fn moza_r5_zero_max_rpm_stays_dark() {
+        const SAMPLE_RPM: u32 = 4_000;
+        assert_eq!(moza_r5_report(SAMPLE_RPM, 0).bytes, r5_idle());
+    }
+
+    #[test]
+    fn moza_r5_rpm_truncates_to_sixteen_bits() {
+        const SAMPLE_MAX: u32 = 8_000;
+        const WRAPPED: u32 = 65_536;
+        assert_eq!(
+            moza_r5_report(WRAPPED, SAMPLE_MAX).bytes,
+            moza_r5_report(0, SAMPLE_MAX).bytes
+        );
+        assert_eq!(
+            moza_r5_report(SAMPLE_MAX, WRAPPED).bytes,
+            moza_r5_report(SAMPLE_MAX, 0).bytes
+        );
+    }
+
+    #[test]
+    fn moza_r5_full_rpm_sets_the_blink_bit() {
+        const SAMPLE_RPM: u32 = 8_000;
+        let full = moza_r5_report(SAMPLE_RPM, SAMPLE_RPM);
+        let blink = 1u8 << u8::try_from(MOZA_BLINK_BIT).unwrap_or(0);
+        assert_ne!(full.bytes[MOZA_R5_HIGH_BYTE] & blink, 0);
+        assert_stored_checksum(&full.bytes);
+        assert_eq!(full.bytes.len(), MOZA_R5_SIZE);
+    }
+
+    fn assert_stored_checksum(bytes: &[u8; MOZA_R5_SIZE]) {
+        let mut clear = *bytes;
+        clear[MOZA_R5_CHECK_BYTE] = 0;
+        assert_eq!(bytes[MOZA_R5_CHECK_BYTE], moza_checksum(&clear));
     }
 }

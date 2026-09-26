@@ -440,6 +440,7 @@ pub const MSG_SIMLED_LUA_OK: &str = "LUA config setup successful.";
 pub const MSG_SERIAL_HAPTIC_UPDATING: &str = "arduino haptic device updating";
 pub const MSG_SERIAL_HAPTIC_ZERO: &str = "set zero to arduino device";
 pub const MSG_MOZA_NEW_INIT: &str = "Initializing new firmware Moza serial wheel device.";
+pub const MSG_MOZA_R5_INIT: &str = "Initializing Moza serial wheel device.";
 pub const MSG_SERIAL_START: &str = "Starting serial device initialization";
 pub const MSG_SERIAL_NO_EXISTING: &str = "no existing connections found, looking to create new";
 pub const MSG_SERIAL_OPENING: &str = "opening physical serial device...";
@@ -600,6 +601,21 @@ pub fn arduino_custom_wrote_message(message: &str, size: i32) -> String {
 
 pub fn arduino_copy_message(size: i32) -> String {
     format!("copying {size} bytes to arduino device")
+}
+
+pub fn moza_r5_copy_message(size: i32) -> String {
+    format!("copying {size} bytes to moza device")
+}
+
+pub fn moza_r5_write_message(packet: &[u8], rpm: i32, maxrpm: i32) -> String {
+    let mut hex = String::new();
+    for (index, byte) in packet.iter().enumerate() {
+        if index > 0 {
+            hex.push(' ');
+        }
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    format!("writing bytes {hex} from rpm {rpm} maxrpm {maxrpm}")
 }
 
 pub fn simwind_init_message(fanpower: f64) -> String {
@@ -1370,6 +1386,17 @@ mod tests {
         assert_eq!(
             arduino_copy_message(cargopit_devices::serial::HAPTIC_PACKET_LEN),
             "copying 8 bytes to arduino device"
+        );
+        assert_eq!(MSG_MOZA_R5_INIT, "Initializing Moza serial wheel device.");
+        assert_eq!(
+            moza_r5_copy_message(cargopit_devices::serial::MOZA_R5_PACKET_LEN),
+            "copying 11 bytes to moza device"
+        );
+        const MOZA_R5_SAMPLE_RPM: i32 = 4_000;
+        const MOZA_R5_SAMPLE_MAX: i32 = 8_000;
+        assert_eq!(
+            moza_r5_write_message(&[0x7e, 0x06], MOZA_R5_SAMPLE_RPM, MOZA_R5_SAMPLE_MAX),
+            "writing bytes 7e 06 from rpm 4000 maxrpm 8000"
         );
         assert_eq!(MSG_MOZA_ARM_FAILED, "Moza R9 telemetry arm failed");
         assert_eq!(MSG_MOZA_ARMED, "Moza R9 telemetry mode armed");
