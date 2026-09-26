@@ -51,6 +51,7 @@ pub const KEY_EFFECT: &str = "effect";
 pub const KEY_TYRE: &str = "tyre";
 pub const KEY_THRESHOLD: &str = "threshold";
 pub const KEY_FREQUENCY: &str = "frequency";
+pub const KEY_FREQUENCY_MAX: &str = "frequencyMax";
 pub const KEY_DURATION: &str = "duration";
 pub const KEY_MOTORS: &str = "motors";
 pub const KEY_VOLUME: &str = "volume";

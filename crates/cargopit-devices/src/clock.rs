@@ -43,6 +43,12 @@ impl VirtualClock {
         self.monotonic_us = self.monotonic_us.saturating_add(delta_us);
         self.wall_ms = self.wall_ms.saturating_add(delta_us / US_PER_MS);
     }
+
+    pub fn from_monotonic_ns(now_ns: u64) -> Self {
+        let mut clock = Self::new();
+        clock.advance_us(now_ns / NS_PER_US);
+        clock
+    }
 }
 
 impl Clock for VirtualClock {

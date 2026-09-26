@@ -43,6 +43,20 @@ pub enum VibrationEffect {
     Suspension = 5,
 }
 
+impl VibrationEffect {
+    pub fn from_id(id: i32) -> Option<Self> {
+        match id {
+            value if value == Self::EngineRpm as i32 => Some(Self::EngineRpm),
+            value if value == Self::GearShift as i32 => Some(Self::GearShift),
+            value if value == Self::AbsBrakes as i32 => Some(Self::AbsBrakes),
+            value if value == Self::TyreSlip as i32 => Some(Self::TyreSlip),
+            value if value == Self::TyreLock as i32 => Some(Self::TyreLock),
+            value if value == Self::Suspension as i32 => Some(Self::Suspension),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
 pub enum TyreId {
@@ -53,6 +67,20 @@ pub enum TyreId {
     Fronts = 4,
     Rears = 5,
     AllFour = 6,
+}
+
+impl TyreId {
+    pub fn from_id(id: i32) -> Self {
+        match id {
+            value if value == Self::FrontLeft as i32 => Self::FrontLeft,
+            value if value == Self::FrontRight as i32 => Self::FrontRight,
+            value if value == Self::RearLeft as i32 => Self::RearLeft,
+            value if value == Self::RearRight as i32 => Self::RearRight,
+            value if value == Self::Fronts as i32 => Self::Fronts,
+            value if value == Self::Rears as i32 => Self::Rears,
+            _ => Self::AllFour,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
