@@ -584,8 +584,7 @@ fn load_configured(parsed: &cli::Invocation, simulator_api: i32) -> LoadedDevice
     let Some(index) = devices::profile_index(config.profiles.len(), parsed.config_index) else {
         return LoadedDevices::empty();
     };
-    announce_device_init(parsed, &config, index, simulator_api);
-    LoadedDevices::from_config(&config, parsed.config_index, parsed.disable_audio)
+    announce_device_init(parsed, &config, index, simulator_api)
 }
 
 fn announce_device_init(
@@ -593,7 +592,7 @@ fn announce_device_init(
     config: &cargopit_config::config::CargopitConfig,
     index: usize,
     simulator_api: i32,
-) {
+) -> LoadedDevices {
     let devices = &config.profiles[index].devices;
     let device_count = i32::try_from(devices.len()).unwrap_or(i32::MAX);
     let confignum = i32::try_from(index).unwrap_or(i32::MAX);
@@ -608,20 +607,11 @@ fn announce_device_init(
         Level::Info,
         &games::initializing_simdevices_message(simulator_api),
     );
-    for (slot, entry) in devices.iter().enumerate() {
-        let Some(skip) = devices::device_skip(entry, parsed.disable_audio) else {
-            continue;
-        };
-        let message = skip_message(skip, i32::try_from(slot).unwrap_or(i32::MAX));
-        slog(parsed, Level::Info, &message);
+    let loaded = devices::open_profile_at(config, index, parsed.disable_audio);
+    for notice in loaded.notices {
+        slog(parsed, notice.level, &notice.message);
     }
-}
-
-fn skip_message(skip: devices::DeviceSkip, index: i32) -> String {
-    match skip {
-        devices::DeviceSkip::Disabled => games::skipping_disabled_message(index),
-        devices::DeviceSkip::AudioDisabled => games::MSG_SKIP_AUDIO.to_string(),
-    }
+    loaded.devices
 }
 
 fn log_profile_fault(

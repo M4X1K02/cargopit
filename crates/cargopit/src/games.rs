@@ -248,6 +248,24 @@ pub fn skipping_disabled_message(index: i32) -> String {
     format!("skipping disabled device at index {index}")
 }
 
+pub const MSG_INIT_USB: &str = "initializing usb device...";
+pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
+pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
+pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
+pub const DEVICE_NAME_MISSING: &str = "(null)";
+
+pub fn usb_init_error_message(code: i32) -> String {
+    format!("Did not initialize usb device due to error code {code}")
+}
+
+pub fn could_not_initialize_message(class_name: &str) -> String {
+    format!("Could not initialize {class_name} device")
+}
+
+pub fn initialized_devices_message(count: i32) -> String {
+    format!("initialized {count} devices")
+}
+
 pub fn home_config_file(name: &str) -> PathBuf {
     cargopit_config::paths::home_dir()
         .join(cargopit_config::keys::XDG_CONFIG_FALLBACK)
@@ -543,6 +561,22 @@ mod tests {
             skipping_disabled_message(3),
             "skipping disabled device at index 3"
         );
+        assert_eq!(MSG_INIT_USB, "initializing usb device...");
+        assert_eq!(MSG_INIT_TACH, "initializing tachometer device...");
+        assert_eq!(MSG_INIT_REVBURNER, "initializing revburner tachometer...");
+        assert_eq!(
+            MSG_REVBURNER_MISSING,
+            "Could not find attached RevBurner tachometer"
+        );
+        assert_eq!(
+            usb_init_error_message(ERROR_UNKNOWN),
+            "Did not initialize usb device due to error code 1"
+        );
+        assert_eq!(
+            could_not_initialize_message(cargopit_config::keys::CLASS_USB),
+            "Could not initialize USB device"
+        );
+        assert_eq!(initialized_devices_message(0), "initialized 0 devices");
         assert_eq!(
             MSG_SKIP_AUDIO,
             "skipping configured sound device due to disable_audio being specified..."
