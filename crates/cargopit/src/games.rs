@@ -44,6 +44,11 @@ pub const MSG_PULSE_CONNECTING: &str = "connecting pulseaudio...";
 pub const MSG_PULSE_CONNECTED: &str = "successfully connected pulseaudio...";
 pub const MSG_PULSE_CONNECT_FAILED: &str = "pulseaudio connect failed";
 pub const MSG_PULSE_CONTEXT_FREED: &str = "freed pulseaudio context";
+pub const MSG_PARSING_CONFIG: &str = "Parsing config file";
+pub const MSG_SKIP_AUDIO: &str =
+    "skipping configured sound device due to disable_audio being specified...";
+pub const SIMULATOR_API_NONE: i32 = 0;
+pub const SIMULATOR_API_ASSETTO_CORSA: i32 = 1;
 pub const MAPPING_START_MS: u64 = 2000;
 const MS_PER_SECOND: f64 = 1000.0;
 const HALF_MS: f64 = 0.5;
@@ -92,6 +97,7 @@ pub struct SeenSim {
     pub is_sim_on: bool,
     pub sim_status: i32,
     pub map_api: i32,
+    pub simulator_api: i32,
     pub uses_udp: bool,
     pub sim_exe: u64,
 }
@@ -119,6 +125,7 @@ pub fn bridged_acr(seen: SeenSim) -> SeenSim {
         is_sim_on: true,
         sim_status: STATUS_ACTIVE_PLAY,
         uses_udp: true,
+        simulator_api: SIMULATOR_API_ASSETTO_CORSA,
         ..seen
     }
 }
@@ -227,6 +234,18 @@ pub fn test_fail_message(code: i32) -> String {
 
 pub fn pulse_context_failed_message(state: i32) -> String {
     format!("pulseaudio context failed (state {state})")
+}
+
+pub fn loading_confignum_message(confignum: i32, devices: i32) -> String {
+    format!("loading confignum {confignum}, with {devices} devices.")
+}
+
+pub fn initializing_simdevices_message(simulator_api: i32) -> String {
+    format!("initializing simdevices for simapi {simulator_api}...")
+}
+
+pub fn skipping_disabled_message(index: i32) -> String {
+    format!("skipping disabled device at index {index}")
 }
 
 pub fn home_config_file(name: &str) -> PathBuf {
@@ -511,6 +530,31 @@ mod tests {
             pulse_context_failed_message(cargopit_devices::transport::PULSE_CONTEXT_FAILED),
             "pulseaudio context failed (state 5)"
         );
+        assert_eq!(
+            loading_confignum_message(0, 2),
+            "loading confignum 0, with 2 devices."
+        );
+        assert_eq!(MSG_PARSING_CONFIG, "Parsing config file");
+        assert_eq!(
+            initializing_simdevices_message(SIMULATOR_API_ASSETTO_CORSA),
+            "initializing simdevices for simapi 1..."
+        );
+        assert_eq!(
+            skipping_disabled_message(3),
+            "skipping disabled device at index 3"
+        );
+        assert_eq!(
+            MSG_SKIP_AUDIO,
+            "skipping configured sound device due to disable_audio being specified..."
+        );
+        assert_eq!(
+            SIMULATOR_API_NONE,
+            simapi_sys::bindings::SimulatorAPI_SIMULATORAPI_SIMAPI_TEST as i32
+        );
+        assert_eq!(
+            SIMULATOR_API_ASSETTO_CORSA,
+            simapi_sys::bindings::SimulatorAPI_SIMULATORAPI_ASSETTO_CORSA as i32
+        );
 
         let missing_issue = inspect_config(&missing).expect_err("missing");
         assert_eq!(missing_issue.file, CONFIG_IO_FILE);
@@ -569,6 +613,7 @@ mod tests {
             is_sim_on: true,
             sim_status: STATUS_ACTIVE_PLAY,
             map_api,
+            simulator_api: 0,
             uses_udp,
             sim_exe: 0,
         }
@@ -604,6 +649,7 @@ mod tests {
             is_sim_on: false,
             sim_status: STATUS_ACTIVE_PLAY,
             map_api: MAP_API_SIMD,
+            simulator_api: 0,
             uses_udp: false,
             sim_exe: 0,
         };
@@ -665,6 +711,7 @@ mod tests {
             is_sim_on: true,
             sim_status: STATUS_ACTIVE_PLAY,
             map_api: 1,
+            simulator_api: 0,
             uses_udp: false,
             sim_exe: 0,
         };
@@ -696,9 +743,11 @@ mod tests {
             is_sim_on: false,
             sim_status: 0,
             map_api: MAP_API_SIMD,
+            simulator_api: 0,
             uses_udp: false,
             sim_exe: acr::SIMEXE_ACR,
         });
+        assert_eq!(seen.simulator_api, SIMULATOR_API_ASSETTO_CORSA);
         assert_eq!(
             search_tick(seen, false, false),
             PlayAction::StartMapping { use_udp: true }

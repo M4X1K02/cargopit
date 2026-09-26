@@ -11,7 +11,7 @@ use std::time::Duration;
 use cargopit::acr;
 use cargopit::cli::{self, ProgramAction};
 use cargopit::control::{self, ControlEffect, SessionStatus};
-use cargopit::devices::LoadedDevices;
+use cargopit::devices::{self, LoadedDevices};
 use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
 use cargopit::log::{self, Level};
 use cargopit::scheduler::{self, TimerKind};
@@ -110,6 +110,7 @@ struct PlayLoop {
     phase: PlayPhase,
     use_udp: bool,
     map_api: i32,
+    simulator_api: i32,
     wait_ms: u64,
     user_stopped: bool,
     releasing: bool,
@@ -175,6 +176,7 @@ fn run_discovery(parsed: &cli::Invocation) -> ExitCode {
         phase: PlayPhase::Searching,
         use_udp: parsed.force_udp,
         map_api: games::MAP_API_SIMD,
+        simulator_api: games::SIMULATOR_API_NONE,
         wait_ms: games::CHECK_INTERVAL_MS,
         user_stopped: false,
         releasing: false,
@@ -266,7 +268,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
                 }
             }
             if next.phase == PlayPhase::Mapping {
-                tick_devices(parts, parsed);
+                tick_devices(parts, parsed, next.simulator_api);
             }
             next
         }
@@ -425,6 +427,7 @@ fn begin_mapping(
         phase: PlayPhase::Mapping,
         use_udp,
         map_api: seen.map_api,
+        simulator_api: seen.simulator_api,
         wait_ms: if use_udp {
             games::CHECK_INTERVAL_MS
         } else {
@@ -476,11 +479,11 @@ fn bridge_if_needed(seen: SeenSim) -> SeenSim {
     seen
 }
 
-fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation) {
+fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, simulator_api: i32) {
     if parts.devices.pending {
         parts.devices.pending = false;
         parts.devices.scheduler.clear();
-        parts.devices.loaded = load_configured(parsed);
+        parts.devices.loaded = load_configured(parsed, simulator_api);
         for index in 0..parts.devices.loaded.len() {
             let fps = parts
                 .devices
@@ -559,7 +562,7 @@ fn publish_tyres(session: &mut GameSession, snapshot: &mut games::FrameSnapshot,
     }
 }
 
-fn load_configured(parsed: &cli::Invocation) -> LoadedDevices {
+fn load_configured(parsed: &cli::Invocation, simulator_api: i32) -> LoadedDevices {
     let path = games::config_path_for(
         parsed.config_file.as_deref().map(std::path::Path::new),
         parsed.config_dir.as_deref().map(std::path::Path::new),
@@ -578,7 +581,47 @@ fn load_configured(parsed: &cli::Invocation) -> LoadedDevices {
         log_profile_fault(parsed, &path_text, parsed.config_index, fault);
         return LoadedDevices::empty();
     }
+    let Some(index) = devices::profile_index(config.profiles.len(), parsed.config_index) else {
+        return LoadedDevices::empty();
+    };
+    announce_device_init(parsed, &config, index, simulator_api);
     LoadedDevices::from_config(&config, parsed.config_index, parsed.disable_audio)
+}
+
+fn announce_device_init(
+    parsed: &cli::Invocation,
+    config: &cargopit_config::config::CargopitConfig,
+    index: usize,
+    simulator_api: i32,
+) {
+    let devices = &config.profiles[index].devices;
+    let device_count = i32::try_from(devices.len()).unwrap_or(i32::MAX);
+    let confignum = i32::try_from(index).unwrap_or(i32::MAX);
+    slog(
+        parsed,
+        Level::Debug,
+        &games::loading_confignum_message(confignum, device_count),
+    );
+    slog(parsed, Level::Info, games::MSG_PARSING_CONFIG);
+    slog(
+        parsed,
+        Level::Info,
+        &games::initializing_simdevices_message(simulator_api),
+    );
+    for (slot, entry) in devices.iter().enumerate() {
+        let Some(skip) = devices::device_skip(entry, parsed.disable_audio) else {
+            continue;
+        };
+        let message = skip_message(skip, i32::try_from(slot).unwrap_or(i32::MAX));
+        slog(parsed, Level::Info, &message);
+    }
+}
+
+fn skip_message(skip: devices::DeviceSkip, index: i32) -> String {
+    match skip {
+        devices::DeviceSkip::Disabled => games::skipping_disabled_message(index),
+        devices::DeviceSkip::AudioDisabled => games::MSG_SKIP_AUDIO.to_string(),
+    }
 }
 
 fn log_profile_fault(
@@ -631,6 +674,7 @@ fn observe(session: &mut GameSession, force_udp: bool, direct: bool) -> Observed
             is_sim_on: info.isSimOn,
             sim_status: session_status(session),
             map_api: info.mapapi as i32,
+            simulator_api: info.simulatorapi as i32,
             uses_udp: info.SimUsesUDP,
             sim_exe: info.simulatorexe as u64,
         },
