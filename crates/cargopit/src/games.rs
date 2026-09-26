@@ -33,6 +33,7 @@ pub const MSG_TEST_MODE_BANNER: &str = "running cargopit in test mode...";
 pub const MSG_TEST_INDEX: &str = "Could not resolve config index for test";
 pub const ERROR_NONE: i32 = 0;
 pub const ERROR_UNKNOWN: i32 = 1;
+pub const USB_INIT_LUA_FAILED: i32 = -1;
 pub const ERROR_INVALID_DEV: i32 = 3;
 pub const ERROR_SIMD_REQUIRED: i32 = 7;
 pub const CONFIG_CHECK_START: i32 = 0;
@@ -262,6 +263,9 @@ pub const MSG_C12_ATTEMPT: &str = "Attempting to initialize cammus C12";
 pub const MSG_C12_INIT: &str = "initializing cammus c12 wheel...";
 pub const MSG_C12_FOUND: &str = "Found Cammus C12 Wheel...";
 pub const MSG_C12_MISSING: &str = "Could not find attached Cammus C12 Wheel";
+pub const MSG_C12_LUA: &str = "Using lua file for cammus c12 device";
+pub const MSG_C12_LUA_ISSUE: &str = "There is an issue with your lua script";
+pub const MSG_C12_LUA_CLOSE: &str = "closing lua";
 pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
 pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
 pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
@@ -289,6 +293,31 @@ pub fn c5_write_message(report: &[u8], rpm: i32, velocity: i32, gear: i32) -> St
         byte(cargopit_devices::usb::C5_BYTE_VELOCITY_LOW),
         byte(cargopit_devices::usb::C5_BYTE_GEAR),
     )
+}
+
+pub fn c12_led_message(report: &[u8]) -> String {
+    let byte = |index: usize| report.get(index).copied().unwrap_or(0);
+    let red = i32::from(byte(cargopit_devices::usb::C12_BYTE_RED));
+    let green = i32::from(byte(cargopit_devices::usb::C12_BYTE_GREEN));
+    let blue = i32::from(byte(cargopit_devices::usb::C12_BYTE_BLUE));
+    format!(
+        "writing bytes x{:02x}x{:02x}x{:02x}x{:02x}x{:02x}x{:02x}x{:02x} from red {red} green {green} blue {blue}",
+        byte(cargopit_devices::usb::C12_BYTE_MARK0),
+        byte(cargopit_devices::usb::C12_BYTE_MARK1),
+        byte(cargopit_devices::usb::C12_BYTE_MARK2),
+        byte(cargopit_devices::usb::C12_BYTE_LED),
+        byte(cargopit_devices::usb::C12_BYTE_RED),
+        byte(cargopit_devices::usb::C12_BYTE_GREEN),
+        byte(cargopit_devices::usb::C12_BYTE_BLUE),
+    )
+}
+
+pub fn lua_load_failed_message(detail: &str) -> String {
+    format!("Couldn't load file: {detail}")
+}
+
+pub fn lua_call_failed_message(detail: &str) -> String {
+    format!("Error calling Lua script: {detail}")
 }
 
 pub fn c12_write_message(report: &[u8], rpm: i32, velocity: i32, gear: i32) -> String {
@@ -843,6 +872,37 @@ mod tests {
                 i32::try_from(C5_SAMPLE_GEAR).unwrap_or(i32::MAX),
             ),
             "writing bytes xfaxfbxd4x56x2cx01x03 from rpm 6000 velocity 300 gear 4"
+        );
+        assert_eq!(MSG_C12_LUA, "Using lua file for cammus c12 device");
+        assert_eq!(MSG_C12_LUA_ISSUE, "There is an issue with your lua script");
+        assert_eq!(MSG_C12_LUA_CLOSE, "closing lua");
+        assert_eq!(USB_INIT_LUA_FAILED, -1);
+        assert_eq!(
+            usb_init_error_message(USB_INIT_LUA_FAILED),
+            "Did not initialize usb device due to error code -1"
+        );
+        let mut colors = vec![0u8; cargopit_devices::usb::c12_led_color_len()];
+        let first =
+            cargopit_devices::usb::c12_led_color_index(cargopit_devices::usb::C12_LED_FIRST);
+        if let Some(red) = colors.get_mut(first) {
+            *red = u8::MAX;
+        }
+        let led = cargopit_devices::usb::c12_led_reports(&colors);
+        let sample = led
+            .first()
+            .copied()
+            .unwrap_or([0; cargopit_devices::usb::C12_LED_LEN]);
+        assert_eq!(
+            c12_led_message(&sample),
+            "writing bytes xfaxfbx02x10xffx00x00 from red 255 green 0 blue 0"
+        );
+        assert_eq!(
+            lua_load_failed_message("cannot open missing.lua: No such file or directory"),
+            "Couldn't load file: cannot open missing.lua: No such file or directory"
+        );
+        assert_eq!(
+            lua_call_failed_message("boom"),
+            "Error calling Lua script: boom"
         );
         assert_eq!(MSG_INIT_TACH, "initializing tachometer device...");
         assert_eq!(MSG_INIT_REVBURNER, "initializing revburner tachometer...");

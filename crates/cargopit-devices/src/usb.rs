@@ -60,6 +60,18 @@ pub const C12_BYTE_PERCENT: usize = 3;
 pub const C12_BYTE_VELOCITY_LOW: usize = 4;
 pub const C12_BYTE_VELOCITY_HIGH: usize = 5;
 pub const C12_BYTE_GEAR: usize = 6;
+/// Bytes the Lua path fills. C calls `hid_write` with `C12_LEN` and reads past this array.
+pub const C12_LED_LEN: usize = 7;
+pub const C12_LED_TOTAL: i64 = 23;
+pub const C12_LED_FIRST: usize = 15;
+pub const C12_BYTE_LED: usize = 3;
+pub const C12_BYTE_RED: usize = 4;
+pub const C12_BYTE_GREEN: usize = 5;
+pub const C12_BYTE_BLUE: usize = 6;
+const C12_LED_MODE: u8 = 0x02;
+pub const C12_LED_NUMBER_OFFSET: usize = 1;
+const C12_RGB_GREEN: usize = 1;
+const C12_RGB_BLUE: usize = 2;
 const C12_B0: u8 = 0xfa;
 const C12_B1: u8 = 0xfb;
 const C12_B2: u8 = 0xd4;
@@ -428,6 +440,47 @@ pub fn c12_report(rpm: u32, maxrpm: u32, gear: u32, velocity: u32) -> [u8; C12_L
     bytes
 }
 
+pub fn c12_led_color_len() -> usize {
+    usize::try_from(C12_LED_TOTAL)
+        .unwrap_or(0)
+        .saturating_mul(RGB_CHANNELS)
+}
+
+pub fn c12_led_color_index(led_index: usize) -> usize {
+    led_index.saturating_mul(RGB_CHANNELS)
+}
+
+pub fn c12_led_reports(colors: &[u8]) -> Vec<[u8; C12_LED_LEN]> {
+    let total = usize::try_from(C12_LED_TOTAL).unwrap_or(0);
+    let mut reports = Vec::new();
+    let mut index = C12_LED_FIRST;
+    while index < total {
+        reports.push(c12_one_led(colors, index));
+        index += 1;
+    }
+    reports
+}
+
+fn c12_one_led(colors: &[u8], index: usize) -> [u8; C12_LED_LEN] {
+    let mut bytes = [0; C12_LED_LEN];
+    bytes[C12_BYTE_MARK0] = C12_B0;
+    bytes[C12_BYTE_MARK1] = C12_B1;
+    bytes[C12_BYTE_MARK2] = C12_LED_MODE;
+    let number = index.saturating_add(C12_LED_NUMBER_OFFSET);
+    bytes[C12_BYTE_LED] = u8::try_from(number).unwrap_or(u8::MAX);
+    let base = index.saturating_mul(RGB_CHANNELS);
+    if let Some(red) = colors.get(base) {
+        bytes[C12_BYTE_RED] = *red;
+    }
+    if let Some(green) = colors.get(base.saturating_add(C12_RGB_GREEN)) {
+        bytes[C12_BYTE_GREEN] = *green;
+    }
+    if let Some(blue) = colors.get(base.saturating_add(C12_RGB_BLUE)) {
+        bytes[C12_BYTE_BLUE] = *blue;
+    }
+    bytes
+}
+
 fn run_c12(log: &Log, frames: &[Telemetry]) {
     let id = log.hid_open(C12_VID, C12_PID);
     each_frame(log, frames, |log, frame| {
@@ -643,5 +696,36 @@ mod tests {
         assert_eq!(report[REVBURNER_PULSE_LOW], REPORT_LOW);
         assert_eq!(report[REVBURNER_PULSE_HIGH], REPORT_HIGH);
         assert_eq!(revburner_report(0), [0; REVBURNER_LEN]);
+    }
+
+    #[test]
+    fn c12_led_reports_start_at_the_shift_lights() {
+        const LED_RED: u8 = 0xff;
+        const LED_BLUE: u8 = 0xff;
+        let total = usize::try_from(C12_LED_TOTAL).unwrap_or(0);
+        let mut colors = vec![0u8; total * RGB_CHANNELS];
+        let first = C12_LED_FIRST * RGB_CHANNELS;
+        let last = (total - 1) * RGB_CHANNELS;
+        colors[first] = LED_RED;
+        colors[last + C12_RGB_BLUE] = LED_BLUE;
+        let reports = c12_led_reports(&colors);
+        assert_eq!(reports.len(), total - C12_LED_FIRST);
+        assert_eq!(reports[0][C12_BYTE_MARK0], C12_B0);
+        assert_eq!(reports[0][C12_BYTE_MARK1], C12_B1);
+        assert_eq!(reports[0][C12_BYTE_MARK2], C12_LED_MODE);
+        assert_eq!(
+            reports[0][C12_BYTE_LED],
+            u8::try_from(C12_LED_FIRST + C12_LED_NUMBER_OFFSET).unwrap_or(u8::MAX)
+        );
+        assert_eq!(reports[0][C12_BYTE_RED], LED_RED);
+        assert_eq!(reports[0][C12_BYTE_GREEN], 0);
+        assert_eq!(reports[0][C12_BYTE_BLUE], 0);
+        let tail = reports.len() - 1;
+        assert_eq!(reports[tail][C12_BYTE_BLUE], LED_BLUE);
+        assert_eq!(
+            reports[tail][C12_BYTE_LED],
+            u8::try_from(total).unwrap_or(u8::MAX)
+        );
+        assert_eq!(reports[0].len(), C12_LED_LEN);
     }
 }
