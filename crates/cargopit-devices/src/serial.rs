@@ -1289,6 +1289,12 @@ pub struct MozaNewStep {
     pub rpm_sent: bool,
 }
 
+impl Default for MozaNewWheel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MozaNewWheel {
     pub fn new() -> Self {
         Self {
