@@ -3,9 +3,11 @@
 //! HID open is `hid_open(vid, pid, NULL)`; a device id is not part of selection.
 
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::sync::Mutex;
 use std::time::Duration;
+
+use serialport::SerialPort;
 
 use crate::sound::{ShakerVoice, SharedShaker};
 
@@ -211,6 +213,28 @@ impl RealSerial {
 
     pub fn write(&mut self, data: &[u8]) -> Result<usize, TransportError> {
         self.port.write(data).map_err(|_| TransportError::Failed)
+    }
+
+    pub fn read_with_timeout(
+        &mut self,
+        buf: &mut [u8],
+        timeout_ms: u64,
+    ) -> Result<usize, TransportError> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        self.port
+            .set_timeout(Duration::from_millis(timeout_ms))
+            .map_err(|_| TransportError::Failed)?;
+        let outcome = match self.port.read(buf) {
+            Ok(read) => Ok(read),
+            Err(err) if err.kind() == std::io::ErrorKind::TimedOut => Ok(0),
+            Err(_) => Err(TransportError::Failed),
+        };
+        let _ = self
+            .port
+            .set_timeout(Duration::from_millis(SERIAL_TIMEOUT_MS));
+        outcome
     }
 
     /// Match `cargopit_serial_share_port`: drop exclusive open and hang-up-on-close.

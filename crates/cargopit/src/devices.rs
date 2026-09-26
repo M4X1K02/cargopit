@@ -10,7 +10,8 @@
 //! one lit-count byte on each tick. SimWind opens its serial port and writes speed
 //! and fan power on each tick. Serial haptic opens its port when the sim supports
 //! haptics and writes an eight-byte motor report on each tick. SimLED opens its
-//! serial port and writes a shift-light packet on each tick. A sound device logs the C init sequence,
+//! serial port and writes a shift-light packet on each tick. A custom SimLED queries the LED
+//! count, loads its Lua file, and writes a script-painted packet on each tick. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
 use std::fs::OpenOptions;
@@ -54,6 +55,8 @@ const C5_RELEASE_RPM: u32 = 0;
 const C5_RELEASE_GEAR: u32 = 0;
 const C5_RELEASE_VELOCITY: u32 = 0;
 const ASSUME_SIM_SUPPORTS_HAPTICS: bool = true;
+const SIMLED_COUNT_UNSET: i32 = 0;
+const SIMLED_INPUT_WAIT_ERROR: i32 = -1;
 const HAPTIC_AMPLITUDE_UNITY: i64 = 100;
 const HAPTIC_MOTOR_DEFAULT: i64 = 1;
 const HAPTIC_FREQUENCY_DEFAULT: i64 = 0;
@@ -87,6 +90,7 @@ pub struct LoadedDevices {
     simwind: Vec<Option<f64>>,
     serial_haptic: Vec<Option<SerialHaptic>>,
     simled: Vec<Option<SimLed>>,
+    custom_leds: Vec<Option<i32>>,
     luas: Vec<Option<LuaHost>>,
 }
 
@@ -139,6 +143,7 @@ impl LoadedDevices {
             simwind: Vec::new(),
             serial_haptic: Vec::new(),
             simled: Vec::new(),
+            custom_leds: Vec::new(),
             luas: Vec::new(),
         }
     }
@@ -208,6 +213,7 @@ impl LoadedDevices {
         notices.extend(self.write_simwind(index, frame));
         notices.extend(self.write_serial_haptic(index, frame, now_ns));
         notices.extend(self.write_simled(index, frame));
+        notices.extend(self.write_simled_custom(index, frame));
         notices.extend(self.write_g29(index, frame.rpms(), frame.maxrpm()));
         notices.extend(self.write_c5(index, frame));
         notices.extend(self.write_c12(index, frame));
@@ -685,6 +691,45 @@ impl LoadedDevices {
         let _ = write_serial_frame(port, &packet);
     }
 
+    fn write_simled_custom(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+        let Some(total) = self.custom_led_count(index) else {
+            return Vec::new();
+        };
+        if total < serial::LED_FIRST {
+            return Vec::new();
+        }
+        let Some(count) = usize::try_from(total).ok() else {
+            return Vec::new();
+        };
+        self.write_custom_leds(index, frame, total, count)
+    }
+
+    fn custom_led_count(&self, index: usize) -> Option<i32> {
+        self.custom_leds.get(index).copied().flatten()
+    }
+
+    fn write_custom_leds(
+        &mut self,
+        index: usize,
+        frame: &Telemetry,
+        total: i32,
+        count: usize,
+    ) -> Vec<InitNotice> {
+        let painted = self.script_colors(index, frame, i64::from(total));
+        if let Some(detail) = painted.failure.as_deref() {
+            eprintln!("{}", games::lua_call_failed_message(detail));
+        }
+        let packet = serial::simled_packet(count, &painted.leds);
+        let copied = i32::try_from(packet.len()).unwrap_or(i32::MAX);
+        if let Some(port) = self.serials.get_mut(index) {
+            let _ = write_serial_frame(port, &packet);
+        }
+        vec![
+            notice(Level::Trace, games::arduino_copy_message(copied)),
+            notice(Level::Trace, games::simled_custom_wrote_message(copied)),
+        ]
+    }
+
     fn haptic_tick(
         &mut self,
         index: usize,
@@ -939,6 +984,7 @@ where
             serial: &mut serial,
             sysfs: None,
             now_ns,
+            led_reply: None,
         },
     )
 }
@@ -978,6 +1024,7 @@ fn open_profile_with(
     let mut simwind = Vec::new();
     let mut serial_haptic = Vec::new();
     let mut simled = Vec::new();
+    let mut custom_leds = Vec::new();
     let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
@@ -1018,6 +1065,7 @@ fn open_profile_with(
         simwind.push(considered.simwind);
         serial_haptic.push(considered.serial_haptic);
         simled.push(considered.simled);
+        custom_leds.push(considered.custom_leds);
         luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
@@ -1056,6 +1104,7 @@ fn open_profile_with(
             simwind,
             serial_haptic,
             simled,
+            custom_leds,
             luas,
         },
         setup_notices,
@@ -1072,6 +1121,7 @@ enum HidAttempt<'a> {
         serial: &'a mut dyn FnMut(&str) -> bool,
         sysfs: Option<&'a mut dyn FnMut(&str) -> i32>,
         now_ns: u64,
+        led_reply: Option<&'a [u8]>,
     },
 }
 
@@ -1103,12 +1153,20 @@ struct Considered {
     simwind: Option<f64>,
     serial_haptic: Option<SerialHaptic>,
     simled: Option<SimLed>,
+    custom_leds: Option<i32>,
 }
 
 enum SerialPort {
     Closed,
-    Captured { path: String, frames: Vec<Vec<u8>> },
-    Live { path: String, port: RealSerial },
+    Captured {
+        path: String,
+        frames: Vec<Vec<u8>>,
+        led_reply: Option<Vec<u8>>,
+    },
+    Live {
+        path: String,
+        port: RealSerial,
+    },
 }
 
 fn consider_entry(
@@ -1131,6 +1189,9 @@ fn consider_entry(
     }
     if serial_haptic_entry(entry) {
         return consider_serial_haptic(entry, slot, id, disable_audio, supports_haptics, attempt);
+    }
+    if simled_custom_entry(entry) {
+        return consider_simled_custom(entry, slot, id, disable_audio, attempt);
     }
     if simled_entry(entry) {
         return consider_simled(entry, slot, id, disable_audio, attempt);
@@ -1243,6 +1304,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -1307,6 +1369,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -1333,6 +1396,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -1359,6 +1423,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -1507,6 +1572,7 @@ fn revburner_attempt(
                 simwind: None,
                 serial_haptic: None,
                 simled: None,
+                custom_leds: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1531,6 +1597,7 @@ fn revburner_attempt(
             simwind: None,
             serial_haptic: None,
             simled: None,
+            custom_leds: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1554,6 +1621,7 @@ fn revburner_attempt(
             simwind: None,
             serial_haptic: None,
             simled: None,
+            custom_leds: None,
         },
     }
 }
@@ -1693,6 +1761,7 @@ fn p1000_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -1829,6 +1898,7 @@ fn simnet_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -1914,6 +1984,7 @@ fn csl_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2297,6 +2368,7 @@ fn gt_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2377,6 +2449,7 @@ fn g29_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2409,6 +2482,7 @@ fn c5_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2441,6 +2515,7 @@ fn c12_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2568,6 +2643,7 @@ fn shiftlights_ready(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2639,6 +2715,7 @@ fn simwind_ready(
         simwind: Some(fanpower),
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2725,6 +2802,7 @@ fn serial_haptic_ready(
         simwind: None,
         serial_haptic: Some(haptic),
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -2801,6 +2879,258 @@ fn haptic_indexes(haptics: &[Option<SerialHaptic>]) -> Vec<usize> {
         .enumerate()
         .filter_map(|(index, haptic)| haptic.as_ref().map(|_| index))
         .collect()
+}
+
+fn simled_custom_entry(entry: &DeviceEntry) -> bool {
+    if entry_kind(entry) != DeviceKind::Serial || !simled_script(entry) {
+        return false;
+    }
+    let kind = entry.get_str(keys::KEY_TYPE).unwrap_or("");
+    names::lookup(names::SERIAL_TYPES, kind) == Some(names::SUBTYPE_SIMLED)
+}
+
+fn consider_simled_custom(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let path = device_port(entry);
+    let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
+    let mut notices = serial_lookup_notices(
+        &path,
+        configured,
+        names::SUBTYPE_SIMLED,
+        games::MSG_SIMLED_CUSTOM_INIT.to_string(),
+    );
+    let baud = serial_baud(configured);
+    let mut port = match open_serial(attempt, &path, baud) {
+        OpenedSerial::Missing => return serial_open_failed(notices),
+        OpenedSerial::Ready(port) => port,
+    };
+    notices.extend(moza_ready_notices(baud));
+    let query = query_simled_count(&mut port);
+    notices.extend(query.notices);
+    let Some(count) = query.count else {
+        return reject_simled_count(&path, notices);
+    };
+    notices.push(notice(Level::Info, games::simled_count_message(count)));
+    load_simled_script(entry, id, notices, port, count, &path)
+}
+
+fn reject_simled_count(path: &str, mut notices: Vec<InitNotice>) -> Considered {
+    notices.push(notice(
+        Level::Info,
+        games::simled_count_message(SIMLED_COUNT_UNSET),
+    ));
+    reject_simled_port(path, notices)
+}
+
+fn reject_simled_port(path: &str, mut notices: Vec<InitNotice>) -> Considered {
+    notices.push(notice(Level::Debug, games::serial_free_message(path)));
+    serial_rejected(notices, games::SERIAL_OPEN_ERROR)
+}
+
+fn load_simled_script(
+    entry: &DeviceEntry,
+    id: i32,
+    mut notices: Vec<InitNotice>,
+    port: SerialPort,
+    count: i32,
+    path: &str,
+) -> Considered {
+    let Some(script) = simled_script_path(entry) else {
+        return reject_simled_port(path, notices);
+    };
+    notices.push(notice(Level::Info, games::MSG_SIMLED_LUA_INIT));
+    match LuaHost::load_file(&script, LuaLedMode::Serial) {
+        Ok(host) => {
+            notices.push(notice(Level::Info, games::MSG_SIMLED_LUA_OK));
+            simled_custom_ready(entry, id, notices, port, count, host)
+        }
+        Err(detail) => {
+            eprintln!("{}", games::lua_load_failed_message(&detail));
+            drop(port);
+            reject_simled_port(path, notices)
+        }
+    }
+}
+
+fn simled_script_path(entry: &DeviceEntry) -> Option<PathBuf> {
+    match config_source(entry) {
+        ConfigSource::File(path) => Some(path),
+        ConfigSource::Unset | ConfigSource::NamedNone => None,
+    }
+}
+
+fn simled_custom_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: SerialPort,
+    count: i32,
+    host: LuaHost,
+) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: port,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: Some(host),
+        gt: false,
+        csl: None,
+        p1000: None,
+        simnet: None,
+        shift_lights: None,
+        simwind: None,
+        serial_haptic: None,
+        simled: None,
+        custom_leds: Some(count),
+    }
+}
+
+struct SimLedQuery {
+    notices: Vec<InitNotice>,
+    count: Option<i32>,
+}
+
+impl SimLedQuery {
+    fn ready(notices: Vec<InitNotice>, count: i32) -> Self {
+        Self {
+            notices,
+            count: Some(count),
+        }
+    }
+
+    fn rejected(notices: Vec<InitNotice>) -> Self {
+        Self {
+            notices,
+            count: None,
+        }
+    }
+}
+
+fn query_simled_count(port: &mut SerialPort) -> SimLedQuery {
+    if matches!(port, SerialPort::Live { .. }) {
+        return query_live_simled(port);
+    }
+    query_captured_simled(port)
+}
+
+fn query_captured_simled(port: &mut SerialPort) -> SimLedQuery {
+    let reply = captured_led_reply(port);
+    let mut notices = Vec::new();
+    for _attempt in 0..serial::SIMLED_QUERY_ATTEMPTS {
+        record_count_attempt(&mut notices);
+        let _ = write_serial_frame(port, &serial::simled_count_query());
+        if let Some(done) = count_from_reply(&reply, &mut notices) {
+            return done;
+        }
+    }
+    SimLedQuery::ready(notices, SIMLED_COUNT_UNSET)
+}
+
+fn query_live_simled(port: &mut SerialPort) -> SimLedQuery {
+    let mut notices = Vec::new();
+    for _attempt in 0..serial::SIMLED_QUERY_ATTEMPTS {
+        record_count_attempt(&mut notices);
+        let _ = write_serial_frame(port, &serial::simled_count_query());
+        if let Some(done) = live_count_step(port, &mut notices) {
+            return done;
+        }
+    }
+    SimLedQuery::ready(notices, SIMLED_COUNT_UNSET)
+}
+
+fn live_count_step(port: &mut SerialPort, notices: &mut Vec<InitNotice>) -> Option<SimLedQuery> {
+    match read_live_reply(port) {
+        LiveReply::Waiting => None,
+        LiveReply::Failed => {
+            notices.push(notice(
+                Level::Error,
+                games::simled_count_wait_message(SIMLED_INPUT_WAIT_ERROR),
+            ));
+            Some(SimLedQuery::rejected(std::mem::take(notices)))
+        }
+        LiveReply::Bytes(bytes) => count_from_reply(&bytes, notices),
+    }
+}
+
+fn count_from_reply(reply: &[u8], notices: &mut Vec<InitNotice>) -> Option<SimLedQuery> {
+    match serial::parse_simled_count(reply) {
+        serial::SimLedCount::Waiting => None,
+        serial::SimLedCount::Invalid => {
+            notices.push(notice(
+                Level::Error,
+                games::simled_count_invalid_message(&serial::simled_count_text(reply)),
+            ));
+            Some(SimLedQuery::rejected(std::mem::take(notices)))
+        }
+        serial::SimLedCount::Count(count) => {
+            Some(SimLedQuery::ready(std::mem::take(notices), count))
+        }
+    }
+}
+
+fn record_count_attempt(notices: &mut Vec<InitNotice>) {
+    notices.push(notice(Level::Info, games::MSG_SIMLED_COUNT_ATTEMPT));
+    notices.push(notice(Level::Debug, games::MSG_SIMLED_COUNT_SEND));
+}
+
+fn captured_led_reply(port: &SerialPort) -> Vec<u8> {
+    match port {
+        SerialPort::Captured { led_reply, .. } => led_reply
+            .clone()
+            .unwrap_or_else(|| serial::SIMLED_COUNT_REPLY.to_vec()),
+        SerialPort::Live { .. } | SerialPort::Closed => Vec::new(),
+    }
+}
+
+enum LiveReply {
+    Waiting,
+    Failed,
+    Bytes(Vec<u8>),
+}
+
+fn read_live_reply(port: &mut SerialPort) -> LiveReply {
+    let SerialPort::Live { port, .. } = port else {
+        return LiveReply::Failed;
+    };
+    read_count_bytes(port)
+}
+
+fn read_count_bytes(port: &mut RealSerial) -> LiveReply {
+    let mut buf = vec![0; serial::SIMLED_READ_CAP];
+    let first = match port.read_with_timeout(&mut buf, u64::from(serial::SIMLED_QUERY_WAIT_MS)) {
+        Ok(read) => read,
+        Err(_) => return LiveReply::Failed,
+    };
+    if first == 0 {
+        return LiveReply::Waiting;
+    }
+    let mut got = buf[..first].to_vec();
+    if got.len() >= serial::SIMLED_READ_CAP {
+        return LiveReply::Bytes(got);
+    }
+    let mut more = vec![0; serial::SIMLED_READ_CAP - got.len()];
+    let extra = match port.read_with_timeout(&mut more, serial::SIMLED_READ_TIMEOUT_MS) {
+        Ok(read) => read,
+        Err(_) => return LiveReply::Failed,
+    };
+    got.extend_from_slice(&more[..extra]);
+    LiveReply::Bytes(got)
 }
 
 fn simled_entry(entry: &DeviceEntry) -> bool {
@@ -2892,6 +3222,7 @@ fn simled_ready(
         simwind: None,
         serial_haptic: None,
         simled: Some(simled),
+        custom_leds: None,
     }
 }
 
@@ -2990,11 +3321,14 @@ fn open_serial(attempt: &mut HidAttempt<'_>, path: &str, baud: u32) -> OpenedSer
             }),
             Err(_) => OpenedSerial::Missing,
         },
-        HidAttempt::Probe { serial, .. } => {
+        HidAttempt::Probe {
+            serial, led_reply, ..
+        } => {
             if serial(path) {
                 return OpenedSerial::Ready(SerialPort::Captured {
                     path: path.to_string(),
                     frames: Vec::new(),
+                    led_reply: led_reply.map(|bytes| bytes.to_vec()),
                 });
             }
             OpenedSerial::Missing
@@ -3048,6 +3382,7 @@ fn finish_moza(
         simwind: None,
         serial_haptic: None,
         simled: None,
+        custom_leds: None,
     }
 }
 
@@ -3775,6 +4110,7 @@ mod tests {
                 },
                 sysfs: None,
                 now_ns: PROBE_OPEN_NS,
+                led_reply: None,
             },
         );
         assert!(!seen);
@@ -4134,25 +4470,160 @@ mod tests {
     }
 
     #[test]
-    fn simled_with_a_script_stays_closed() {
+    fn custom_simled_missing_port_is_not_scheduled() {
         const PORT: &str = "/dev/ttySIMLED-TEST";
-        const SCRIPT: &str = "/tmp/simled.lua";
-        let mut config = simled_config(PORT, None);
-        config.profiles[0].devices[0].set_str(keys::KEY_CONFIG, SCRIPT);
-        let loaded = open_profile_ports(
+        let config = custom_simled_config(PORT, CUSTOM_SCRIPT_NAME);
+        let mut seen = String::new();
+        let missing = open_simled(
             &config,
-            0,
-            false,
-            PLAY_USES_PULSES,
-            PROBE_OPEN_NS,
-            |_vendor, _product| false,
-            |_path| true,
+            |path| {
+                seen = path.to_string();
+                false
+            },
+            None,
         );
-        assert!(loaded.devices.is_empty());
+        assert_eq!(seen, PORT);
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_SIMLED_CUSTOM_INIT));
+        assert!(notice_has(&missing.notices, games::MSG_SERIAL_OPEN_ERROR));
+        assert!(notice_absent(
+            &missing.notices,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_SIMLED_INIT));
+    }
+
+    #[test]
+    fn custom_simled_writes_the_script_packet_every_tick() {
+        const PORT: &str = "/dev/ttySIMLED-TEST";
+        const REPEATED_TICKS: usize = 2;
+        const CUSTOM_REPLY_LEDS: i32 = 8;
+        const GREEN_CHANNEL: usize = 1;
+        const LED_ON: u8 = 0xff;
+        let _script = custom_script(CUSTOM_SCRIPT_NAME, CUSTOM_SIMLED_LUA);
+        let config = custom_simled_config(PORT, CUSTOM_SCRIPT_NAME);
+        let loaded = open_simled(&config, |path| path == PORT, None);
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(custom_simled_notice_order(
+            &loaded.notices,
+            CUSTOM_REPLY_LEDS
+        ));
         assert!(notice_absent(&loaded.notices, games::MSG_SIMLED_INIT));
+        let query = serial::simled_count_query();
+        assert_eq!(
+            loaded
+                .devices
+                .captured_serial(0)
+                .map(|frames| frames.to_vec()),
+            Some(vec![query.clone()])
+        );
+        let expected = custom_simled_packet(CUSTOM_REPLY_LEDS);
+        assert_eq!(expected.leds[GREEN_CHANNEL], LED_ON);
+        let copied = i32::try_from(expected.packet.len()).unwrap_or(i32::MAX);
+        let mut devices = loaded.devices;
+        let frame = shift_frame(0, 0);
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_has(&tick, &games::arduino_copy_message(copied)));
+        assert!(notice_has(
+            &tick,
+            &games::simled_custom_wrote_message(copied)
+        ));
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let frames = devices.captured_serial(0).expect("captured").to_vec();
+        assert_eq!(frames.len(), 1 + REPEATED_TICKS);
+        assert_eq!(frames[0], query);
+        assert!(frames[1..].iter().all(|frame| frame == &expected.packet));
+        let released = devices.release(PROBE_OPEN_NS);
+        assert!(notice_has(&released, &games::serial_free_message(PORT)));
+        assert!(notice_absent(
+            &released,
+            &games::arduino_copy_message(copied)
+        ));
+        assert!(notice_absent(
+            &released,
+            &games::simled_custom_wrote_message(copied)
+        ));
+        assert!(devices.captured_serial(0).is_none());
+    }
+
+    #[test]
+    fn custom_simled_rejects_an_invalid_count() {
+        const PORT: &str = "/dev/ttySIMLED-TEST";
+        const INVALID_LED_REPLY: &[u8] = b"nope";
+        let _script = custom_script(CUSTOM_INVALID_SCRIPT_NAME, CUSTOM_SIMLED_LUA);
+        let config = custom_simled_config(PORT, CUSTOM_INVALID_SCRIPT_NAME);
+        let loaded = open_simled(&config, |_path| true, Some(INVALID_LED_REPLY));
+        assert!(loaded.devices.is_empty());
         assert!(notice_has(
             &loaded.notices,
-            &games::could_not_initialize_message(CLASS_SERIAL)
+            &games::simled_count_invalid_message("nope")
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::simled_count_message(SIMLED_COUNT_UNSET)
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_init_error_message(games::SERIAL_OPEN_ERROR)
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_free_message(PORT)
+        ));
+        assert!(notice_absent(&loaded.notices, games::MSG_SIMLED_LUA_OK));
+    }
+
+    #[test]
+    fn custom_simled_with_no_count_still_loads_lua() {
+        const PORT: &str = "/dev/ttySIMLED-TEST";
+        const EMPTY_LED_REPLY: &[u8] = b"";
+        const REPEATED_TICKS: usize = 2;
+        let _script = custom_script(CUSTOM_EMPTY_SCRIPT_NAME, CUSTOM_SIMLED_LUA);
+        let config = custom_simled_config(PORT, CUSTOM_EMPTY_SCRIPT_NAME);
+        let loaded = open_simled(&config, |path| path == PORT, Some(EMPTY_LED_REPLY));
+        assert_eq!(loaded.devices.len(), 1);
+        assert_eq!(
+            notice_count(&loaded.notices, games::MSG_SIMLED_COUNT_ATTEMPT),
+            serial::SIMLED_QUERY_ATTEMPTS
+        );
+        assert!(notice_has(
+            &loaded.notices,
+            &games::simled_count_message(SIMLED_COUNT_UNSET)
+        ));
+        assert!(notice_has(&loaded.notices, games::MSG_SIMLED_LUA_OK));
+        let query = serial::simled_count_query();
+        let mut devices = loaded.devices;
+        let frame = shift_frame(0, 0);
+        for _tick in 0..REPEATED_TICKS {
+            let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+            assert!(tick.is_empty());
+        }
+        let frames = devices.captured_serial(0).expect("captured");
+        assert_eq!(frames.len(), serial::SIMLED_QUERY_ATTEMPTS);
+        assert!(frames.iter().all(|frame| frame == &query));
+    }
+
+    #[test]
+    fn custom_simled_missing_script_is_not_scheduled() {
+        const PORT: &str = "/dev/ttySIMLED-TEST";
+        let path = std::env::temp_dir().join(CUSTOM_MISSING_SCRIPT_NAME);
+        let _ = std::fs::remove_file(&path);
+        let config = custom_simled_config(PORT, CUSTOM_MISSING_SCRIPT_NAME);
+        let loaded = open_simled(&config, |_path| true, None);
+        assert!(loaded.devices.is_empty());
+        assert!(notice_has(
+            &loaded.notices,
+            &games::simled_count_message(CUSTOM_REPLY_LEDS)
+        ));
+        assert!(notice_has(&loaded.notices, games::MSG_SIMLED_LUA_INIT));
+        assert!(notice_absent(&loaded.notices, games::MSG_SIMLED_LUA_OK));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_init_error_message(games::SERIAL_OPEN_ERROR)
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_free_message(PORT)
         ));
     }
 
@@ -4194,6 +4665,99 @@ mod tests {
             }],
             extra: Vec::new(),
         }
+    }
+
+    const CUSTOM_SIMLED_LUA: &str = "led_clear_all()\nset_led_to_color(1, GREEN)\n";
+    const CUSTOM_SCRIPT_NAME: &str = "cargopit-simled-custom.lua";
+    const CUSTOM_EMPTY_SCRIPT_NAME: &str = "cargopit-simled-custom-empty.lua";
+    const CUSTOM_INVALID_SCRIPT_NAME: &str = "cargopit-simled-custom-invalid.lua";
+    const CUSTOM_MISSING_SCRIPT_NAME: &str = "cargopit-simled-missing.lua";
+    const CUSTOM_REPLY_LEDS: i32 = 8;
+
+    struct CustomSimLedPaint {
+        leds: Vec<u8>,
+        packet: Vec<u8>,
+    }
+
+    fn custom_script(name: &str, source: &str) -> TempScript {
+        TempScript::write(&std::env::temp_dir().join(name), source)
+    }
+
+    fn custom_simled_config(port: &str, name: &str) -> CargopitConfig {
+        let mut config = simled_config(port, None);
+        let path = std::env::temp_dir().join(name);
+        config.profiles[0].devices[0].set_str(keys::KEY_CONFIG, path.display().to_string());
+        config
+    }
+
+    fn custom_simled_packet(total: i32) -> CustomSimLedPaint {
+        let mut painter = LuaHost::load(CUSTOM_SIMLED_LUA, LuaLedMode::Serial).expect("script");
+        let mut sample = Telemetry::new();
+        let tick = painter
+            .call(&mut sample, i64::from(total), &SystemClock::new())
+            .expect("paint");
+        let count = usize::try_from(total).unwrap_or(0);
+        CustomSimLedPaint {
+            leds: tick.leds.clone(),
+            packet: serial::simled_packet(count, &tick.leds),
+        }
+    }
+
+    fn open_simled(
+        config: &CargopitConfig,
+        mut serial: impl FnMut(&str) -> bool,
+        led_reply: Option<&[u8]>,
+    ) -> ProfileLoad {
+        open_profile_with(
+            config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            ASSUME_SIM_SUPPORTS_HAPTICS,
+            None,
+            &mut HidAttempt::Probe {
+                hid: &mut |_vendor, _product| false,
+                serial: &mut serial,
+                sysfs: None,
+                now_ns: PROBE_OPEN_NS,
+                led_reply,
+            },
+        )
+    }
+
+    fn custom_simled_notice_order(notices: &[InitNotice], count: i32) -> bool {
+        let messages = [
+            games::serial_subtype_message(names::SUBTYPE_SIMLED),
+            games::MSG_SIMLED_CUSTOM_INIT.to_string(),
+            games::MSG_SERIAL_START.to_string(),
+            games::MSG_SERIAL_PORT_OPENED.to_string(),
+            games::MSG_SIMLED_COUNT_ATTEMPT.to_string(),
+            games::simled_count_message(count),
+            games::MSG_SIMLED_LUA_INIT.to_string(),
+            games::MSG_SIMLED_LUA_OK.to_string(),
+        ];
+        notice_sequence(notices, &messages)
+    }
+
+    fn notice_sequence(notices: &[InitNotice], messages: &[String]) -> bool {
+        let mut cursor = 0;
+        for message in messages {
+            let Some(found) = notices[cursor..]
+                .iter()
+                .position(|notice| notice.message == *message)
+            else {
+                return false;
+            };
+            cursor = cursor.saturating_add(found).saturating_add(1);
+        }
+        true
+    }
+
+    fn notice_count(notices: &[InitNotice], message: &str) -> usize {
+        notices
+            .iter()
+            .filter(|notice| notice.message == message)
+            .count()
     }
 
     fn simwind_config(path: &str, baud: i64) -> CargopitConfig {
@@ -5327,6 +5891,7 @@ mod tests {
                 serial: &mut |_path| false,
                 sysfs: None,
                 now_ns: PROBE_OPEN_NS,
+                led_reply: None,
             },
         )
     }
@@ -5369,6 +5934,7 @@ mod tests {
                 serial: &mut |_path| false,
                 sysfs: Some(&mut sysfs),
                 now_ns: PROBE_OPEN_NS,
+                led_reply: None,
             },
         )
     }

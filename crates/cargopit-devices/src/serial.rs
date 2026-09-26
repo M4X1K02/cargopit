@@ -18,7 +18,7 @@ const BAUD_FIRST_OPEN: i32 = 9_600;
 const BAUD_R9_FLOOR: i32 = 115_200;
 const SHIFT_LIGHTS: i32 = 8;
 const SIMLED_COUNT: i32 = 8;
-const LED_FIRST: i32 = 1;
+pub const LED_FIRST: i32 = 1;
 const SIMLED_END_ALL: i32 = 0;
 const FAN_POWER: f64 = 0.5;
 const AMP_FACTOR: f64 = 1.0;
@@ -27,7 +27,10 @@ const FAN_BYTE_SCALE: f64 = 255.0;
 const EFFECT_BYTE_SCALE: f64 = 255.0;
 const PLAY_LIMIT: f64 = 1.0;
 const ARDUINO_TIMEOUT_MS: u32 = 9_000;
-const LED_QUERY_WAIT_MS: u32 = 5_000;
+pub const SIMLED_QUERY_WAIT_MS: u32 = 5_000;
+pub const SIMLED_QUERY_ATTEMPTS: usize = 4;
+pub const SIMLED_READ_TIMEOUT_MS: u64 = 10;
+pub const SIMLED_READ_CAP: usize = 255;
 const HAPTIC_ZERO_TIMEOUT_MS: u32 = 9_000;
 const MOZA_TIMEOUT_MS: u32 = 1_000;
 const REDLINE_MARGIN: f64 = 0.05;
@@ -40,7 +43,17 @@ const PACKET_META: usize = HEADER_MARKS + 5 + LED_PACKET_TAIL.len();
 const RGB_CHANNELS: usize = 3;
 const GREEN_CHANNEL: usize = 1;
 const RED_CHANNEL: usize = 0;
-const SIMLED_REPLY: &[u8] = b"8\r";
+pub const SIMLED_COUNT_REPLY: &[u8] = b"8\r";
+const C_SPACE: u8 = b' ';
+const C_TAB: u8 = b'\t';
+const C_LF: u8 = b'\n';
+const C_CR: u8 = b'\r';
+const C_VT: u8 = 0x0b;
+const C_FF: u8 = 0x0c;
+const ASCII_PLUS: u8 = b'+';
+const ASCII_MINUS: u8 = b'-';
+const ASCII_DIGIT_ZERO: u8 = b'0';
+const DECIMAL_RADIX: u64 = 10;
 const HAPTIC_HZ: u32 = 40;
 const HAPTIC_AMP: u32 = 100;
 const HAPTIC_THRESHOLD: f64 = 0.2;
@@ -281,8 +294,8 @@ impl Log {
             return Vec::new();
         }
         self.ports.borrow_mut()[id].as_mut().unwrap().reply_ready = false;
-        self.bytes("sp_blocking_read", SIMLED_REPLY);
-        SIMLED_REPLY.to_vec()
+        self.bytes("sp_blocking_read", SIMLED_COUNT_REPLY);
+        SIMLED_COUNT_REPLY.to_vec()
     }
 
     fn close_port(&self, id: usize) {
@@ -611,6 +624,112 @@ pub fn simled_blank(total: i32) -> Option<Vec<u8>> {
     Some(led_packet(count, &[]))
 }
 
+pub fn simled_packet(total: usize, rgb: &[u8]) -> Vec<u8> {
+    led_packet(total, rgb)
+}
+
+pub fn simled_count_query() -> Vec<u8> {
+    let mut query = vec![MARK_BYTE; HEADER_MARKS];
+    query.extend_from_slice(LEDSC_TAG);
+    query
+}
+
+pub enum SimLedCount {
+    Count(i32),
+    Invalid,
+    Waiting,
+}
+
+pub fn parse_simled_count(bytes: &[u8]) -> SimLedCount {
+    if bytes.is_empty() {
+        return SimLedCount::Waiting;
+    }
+    let Some(parsed) = parse_strtol(c_string(bytes)) else {
+        return SimLedCount::Invalid;
+    };
+    finish_simled_count(parsed)
+}
+
+pub fn simled_count_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(c_string(bytes)).into_owned()
+}
+
+fn c_string(bytes: &[u8]) -> &[u8] {
+    match bytes.iter().position(|byte| *byte == 0) {
+        Some(end) => &bytes[..end],
+        None => bytes,
+    }
+}
+
+struct ParsedCount<'a> {
+    negative: bool,
+    value: u64,
+    rest: &'a [u8],
+}
+
+fn parse_strtol(text: &[u8]) -> Option<ParsedCount<'_>> {
+    let (negative, digits) = split_sign(skip_c_space(text));
+    let (value, rest) = take_decimal(digits)?;
+    Some(ParsedCount {
+        negative,
+        value,
+        rest,
+    })
+}
+
+fn finish_simled_count(parsed: ParsedCount<'_>) -> SimLedCount {
+    let rest = skip_crlf(parsed.rest);
+    if !rest.is_empty() || (parsed.negative && parsed.value != 0) {
+        return SimLedCount::Invalid;
+    }
+    let Ok(count) = i32::try_from(parsed.value) else {
+        return SimLedCount::Invalid;
+    };
+    SimLedCount::Count(count)
+}
+
+fn split_sign(bytes: &[u8]) -> (bool, &[u8]) {
+    match bytes.first().copied() {
+        Some(ASCII_MINUS) => (true, &bytes[1..]),
+        Some(ASCII_PLUS) => (false, &bytes[1..]),
+        _ => (false, bytes),
+    }
+}
+
+fn take_decimal(bytes: &[u8]) -> Option<(u64, &[u8])> {
+    if bytes.first().is_none_or(|byte| !byte.is_ascii_digit()) {
+        return None;
+    }
+    let mut value = 0u64;
+    let mut index = 0;
+    while index < bytes.len() && bytes[index].is_ascii_digit() {
+        let digit = u64::from(bytes[index] - ASCII_DIGIT_ZERO);
+        value = value.checked_mul(DECIMAL_RADIX)?.checked_add(digit)?;
+        index += 1;
+    }
+    Some((value, &bytes[index..]))
+}
+
+fn skip_c_space(bytes: &[u8]) -> &[u8] {
+    let end = bytes
+        .iter()
+        .position(|byte| !is_c_space(*byte))
+        .unwrap_or(bytes.len());
+    &bytes[end..]
+}
+
+fn skip_crlf(bytes: &[u8]) -> &[u8] {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte != C_CR && *byte != C_LF)
+        .unwrap_or(bytes.len());
+    &bytes[end..]
+}
+
+fn is_c_space(byte: u8) -> bool {
+    matches!(byte, C_SPACE | C_TAB | C_LF | C_CR | C_VT | C_FF)
+}
+
 struct SimLedSpan {
     total: i32,
     start: i32,
@@ -684,14 +803,13 @@ fn run_simled(log: &Log, frames: &[Telemetry]) {
 }
 
 fn query_led_count(log: &Log, id: usize) -> Option<i32> {
-    let mut query = vec![MARK_BYTE; HEADER_MARKS];
-    query.extend_from_slice(LEDSC_TAG);
-    log.wait_port(LED_QUERY_WAIT_MS);
-    log.write_port(id, &query);
-    log.wait_port(LED_QUERY_WAIT_MS);
+    log.wait_port(SIMLED_QUERY_WAIT_MS);
+    log.write_port(id, &simled_count_query());
+    log.wait_port(SIMLED_QUERY_WAIT_MS);
     let reply = log.read_port(id);
-    let text = std::str::from_utf8(&reply).ok()?.trim();
-    let count: i32 = text.parse().ok()?;
+    let SimLedCount::Count(count) = parse_simled_count(&reply) else {
+        return None;
+    };
     if count < LED_FIRST {
         return None;
     }
@@ -1665,5 +1783,46 @@ mod tests {
         let dark = simled_report(0, 8_000, TOTAL, LED_FIRST, TOTAL).expect("dark");
         assert_eq!(dark.lit, 0);
         assert_eq!(blank, dark.bytes);
+    }
+
+    #[test]
+    fn simled_count_query_is_the_ledsc_packet() {
+        let query = simled_count_query();
+        assert_eq!(&query[..HEADER_MARKS], &[MARK_BYTE; HEADER_MARKS]);
+        assert_eq!(&query[HEADER_MARKS..], LEDSC_TAG);
+    }
+
+    #[test]
+    fn simled_count_parser_matches_strtol() {
+        const EIGHT: i32 = 8;
+        const ZERO: i32 = 0;
+        const INT_MAX_TEXT: &[u8] = b"2147483647";
+        const PAST_INT_MAX: &[u8] = b"2147483648";
+        assert!(matches!(
+            parse_simled_count(SIMLED_COUNT_REPLY),
+            SimLedCount::Count(EIGHT)
+        ));
+        assert!(matches!(parse_simled_count(b"0"), SimLedCount::Count(ZERO)));
+        assert!(matches!(
+            parse_simled_count(b" 8\n"),
+            SimLedCount::Count(EIGHT)
+        ));
+        assert!(matches!(
+            parse_simled_count(b"8\0junk"),
+            SimLedCount::Count(EIGHT)
+        ));
+        assert!(matches!(
+            parse_simled_count(INT_MAX_TEXT),
+            SimLedCount::Count(i32::MAX)
+        ));
+        assert!(matches!(parse_simled_count(b""), SimLedCount::Waiting));
+        assert!(matches!(parse_simled_count(b"nope"), SimLedCount::Invalid));
+        assert!(matches!(parse_simled_count(b"-1"), SimLedCount::Invalid));
+        assert!(matches!(parse_simled_count(b"8x"), SimLedCount::Invalid));
+        assert!(matches!(
+            parse_simled_count(PAST_INT_MAX),
+            SimLedCount::Invalid
+        ));
+        assert_eq!(simled_count_text(b"nope"), "nope");
     }
 }
