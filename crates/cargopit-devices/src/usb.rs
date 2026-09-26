@@ -103,10 +103,33 @@ const GT_NEO_COLOR_GREEN: usize = 1;
 const GT_NEO_COLOR_BLUE: usize = 2;
 const LED_STRIDE: usize = 4;
 const RGB_CHANNELS: usize = 3;
-const P1000_LEN: usize = 49;
-const P1000_VID: u16 = 0x0483;
-const P1000_PID: u16 = 0x0525;
-const P1000_MARK: u8 = 241;
+pub const P1000_LEN: usize = 49;
+pub const P1000_VID: u16 = 0x0483;
+pub const P1000_PID: u16 = 0x0525;
+pub const P1000_MARK: u8 = 241;
+pub const P1000_BYTE_MARK: usize = 0;
+pub const P1000_BYTE_CMD: usize = 1;
+pub const P1000_BYTE_KIND: usize = 2;
+pub const P1000_BYTE_FLAG0: usize = 3;
+pub const P1000_BYTE_FLAG1: usize = 4;
+pub const P1000_BYTE_FLAG2: usize = 5;
+pub const P1000_BYTE_INIT0: usize = 6;
+pub const P1000_BYTE_INIT1: usize = 7;
+pub const P1000_CLEARED: u8 = 0;
+pub const P1000_CMD_IDLE: u8 = P1000_CLEARED;
+pub const P1000_CMD_ACTIVE: u8 = 0xec;
+pub const P1000_CMD_INIT: u8 = 0xf1;
+pub const P1000_KIND_LOCK: u8 = 0x01;
+pub const P1000_KIND_SLIP: u8 = 0x02;
+pub const P1000_FLAG0: u8 = 0x01;
+pub const P1000_FLAG1: u8 = 0x0a;
+pub const P1000_FLAG2: u8 = 0xff;
+pub const P1000_INIT_MODE: u8 = 0x17;
+pub const P1000_INIT_A: u8 = 0x01;
+pub const P1000_INIT_B: u8 = 0x02;
+pub const P1000_TRACE_LEN: usize = 7;
+pub const P1000_REPORT_OK: i32 = 0;
+pub const P1000_REPORT_FAILED: i32 = 1;
 const SIMNET_LEN: usize = 64;
 const SIMNET_VID: u16 = 0xcafe;
 const SIMNET_PID: u16 = 0xa301;
@@ -664,42 +687,70 @@ fn run_csl(log: &Log, frames: &[Telemetry]) {
     log.op("sysfs_close", CSL_PATH);
 }
 
-fn p1000_report(mark: u8, kind: u8, active: bool) -> [u8; P1000_LEN] {
+pub fn p1000_init_report() -> [u8; P1000_LEN] {
     let mut bytes = [0; P1000_LEN];
-    bytes[0] = P1000_MARK;
-    bytes[1] = mark;
-    bytes[2] = kind;
-    if active {
-        bytes[3] = 0x01;
-        bytes[4] = 0x0a;
-        bytes[5] = 0xff;
-    }
+    bytes[P1000_BYTE_MARK] = P1000_MARK;
+    bytes[P1000_BYTE_CMD] = P1000_CMD_INIT;
+    bytes[P1000_BYTE_KIND] = P1000_INIT_MODE;
+    bytes[P1000_BYTE_INIT0] = P1000_INIT_A;
+    bytes[P1000_BYTE_INIT1] = P1000_INIT_B;
     bytes
+}
+
+pub fn p1000_active_report(kind: u8) -> [u8; P1000_LEN] {
+    let mut bytes = [0; P1000_LEN];
+    bytes[P1000_BYTE_MARK] = P1000_MARK;
+    bytes[P1000_BYTE_CMD] = P1000_CMD_ACTIVE;
+    bytes[P1000_BYTE_KIND] = kind;
+    bytes[P1000_BYTE_FLAG0] = P1000_FLAG0;
+    bytes[P1000_BYTE_FLAG1] = P1000_FLAG1;
+    bytes[P1000_BYTE_FLAG2] = P1000_FLAG2;
+    bytes
+}
+
+pub fn p1000_idle_report(kind: u8) -> [u8; P1000_LEN] {
+    let mut bytes = [0; P1000_LEN];
+    bytes[P1000_BYTE_MARK] = P1000_MARK;
+    bytes[P1000_BYTE_CMD] = P1000_CMD_IDLE;
+    bytes[P1000_BYTE_KIND] = kind;
+    bytes
+}
+
+pub fn p1000_reports(effect: VibrationEffect, play: f64) -> Vec<[u8; P1000_LEN]> {
+    if play <= 0.0 {
+        return vec![
+            p1000_idle_report(P1000_KIND_LOCK),
+            p1000_idle_report(P1000_KIND_SLIP),
+        ];
+    }
+    match effect {
+        VibrationEffect::TyreSlip => vec![p1000_active_report(P1000_KIND_SLIP)],
+        VibrationEffect::TyreLock => vec![p1000_active_report(P1000_KIND_LOCK)],
+        VibrationEffect::AbsBrakes => vec![
+            p1000_active_report(P1000_KIND_SLIP),
+            p1000_active_report(P1000_KIND_LOCK),
+        ],
+        VibrationEffect::EngineRpm | VibrationEffect::GearShift | VibrationEffect::Suspension => {
+            Vec::new()
+        }
+    }
 }
 
 fn run_p1000(log: &Log, frames: &[Telemetry]) {
     let id = log.hid_open(P1000_VID, P1000_PID);
-    let mut init = [0; P1000_LEN];
-    init[0] = P1000_MARK;
-    init[1] = 0xf1;
-    init[2] = 0x17;
-    init[6] = 0x01;
-    init[7] = 0x02;
-    log.hid_feature(id, &init);
+    log.hid_feature(id, &p1000_init_report());
     let mut state = 0.0;
     let mut effect = slip_effect();
     let trace = Trace { log };
     each_frame(log, frames, |log, frame| {
         let play = effect.play_with_clock(frame, &trace);
-        if play != state {
-            if play > 0.0 {
-                log.hid_feature(id, &p1000_report(0xec, 0x02, true));
-            } else {
-                log.hid_feature(id, &p1000_report(0, 0x01, false));
-                log.hid_feature(id, &p1000_report(0, 0x02, false));
-            }
-            state = play;
+        if play == state {
+            return;
         }
+        for report in p1000_reports(VibrationEffect::TyreSlip, play) {
+            log.hid_feature(id, &report);
+        }
+        state = play;
     });
     log.hid_close(id);
 }
@@ -863,5 +914,35 @@ mod tests {
             csl_rumble_text(VibrationEffect::TyreSlip, PLAYING),
             format!("{CSL_RUMBLE_SLIP}\n")
         );
+    }
+
+    #[test]
+    fn p1000_reports_follow_the_effect() {
+        const PLAYING: f64 = 1.0;
+        const IDLE: f64 = 0.0;
+        let init = p1000_init_report();
+        assert_eq!(init[P1000_BYTE_MARK], P1000_MARK);
+        assert_eq!(init[P1000_BYTE_CMD], P1000_CMD_INIT);
+        assert_eq!(init[P1000_BYTE_KIND], P1000_INIT_MODE);
+        assert_eq!(init[P1000_BYTE_INIT0], P1000_INIT_A);
+        assert_eq!(init[P1000_BYTE_INIT1], P1000_INIT_B);
+        let slip = p1000_reports(VibrationEffect::TyreSlip, PLAYING);
+        assert_eq!(slip.len(), 1);
+        assert_eq!(slip[0][P1000_BYTE_CMD], P1000_CMD_ACTIVE);
+        assert_eq!(slip[0][P1000_BYTE_KIND], P1000_KIND_SLIP);
+        assert_eq!(slip[0][P1000_BYTE_FLAG2], P1000_FLAG2);
+        let lock = p1000_reports(VibrationEffect::TyreLock, PLAYING);
+        assert_eq!(lock[0][P1000_BYTE_KIND], P1000_KIND_LOCK);
+        let abs = p1000_reports(VibrationEffect::AbsBrakes, PLAYING);
+        assert_eq!(abs.len(), 2);
+        assert_eq!(abs[0][P1000_BYTE_KIND], P1000_KIND_SLIP);
+        assert_eq!(abs[1][P1000_BYTE_KIND], P1000_KIND_LOCK);
+        let idle = p1000_reports(VibrationEffect::TyreSlip, IDLE);
+        assert_eq!(idle.len(), 2);
+        assert_eq!(idle[0][P1000_BYTE_CMD], P1000_CMD_IDLE);
+        assert_eq!(idle[0][P1000_BYTE_KIND], P1000_KIND_LOCK);
+        assert_eq!(idle[1][P1000_BYTE_KIND], P1000_KIND_SLIP);
+        assert_eq!(idle[0][P1000_BYTE_FLAG0], P1000_CLEARED);
+        assert!(p1000_reports(VibrationEffect::Suspension, PLAYING).is_empty());
     }
 }
