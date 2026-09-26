@@ -447,6 +447,7 @@ pub const MSG_SERIAL_OPENING: &str = "opening physical serial device...";
 pub const MSG_SERIAL_OPEN_ERROR: &str = "Error opening serial port";
 pub const MSG_SERIAL_PORT_OPENED: &str = "Opening port";
 pub const MSG_SERIAL_SETUP_OK: &str = "Successfully setup cargopit serial device...";
+pub const MSG_SERIAL_NO_SLOTS: &str = "No serial device slots are available";
 pub const MSG_MOZA_ARM_FAILED: &str = "Moza R9 telemetry arm failed";
 pub const MSG_MOZA_ARMED: &str = "Moza R9 telemetry mode armed";
 pub const MSG_MOZA_RPM_FAILED: &str = "Moza R9 RPM bitmask write failed";
@@ -468,6 +469,10 @@ pub fn serial_init_port_message(path: &str, baud: i64) -> String {
 
 pub fn serial_looking_message(path: &str) -> String {
     format!("looking to open physical serialdevice {path}")
+}
+
+pub fn serial_found_message(path: &str) -> String {
+    format!("found exisiting handle to serial device {path}")
 }
 
 pub fn serial_looking_for_port_message(path: &str) -> String {
@@ -1222,6 +1227,11 @@ mod tests {
         assert_eq!(
             MSG_SERIAL_SETUP_OK,
             "Successfully setup cargopit serial device..."
+        );
+        assert_eq!(MSG_SERIAL_NO_SLOTS, "No serial device slots are available");
+        assert_eq!(
+            serial_found_message("/dev/ttyACM0"),
+            "found exisiting handle to serial device /dev/ttyACM0"
         );
         assert_eq!(
             moza_opened_message("/dev/ttyACM0"),
