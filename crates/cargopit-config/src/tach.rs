@@ -2,6 +2,9 @@
 
 use crate::keys;
 
+pub const ERR_TACH_XML_INVALID: &str = "invalid tachometer xml";
+pub const ERR_TACH_XML_EMPTY: &str = "tachometer xml contains no settings";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TachPoint {
     pub rpm: u32,
@@ -16,13 +19,13 @@ struct XmlElem {
 }
 
 pub fn parse_tach_xml(src: &str) -> Result<Vec<TachPoint>, &'static str> {
-    let root = parse_elements(src).map_err(|_| "invalid tachometer xml")?;
+    let root = parse_elements(src).map_err(|_| ERR_TACH_XML_INVALID)?;
     let mut points = Vec::new();
     for node in &root {
         collect_settings(node, &mut points);
     }
     if points.is_empty() {
-        return Err("tachometer xml contains no settings");
+        return Err(ERR_TACH_XML_EMPTY);
     }
     Ok(points)
 }

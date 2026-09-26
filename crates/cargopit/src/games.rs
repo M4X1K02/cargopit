@@ -266,6 +266,47 @@ pub fn initialized_devices_message(count: i32) -> String {
     format!("initialized {count} devices")
 }
 
+pub const MSG_TACH_CONFIG_NONE: &str = "config set to none";
+pub const MSG_TACH_CONFIG_REQUIRED: &str = "Tachometer must have a device specific config file!";
+pub const MSG_TACH_XML_INVALID: &str = "Invalid rev burner xml";
+pub const MSG_TACH_XML_EMPTY: &str = "Rev burner XML contains no settings";
+pub const MSG_TACH_GRANULARITY_INVALID: &str =
+    "No or invalid valid set for tachometer granularity, setting to 1";
+pub const MSG_TACH_GETTING_PULSES: &str = "Getting pulses for current tachometer revs";
+pub const MSG_REVBURNER_NO_HANDLE: &str = "no handle";
+
+pub fn tach_config_load_message(path: &str) -> String {
+    format!("will try to load config file at {path}")
+}
+
+pub fn tach_xml_read_message(path: &str) -> String {
+    format!("Could not read revburner xml config file {path}")
+}
+
+pub fn tach_granularity_message(granularity: i64) -> String {
+    format!("Tachometer granularity set to {granularity}")
+}
+
+pub fn tach_settings_size_message(size: i32) -> String {
+    format!("Tach settings size {size}")
+}
+
+pub fn tach_element_message(element: i32) -> String {
+    format!("Retrieveing element {element}")
+}
+
+pub fn tach_pulses_message(pulses: u32) -> String {
+    format!("Settings tachometer pulses to {pulses}")
+}
+
+pub fn starting_device_message(device_type: i32, id: i32, fps: u32) -> String {
+    format!("starting device type {device_type} at id {id} on its own thread at {fps} fps")
+}
+
+pub fn device_runner_message(index: i32, updates: u64, overruns: u64) -> String {
+    format!("device {index}: {updates} updates, {overruns} overruns")
+}
+
 pub fn home_config_file(name: &str) -> PathBuf {
     cargopit_config::paths::home_dir()
         .join(cargopit_config::keys::XDG_CONFIG_FALLBACK)
@@ -577,6 +618,48 @@ mod tests {
             "Could not initialize USB device"
         );
         assert_eq!(initialized_devices_message(0), "initialized 0 devices");
+        assert_eq!(MSG_TACH_CONFIG_NONE, "config set to none");
+        assert_eq!(
+            MSG_TACH_CONFIG_REQUIRED,
+            "Tachometer must have a device specific config file!"
+        );
+        assert_eq!(MSG_TACH_XML_INVALID, "Invalid rev burner xml");
+        assert_eq!(MSG_TACH_XML_EMPTY, "Rev burner XML contains no settings");
+        assert_eq!(
+            MSG_TACH_GRANULARITY_INVALID,
+            "No or invalid valid set for tachometer granularity, setting to 1"
+        );
+        assert_eq!(
+            tach_config_load_message("/tmp/revburner.xml"),
+            "will try to load config file at /tmp/revburner.xml"
+        );
+        assert_eq!(
+            tach_xml_read_message("/tmp/revburner.xml"),
+            "Could not read revburner xml config file /tmp/revburner.xml"
+        );
+        assert_eq!(
+            tach_granularity_message(1),
+            "Tachometer granularity set to 1"
+        );
+        assert_eq!(tach_settings_size_message(9), "Tach settings size 9");
+        assert_eq!(tach_element_message(2), "Retrieveing element 2");
+        assert_eq!(
+            tach_pulses_message(43600),
+            "Settings tachometer pulses to 43600"
+        );
+        assert_eq!(
+            MSG_TACH_GETTING_PULSES,
+            "Getting pulses for current tachometer revs"
+        );
+        assert_eq!(MSG_REVBURNER_NO_HANDLE, "no handle");
+        assert_eq!(
+            starting_device_message(cargopit_config::names::DEVICE_USB, 0, 60),
+            "starting device type 0 at id 0 on its own thread at 60 fps"
+        );
+        assert_eq!(
+            device_runner_message(0, 1, 0),
+            "device 0: 1 updates, 0 overruns"
+        );
         assert_eq!(
             MSG_SKIP_AUDIO,
             "skipping configured sound device due to disable_audio being specified..."

@@ -5,6 +5,7 @@ use crate::keys;
 pub const DEVICE_USB: i32 = 0;
 pub const DEVICE_SOUND: i32 = 1;
 pub const DEVICE_SERIAL: i32 = 2;
+pub const DEVICE_UNKNOWN: i32 = 3;
 
 pub const SUBTYPE_UNKNOWN: i32 = 0;
 pub const SUBTYPE_TACHOMETER: i32 = 2;

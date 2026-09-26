@@ -11,7 +11,7 @@ use std::time::Duration;
 use cargopit::acr;
 use cargopit::cli::{self, ProgramAction};
 use cargopit::control::{self, ControlEffect, SessionStatus};
-use cargopit::devices::{self, LoadedDevices};
+use cargopit::devices::{self, InitNotice, LoadedDevices};
 use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
 use cargopit::log::{self, Level};
 use cargopit::scheduler::{self, TimerKind};
@@ -231,10 +231,12 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     let play = note_sim(play, seen.sim_exe);
     let play = apply_quit(play, parsed, parts.devices.loaded.len());
     if play.phase == PlayPhase::Exiting {
+        release_configured(parts.devices, parsed);
         return play;
     }
     let play = apply_control(parts.control, parts.devices, play, parsed);
     if play.phase == PlayPhase::Exiting {
+        release_configured(parts.devices, parsed);
         return play;
     }
     if play.releasing {
@@ -260,7 +262,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
             );
             if next.phase != PlayPhase::Mapping {
                 announce_release(parsed);
-                release_configured(parts.devices);
+                release_configured(parts.devices, parsed);
                 if next.user_stopped {
                     slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
                 } else {
@@ -344,7 +346,7 @@ fn apply_control(
                 announce_release(parsed);
                 slog(parsed, Level::Info, games::MSG_RESTART_CHECK);
             }
-            release_configured(devices);
+            release_configured(devices, parsed);
             devices.pending = true;
             searching(PlayLoop {
                 user_stopped: false,
@@ -391,14 +393,15 @@ fn searching(play: PlayLoop) -> PlayLoop {
 
 fn finish_release(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
     let _ = parts.session.clear(false);
-    release_configured(parts.devices);
+    release_configured(parts.devices, parsed);
     if play.user_stopped {
         slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
     }
     searching(play)
 }
 
-fn release_configured(devices: &mut DeviceLoop) {
+fn release_configured(devices: &mut DeviceLoop, parsed: &cli::Invocation) {
+    log_notices(parsed, devices.loaded.release());
     devices.loaded = LoadedDevices::empty();
     devices.scheduler.clear();
     devices.pending = false;
@@ -500,7 +503,7 @@ fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, simulator_a
     let due = parts.devices.scheduler.poll(parts.clock.monotonic_ms());
     for event in due {
         match event.kind {
-            TimerKind::Device => parts.devices.loaded.tick(event.device_index),
+            TimerKind::Device => drive_device(parts, parsed, event.device_index),
             TimerKind::TyreDiameter => run_tyre_check(parts),
             TimerKind::Discovery | TimerKind::Mapping => {}
         }
@@ -602,16 +605,33 @@ fn announce_device_init(
         &games::loading_confignum_message(confignum, device_count),
     );
     slog(parsed, Level::Info, games::MSG_PARSING_CONFIG);
+    let loaded = devices::open_profile_at(config, index, parsed.disable_audio);
+    log_notices(parsed, loaded.setup_notices);
     slog(
         parsed,
         Level::Info,
         &games::initializing_simdevices_message(simulator_api),
     );
-    let loaded = devices::open_profile_at(config, index, parsed.disable_audio);
-    for notice in loaded.notices {
+    log_notices(parsed, loaded.notices);
+    loaded.devices
+}
+
+fn log_notices(parsed: &cli::Invocation, notices: Vec<InitNotice>) {
+    for notice in notices {
         slog(parsed, notice.level, &notice.message);
     }
-    loaded.devices
+}
+
+fn drive_device(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, index: usize) {
+    let frame = current_frame(parts.session);
+    log_notices(parsed, parts.devices.loaded.tick(index, &frame));
+}
+
+fn current_frame(session: &GameSession) -> Telemetry {
+    match simapi_sys::SimDataBuf::from_bytes(session.frame_bytes()) {
+        Some(buf) => Telemetry::from_buf(buf),
+        None => Telemetry::new(),
+    }
 }
 
 fn log_profile_fault(

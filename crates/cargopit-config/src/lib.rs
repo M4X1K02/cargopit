@@ -84,7 +84,7 @@ mod tests {
     fn revburner_sample_xml_keeps_rpm_and_pulses() {
         let path = paths::source_root()
             .join(keys::CONF_DIRNAME)
-            .join("revburner.xml");
+            .join(keys::REVBURNER_XML_NAME);
         let src = std::fs::read_to_string(path).expect("sample xml");
         let points = tach::parse_tach_xml(&src).expect("tach");
         assert_eq!(points[0].rpm, 300);
