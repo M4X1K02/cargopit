@@ -21,9 +21,14 @@ const PULSE_BYTE_MASK: u32 = 0xff;
 const PULSE_HIGH_SHIFT: u32 = 8;
 const REVBURNER_VID: u16 = 0x04d8;
 const REVBURNER_PID: u16 = 0x0102;
-const G29_LEN: usize = 7;
-const G29_VID: u16 = 0x046d;
-const G29_PID: u16 = 0xc24f;
+pub const G29_LEN: usize = 7;
+pub const G29_VID: u16 = 0x046d;
+pub const G29_PID: u16 = 0xc24f;
+pub const G29_BYTE_REPORT: usize = 0;
+pub const G29_BYTE_CMD: usize = 1;
+pub const G29_BYTE_LEDS: usize = 2;
+pub const G29_BYTE_PAD: usize = 3;
+pub const G29_BYTE_TAIL: usize = 6;
 const G29_REPORT: u8 = 0xf8;
 const G29_CMD: u8 = 0x12;
 const G29_TAIL: u8 = 0x01;
@@ -329,7 +334,7 @@ fn g29_leds(rpm: u32, maxrpm: u32) -> u8 {
     0
 }
 
-fn g29_bytes(rpm: u32, maxrpm: u32) -> [u8; G29_LEN] {
+pub fn g29_report(rpm: u32, maxrpm: u32) -> [u8; G29_LEN] {
     [
         G29_REPORT,
         G29_CMD,
@@ -344,9 +349,9 @@ fn g29_bytes(rpm: u32, maxrpm: u32) -> [u8; G29_LEN] {
 fn run_g29(log: &Log, frames: &[Telemetry]) {
     let id = log.hid_open(G29_VID, G29_PID);
     each_frame(log, frames, |log, frame| {
-        log.hid_write(id, &g29_bytes(frame.rpms(), frame.maxrpm()));
+        log.hid_write(id, &g29_report(frame.rpms(), frame.maxrpm()));
     });
-    log.hid_write(id, &g29_bytes(0, 0));
+    log.hid_write(id, &g29_report(0, 0));
     log.hid_close(id);
 }
 
