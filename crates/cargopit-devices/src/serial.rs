@@ -364,6 +364,10 @@ fn revlights_lit(rpm: i32, maxrpm: i32, steps: i32) -> i32 {
 }
 
 pub const SHIFT_PACKET_LEN: i32 = 1;
+pub const SIMWIND_PACKET_LEN: i32 = 2;
+const SIMWIND_LEN: usize = SIMWIND_PACKET_LEN as usize;
+pub const SIMWIND_BYTE_SPEED: usize = 0;
+pub const SIMWIND_BYTE_FAN: usize = 1;
 
 pub fn shiftlights_byte(rpm: u32, maxrpm: u32, lights: i32) -> u8 {
     let lit = revlights_lit(rpm as i32, maxrpm as i32, lights);
@@ -379,12 +383,17 @@ fn run_shiftlights(log: &Log, frames: &[Telemetry], baud: i32) -> usize {
     id
 }
 
+pub fn simwind_report(velocity_kph: u32, fanpower: f64) -> [u8; SIMWIND_LEN] {
+    let mut bytes = [0; SIMWIND_LEN];
+    bytes[SIMWIND_BYTE_SPEED] = (f64::from(velocity_kph) * KPH_TO_MPH).ceil() as u8;
+    bytes[SIMWIND_BYTE_FAN] = (fanpower * FAN_BYTE_SCALE) as u8;
+    bytes
+}
+
 fn run_simwind(log: &Log, frames: &[Telemetry], baud: i32) -> usize {
     let id = log.open_port(CAPTURE_PORT, baud);
-    let fan = (FAN_POWER * FAN_BYTE_SCALE) as u8;
     each_frame(log, frames, |_log, frame| {
-        let mph = (f64::from(frame.velocity()) * KPH_TO_MPH).ceil() as u8;
-        log.write_port(id, &[mph, fan]);
+        log.write_port(id, &simwind_report(frame.velocity(), FAN_POWER));
     });
     id
 }
@@ -1376,5 +1385,17 @@ mod tests {
         );
         assert_eq!(shiftlights_byte(0, SAMPLE_MAX_RPM, SAMPLE_LIGHTS), 0);
         assert_eq!(shiftlights_byte(SAMPLE_RPM, SAMPLE_MAX_RPM, 0), 0);
+    }
+
+    #[test]
+    fn simwind_report_converts_kph_and_scales_the_fan() {
+        const SAMPLE_KPH: u32 = 80;
+        const SAMPLE_FAN: f64 = 0.6;
+        const SAMPLE_MPH: u8 = 50;
+        const SAMPLE_FAN_BYTE: u8 = 153;
+        let report = simwind_report(SAMPLE_KPH, SAMPLE_FAN);
+        assert_eq!(report[SIMWIND_BYTE_SPEED], SAMPLE_MPH);
+        assert_eq!(report[SIMWIND_BYTE_FAN], SAMPLE_FAN_BYTE);
+        assert_eq!(report.len(), SIMWIND_LEN);
     }
 }

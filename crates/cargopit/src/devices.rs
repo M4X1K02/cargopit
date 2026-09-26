@@ -7,7 +7,8 @@
 //! over HID and sends feature reports when that play value changes. A SimNet pedal
 //! opens over HID and writes its motor report when that play value changes. A Moza R9 serial wheel opens its port and
 //! writes the new-firmware LED frames. Shift lights open their serial port and write
-//! one lit-count byte on each tick. A sound device logs the C init sequence,
+//! one lit-count byte on each tick. SimWind opens its serial port and writes speed
+//! and fan power on each tick. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
 use std::fs::OpenOptions;
@@ -81,6 +82,7 @@ pub struct LoadedDevices {
     p1000: Vec<Option<P1000Pedal>>,
     simnet: Vec<Option<SimNetPedal>>,
     shift_lights: Vec<Option<i32>>,
+    simwind: Vec<Option<f64>>,
     luas: Vec<Option<LuaHost>>,
 }
 
@@ -130,6 +132,7 @@ impl LoadedDevices {
             p1000: Vec::new(),
             simnet: Vec::new(),
             shift_lights: Vec::new(),
+            simwind: Vec::new(),
             luas: Vec::new(),
         }
     }
@@ -196,6 +199,7 @@ impl LoadedDevices {
         let mut notices = self.write_tach(index, frame);
         notices.extend(self.write_moza(index, frame, now_ns));
         notices.extend(self.write_shiftlights(index, frame));
+        notices.extend(self.write_simwind(index, frame));
         notices.extend(self.write_g29(index, frame.rpms(), frame.maxrpm()));
         notices.extend(self.write_c5(index, frame));
         notices.extend(self.write_c12(index, frame));
@@ -590,6 +594,27 @@ impl LoadedDevices {
         notices
     }
 
+    fn write_simwind(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+        let Some(fanpower) = self.simwind.get(index).copied().flatten() else {
+            return Vec::new();
+        };
+        let report = serial::simwind_report(frame.velocity(), fanpower);
+        let mph = i32::from(report[serial::SIMWIND_BYTE_SPEED]);
+        let fan = i32::from(report[serial::SIMWIND_BYTE_FAN]);
+        let notices = vec![
+            notice(Level::Trace, games::simwind_speed_message(mph)),
+            notice(Level::Trace, games::simwind_fan_message(fan, fanpower)),
+            notice(
+                Level::Trace,
+                games::arduino_copy_message(serial::SIMWIND_PACKET_LEN),
+            ),
+        ];
+        if let Some(port) = self.serials.get_mut(index) {
+            let _ = write_serial_frame(port, &report);
+        }
+        notices
+    }
+
     fn write_moza(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
         let step = {
             let Some(wheel) = self.wheels.get_mut(index).and_then(Option::as_mut) else {
@@ -863,6 +888,7 @@ fn open_profile_with(
     let mut p1000 = Vec::new();
     let mut simnet = Vec::new();
     let mut shift_lights = Vec::new();
+    let mut simwind = Vec::new();
     let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
@@ -900,6 +926,7 @@ fn open_profile_with(
         p1000.push(considered.p1000);
         simnet.push(considered.simnet);
         shift_lights.push(considered.shift_lights);
+        simwind.push(considered.simwind);
         luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
@@ -935,6 +962,7 @@ fn open_profile_with(
             p1000,
             simnet,
             shift_lights,
+            simwind,
             luas,
         },
         setup_notices,
@@ -979,6 +1007,7 @@ struct Considered {
     p1000: Option<P1000Pedal>,
     simnet: Option<SimNetPedal>,
     shift_lights: Option<i32>,
+    simwind: Option<f64>,
 }
 
 enum SerialPort {
@@ -1001,6 +1030,9 @@ fn consider_entry(
     }
     if shiftlights_entry(entry) {
         return consider_shiftlights(entry, slot, id, disable_audio, attempt);
+    }
+    if simwind_entry(entry) {
+        return consider_simwind(entry, slot, id, disable_audio, attempt);
     }
     if moza_new_entry(entry) {
         return consider_moza(entry, slot, id, disable_audio, attempt);
@@ -1107,6 +1139,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -1168,6 +1201,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -1191,6 +1225,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -1214,6 +1249,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -1359,6 +1395,7 @@ fn revburner_attempt(
                 p1000: None,
                 simnet: None,
                 shift_lights: None,
+                simwind: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1380,6 +1417,7 @@ fn revburner_attempt(
             p1000: None,
             simnet: None,
             shift_lights: None,
+            simwind: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1400,6 +1438,7 @@ fn revburner_attempt(
             p1000: None,
             simnet: None,
             shift_lights: None,
+            simwind: None,
         },
     }
 }
@@ -1536,6 +1575,7 @@ fn p1000_ready(
         }),
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -1669,6 +1709,7 @@ fn simnet_ready(
             state: HAPTIC_STATE_IDLE,
         }),
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -1751,6 +1792,7 @@ fn csl_ready(
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -2127,6 +2169,7 @@ fn gt_ready(
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -2204,6 +2247,7 @@ fn g29_ready(
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -2233,6 +2277,7 @@ fn c5_ready(
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -2262,6 +2307,7 @@ fn c12_ready(
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -2290,7 +2336,12 @@ fn consider_shiftlights(
             .get_i64(keys::KEY_NUMLIGHTS)
             .unwrap_or(keys::NUMLIGHTS_DEFAULT),
     );
-    let mut notices = shiftlights_lookup_notices(&path, configured);
+    let mut notices = serial_lookup_notices(
+        &path,
+        configured,
+        names::SUBTYPE_SHIFT_LIGHTS,
+        games::MSG_SHIFTLIGHTS_INIT.to_string(),
+    );
     let baud = serial_baud(configured);
     match open_serial(attempt, &path, baud) {
         OpenedSerial::Missing => serial_open_failed(notices),
@@ -2301,13 +2352,15 @@ fn consider_shiftlights(
     }
 }
 
-fn shiftlights_lookup_notices(path: &str, configured: i64) -> Vec<InitNotice> {
+fn serial_lookup_notices(
+    path: &str,
+    configured: i64,
+    subtype: i32,
+    init: String,
+) -> Vec<InitNotice> {
     vec![
-        notice(
-            Level::Trace,
-            games::serial_subtype_message(names::SUBTYPE_SHIFT_LIGHTS),
-        ),
-        notice(Level::Info, games::MSG_SHIFTLIGHTS_INIT),
+        notice(Level::Trace, games::serial_subtype_message(subtype)),
+        notice(Level::Info, init),
         notice(Level::Info, games::MSG_SERIAL_START),
         notice(
             Level::Info,
@@ -2367,6 +2420,76 @@ fn shiftlights_ready(
         p1000: None,
         simnet: None,
         shift_lights: Some(lights),
+        simwind: None,
+    }
+}
+
+fn simwind_entry(entry: &DeviceEntry) -> bool {
+    if entry_kind(entry) != DeviceKind::Serial {
+        return false;
+    }
+    let kind = entry.get_str(keys::KEY_TYPE).unwrap_or("");
+    names::lookup(names::SERIAL_TYPES, kind) == Some(names::SUBTYPE_SIM_WIND)
+}
+
+fn consider_simwind(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let path = device_port(entry);
+    let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
+    let fanpower = entry
+        .get_f64(keys::KEY_FANPOWER)
+        .unwrap_or(keys::FANPOWER_DEFAULT);
+    let mut notices = serial_lookup_notices(
+        &path,
+        configured,
+        names::SUBTYPE_SIM_WIND,
+        games::simwind_init_message(fanpower),
+    );
+    let baud = serial_baud(configured);
+    match open_serial(attempt, &path, baud) {
+        OpenedSerial::Missing => serial_open_failed(notices),
+        OpenedSerial::Ready(port) => {
+            notices.extend(moza_ready_notices(baud));
+            simwind_ready(entry, id, notices, port, fanpower)
+        }
+    }
+}
+
+fn simwind_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: SerialPort,
+    fanpower: f64,
+) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: port,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: None,
+        gt: false,
+        csl: None,
+        p1000: None,
+        simnet: None,
+        shift_lights: None,
+        simwind: Some(fanpower),
     }
 }
 
@@ -2516,6 +2639,7 @@ fn finish_moza(
         p1000: None,
         simnet: None,
         shift_lights: None,
+        simwind: None,
     }
 }
 
@@ -3084,6 +3208,121 @@ mod tests {
         frame.set_rpms(rpm);
         frame.set_maxrpm(maxrpm);
         frame
+    }
+
+    #[test]
+    fn simwind_missing_port_is_not_scheduled() {
+        const PORT: &str = "/dev/ttyWIND-TEST";
+        let config = simwind_config(PORT, keys::BAUD_DEFAULT);
+        let mut seen = String::new();
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| {
+                seen = path.to_string();
+                false
+            },
+        );
+        assert_eq!(seen, PORT);
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(
+            &missing.notices,
+            &games::simwind_init_message(keys::FANPOWER_DEFAULT)
+        ));
+        assert!(notice_has(&missing.notices, games::MSG_SERIAL_OPEN_ERROR));
+        assert!(notice_absent(
+            &missing.notices,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+    }
+
+    #[test]
+    fn simwind_writes_speed_and_fan_on_every_tick() {
+        const PORT: &str = "/dev/ttyWIND-TEST";
+        const SAMPLE_KPH: u32 = 80;
+        const REPEATED_TICKS: usize = 2;
+        let config = simwind_config(PORT, keys::BAUD_DEFAULT);
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| path == PORT,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_before(
+            &loaded.notices,
+            &games::simwind_init_message(keys::FANPOWER_DEFAULT),
+            games::MSG_SERIAL_START
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_SERIAL_START,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_baud_message(serial_baud(keys::BAUD_DEFAULT))
+        ));
+        let expected = serial::simwind_report(SAMPLE_KPH, keys::FANPOWER_DEFAULT);
+        let mut devices = loaded.devices;
+        let mut frame = Telemetry::new();
+        frame.set_velocity(SAMPLE_KPH);
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_has(
+            &tick,
+            &games::simwind_speed_message(i32::from(expected[serial::SIMWIND_BYTE_SPEED]))
+        ));
+        assert!(notice_has(
+            &tick,
+            &games::simwind_fan_message(
+                i32::from(expected[serial::SIMWIND_BYTE_FAN]),
+                keys::FANPOWER_DEFAULT
+            )
+        ));
+        assert!(notice_has(
+            &tick,
+            &games::arduino_copy_message(serial::SIMWIND_PACKET_LEN)
+        ));
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let repeated = {
+            let frames = devices.captured_serial(0).expect("captured");
+            frames.len() == REPEATED_TICKS
+                && frames.iter().all(|frame| frame.as_slice() == expected)
+        };
+        assert!(repeated);
+        let released = devices.release(PROBE_OPEN_NS);
+        assert!(notice_has(&released, &games::serial_free_message(PORT)));
+        assert!(notice_absent(
+            &released,
+            &games::simwind_speed_message(i32::from(expected[serial::SIMWIND_BYTE_SPEED]))
+        ));
+        assert!(devices.captured_serial(0).is_none());
+    }
+
+    fn simwind_config(path: &str, baud: i64) -> CargopitConfig {
+        const WIND_FPS: i64 = 60;
+        let mut device = DeviceEntry::new();
+        device.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        let kind = names::name_for(names::SERIAL_TYPES, names::SUBTYPE_SIM_WIND).expect("sim wind");
+        device.set_str(keys::KEY_TYPE, kind);
+        device.set_str(keys::KEY_DEVPATH, path);
+        device.set_int(keys::KEY_BAUD, baud);
+        device.set_bool(keys::KEY_ENABLED, true);
+        device.set_int(keys::KEY_FPS, WIND_FPS);
+        CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        }
     }
 
     fn shiftlights_config(path: &str, baud: i64, lights: i64) -> CargopitConfig {
