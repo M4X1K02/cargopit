@@ -1,7 +1,7 @@
 //! Configured devices for one play session. A USB tachometer opens the RevBurner
 //! and writes its pulse report on each tick. A Moza R9 serial wheel opens its
 //! port and writes the new-firmware LED frames. A sound device logs the C init
-//! sequence, then connects its Pulse playback stream when the play session is ready.
+//! sequence, connects its Pulse playback stream, and renders haptic samples on each tick.
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,9 @@ use cargopit_config::keys::{self, CLASS_SERIAL, CLASS_SOUND, CLASS_USB};
 use cargopit_config::names;
 use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
+use cargopit_devices::clock::VirtualClock;
 use cargopit_devices::serial::{self, MozaNewWheel};
+use cargopit_devices::sound::SharedShaker;
 use cargopit_devices::telemetry::Telemetry;
 use cargopit_devices::transport::{PulseSession, RealHid, RealSerial, ShakerRequest, ShareWarning};
 use cargopit_devices::usb::{self, TachPulses};
@@ -44,6 +46,7 @@ pub struct LoadedDevices {
     serials: Vec<SerialPort>,
     wheels: Vec<Option<MozaNewWheel>>,
     sounds: Vec<Option<ShakerRequest>>,
+    voices: Vec<Option<SharedShaker>>,
 }
 
 pub struct InitNotice {
@@ -83,11 +86,18 @@ impl LoadedDevices {
             serials: Vec::new(),
             wheels: Vec::new(),
             sounds: Vec::new(),
+            voices: Vec::new(),
         }
     }
 
     pub fn captured_sound(&self, index: usize) -> Option<&ShakerRequest> {
         self.sounds.get(index).and_then(Option::as_ref)
+    }
+
+    pub fn rendered_sound(&self, index: usize, nbytes: usize) -> Option<Vec<u8>> {
+        let voice = self.voices.get(index)?.as_ref()?;
+        let mut voice = voice.lock().unwrap_or_else(|poison| poison.into_inner());
+        Some(voice.render(nbytes))
     }
 
     pub fn hid_handles(&self) -> usize {
@@ -133,6 +143,7 @@ impl LoadedDevices {
         }
         let mut notices = self.write_tach(index, frame);
         notices.extend(self.write_moza(index, frame, now_ns));
+        self.update_sound(index, frame, now_ns);
         notices
     }
 
@@ -170,6 +181,14 @@ impl LoadedDevices {
             .get(index)
             .map(SimDevice::interval_ms)
             .unwrap_or(tick_interval_ms(DEFAULT_DEVICE_FPS))
+    }
+
+    fn update_sound(&mut self, index: usize, frame: &Telemetry, now_ns: u64) {
+        let Some(Some(voice)) = self.voices.get(index) else {
+            return;
+        };
+        let mut voice = voice.lock().unwrap_or_else(|poison| poison.into_inner());
+        voice.update(frame, &VirtualClock::from_monotonic_ns(now_ns));
     }
 
     fn write_tach(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
@@ -467,6 +486,7 @@ fn open_profile_with(
     let mut serials = Vec::new();
     let mut wheels = Vec::new();
     let mut sounds = Vec::new();
+    let mut voices = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
     let mut initialized = 0i32;
@@ -494,6 +514,7 @@ fn open_profile_with(
         serials.push(considered.serial);
         wheels.push(considered.wheel);
         sounds.push(considered.sound);
+        voices.push(considered.voice);
         devices.push(prepared.device);
         effects.push(prepared.effect);
         initialized = initialized.saturating_add(1);
@@ -519,6 +540,7 @@ fn open_profile_with(
             serials,
             wheels,
             sounds,
+            voices,
         },
         setup_notices,
         notices,
@@ -551,6 +573,7 @@ struct Considered {
     serial: SerialPort,
     wheel: Option<MozaNewWheel>,
     sound: Option<ShakerRequest>,
+    voice: Option<SharedShaker>,
 }
 
 enum SerialPort {
@@ -627,6 +650,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
     let opened = sound_host::open_sound(entry, effect, &device_port(entry), supports_haptics);
     let ready = opened.ready;
     let request = opened.request.clone();
+    let voice = opened.voice.clone();
     let mut notices = sound_notices(opened);
     if !ready {
         notices.push(notice(
@@ -644,6 +668,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         serial: SerialPort::Closed,
         wheel: None,
         sound: request,
+        voice,
     }
 }
 
@@ -657,7 +682,7 @@ fn link_prepared_sound(pulse: &mut Option<&mut PulseSession>, considered: &mut C
     let Some(request) = considered.sound.as_ref() else {
         return true;
     };
-    if let Err(err) = session.connect_shaker(request) {
+    if let Err(err) = session.connect_shaker(request, considered.voice.clone()) {
         considered.notices.push(notice(
             Level::Error,
             games::sound_connect_error(&request.node, &request.sink, &err),
@@ -667,6 +692,7 @@ fn link_prepared_sound(pulse: &mut Option<&mut PulseSession>, considered: &mut C
             games::could_not_initialize_message(CLASS_SOUND),
         ));
         considered.sound = None;
+        considered.voice = None;
         return false;
     }
     true
@@ -694,6 +720,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         serial: SerialPort::Closed,
         wheel: None,
         sound: None,
+        voice: None,
     }
 }
 
@@ -707,6 +734,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         serial: SerialPort::Closed,
         wheel: None,
         sound: None,
+        voice: None,
     }
 }
 
@@ -720,6 +748,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         serial: SerialPort::Closed,
         wheel: None,
         sound: None,
+        voice: None,
     }
 }
 
@@ -853,6 +882,7 @@ fn revburner_attempt(
                 serial: SerialPort::Closed,
                 wheel: None,
                 sound: None,
+                voice: None,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -864,6 +894,7 @@ fn revburner_attempt(
             serial: SerialPort::Closed,
             wheel: None,
             sound: None,
+            voice: None,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -874,6 +905,7 @@ fn revburner_attempt(
             serial: SerialPort::Closed,
             wheel: None,
             sound: None,
+            voice: None,
         },
     }
 }
@@ -986,6 +1018,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         serial: SerialPort::Closed,
         wheel: None,
         sound: None,
+        voice: None,
     }
 }
 
@@ -1051,6 +1084,7 @@ fn finish_moza(
         serial: port,
         wheel: Some(wheel),
         sound: None,
+        voice: None,
     }
 }
 
@@ -1702,5 +1736,37 @@ mod tests {
             .notices
             .iter()
             .any(|notice| { notice.message == games::could_not_initialize_message(CLASS_SOUND) }));
+    }
+
+    #[test]
+    fn sound_tick_renders_engine_samples() {
+        const ENGINE_RPM: u32 = 3_000;
+        const ENGINE_IDLE: u32 = 800;
+        const ENGINE_MAX: u32 = 7_000;
+        const ENGINE_THROTTLE: f64 = 1.0;
+        const BYTES_PER_SAMPLE: usize = 2;
+        const RENDER_FRAMES: usize = 48;
+        let loaded = open_profile_at(
+            &sound_profile(sound_entry("Engine", None)),
+            0,
+            false,
+            PROBE_OPEN_NS,
+            true,
+            None,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        let channels = usize::try_from(SOUND_CHANNELS).unwrap_or(0);
+        let nbytes = RENDER_FRAMES * BYTES_PER_SAMPLE * channels;
+        let silent = loaded.devices.rendered_sound(0, nbytes).expect("voice");
+        assert!(silent.iter().all(|byte| *byte == 0));
+        let mut frame = Telemetry::new();
+        frame.set_rpms(ENGINE_RPM);
+        frame.set_idlerpm(ENGINE_IDLE);
+        frame.set_maxrpm(ENGINE_MAX);
+        frame.set_gas(ENGINE_THROTTLE);
+        let mut devices = loaded.devices;
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let played = devices.rendered_sound(0, nbytes).expect("voice");
+        assert!(played.iter().any(|byte| *byte != 0));
     }
 }

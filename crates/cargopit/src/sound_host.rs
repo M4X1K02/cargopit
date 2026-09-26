@@ -1,9 +1,13 @@
-//! Sound-device init logs, Pulse node names, and the playback request.
+//! Sound-device init logs, Pulse node names, and the playback voice.
+
+use std::sync::{Arc, Mutex};
 
 use cargopit_config::config::DeviceEntry;
 use cargopit_config::keys;
 use cargopit_config::names;
 
+use cargopit_devices::haptic::{HapticSettings, TyreId, VibrationEffect};
+use cargopit_devices::sound::{ShakerVoice, SharedShaker};
 use cargopit_devices::transport::ShakerRequest;
 
 use crate::games;
@@ -17,6 +21,8 @@ pub(crate) const SOUND_PAN_ALL: i64 = -1;
 pub(crate) const SOUND_AMPLITUDE_UNITY: i64 = 100;
 pub(crate) const SOUND_MOTOR_DEFAULT: i64 = 1;
 const FREQUENCY_DEFAULT: i64 = 0;
+const FREQUENCY_MAX_DEFAULT: i64 = 0;
+const THRESHOLD_DEFAULT: f64 = 0.0;
 const NOISE_DEFAULT: i64 = 0;
 const GEAR_DURATION_DEFAULT_S: f64 = 0.125;
 const DURATION_UNSET: f64 = 0.0;
@@ -29,6 +35,7 @@ pub struct SoundOpen {
     pub notices: Vec<(Level, String)>,
     pub ready: bool,
     pub request: Option<ShakerRequest>,
+    pub voice: Option<SharedShaker>,
 }
 
 struct SoundSettings {
@@ -37,6 +44,8 @@ struct SoundSettings {
     path: String,
     duration: f64,
     frequency: i64,
+    frequency_max: i64,
+    threshold: f64,
     amplitude: i64,
     motor: i64,
     volume: i64,
@@ -56,14 +65,17 @@ pub fn open_sound(
             notices: vec![(Level::Warn, games::MSG_SOUND_SKIP_HAPTICS.to_string())],
             ready: false,
             request: None,
+            voice: None,
         };
     }
     let settings = SoundSettings::read(entry, effect, path);
     let mut notices = settings.haptic_notices();
     let request = append_stream(&mut notices, &settings);
+    let voice = request.as_ref().and_then(|_| settings.shared_voice());
     SoundOpen {
         ready: request.is_some(),
         request,
+        voice,
         notices,
     }
 }
@@ -142,6 +154,12 @@ impl SoundSettings {
             frequency: entry
                 .get_i64(keys::KEY_FREQUENCY)
                 .unwrap_or(FREQUENCY_DEFAULT),
+            frequency_max: entry
+                .get_i64(keys::KEY_FREQUENCY_MAX)
+                .unwrap_or(FREQUENCY_MAX_DEFAULT),
+            threshold: entry
+                .get_f64(keys::KEY_THRESHOLD)
+                .unwrap_or(THRESHOLD_DEFAULT),
             amplitude: SOUND_AMPLITUDE_UNITY,
             motor: entry
                 .get_i64(keys::KEY_MOTORS)
@@ -197,6 +215,28 @@ impl SoundSettings {
             channels: u8::try_from(self.channels).unwrap_or(CHANNEL_MIN as u8),
             mask: self.mask,
             gear: self.effect == names::EFFECT_GEAR,
+        }
+    }
+
+    fn shared_voice(&self) -> Option<SharedShaker> {
+        let effect = VibrationEffect::from_id(self.effect)?;
+        let channels = u8::try_from(self.channels).unwrap_or(CHANNEL_MIN as u8);
+        Some(Arc::new(Mutex::new(ShakerVoice::new(
+            self.haptic(effect),
+            channels,
+        ))))
+    }
+
+    fn haptic(&self, effect: VibrationEffect) -> HapticSettings {
+        HapticSettings {
+            effect,
+            tyre: TyreId::from_id(self.tyre),
+            frequency: u32_from_i64(self.frequency),
+            frequency_max: u32_from_i64(self.frequency_max),
+            amplitude: u32_from_i64(self.amplitude),
+            duration: self.duration,
+            threshold: self.threshold,
+            ..HapticSettings::default()
         }
     }
 
@@ -279,6 +319,13 @@ fn pan_mask(pan: i64, channels: i64, all: u32) -> u32 {
         return all;
     };
     1u32 << shift
+}
+
+fn u32_from_i64(value: i64) -> u32 {
+    if value <= 0 {
+        return 0;
+    }
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 fn clamp_i64(value: i64, min: i64, max: i64) -> i64 {

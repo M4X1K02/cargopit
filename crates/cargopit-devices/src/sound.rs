@@ -1,6 +1,8 @@
 //! Shaker DSP. PCM matches the C capture goldens with noise disabled.
+//! Live playback updates a `ShakerVoice` from telemetry and renders the same tone.
 
 use std::cell::{Cell, RefCell};
+use std::sync::{Arc, Mutex};
 
 use crate::clock::{Clock, VirtualClock};
 use crate::haptic::{chassis_is_rolling, HapticEffect, HapticSettings, TyreId, VibrationEffect};
@@ -14,6 +16,7 @@ const APP_NAME: &str = "Cargopit";
 const STREAM_INDEX: u32 = 1;
 const SINK_UNMUTED: i32 = 0;
 const CHANNELS: usize = 2;
+const SHAKER_CHANNEL_MIN: u8 = 1;
 const SAMPLE_RATE: f64 = 48_000.0;
 const PCM_FRAMES: usize = 48;
 const BYTES_PER_SAMPLE: usize = 2;
@@ -54,6 +57,31 @@ const HARMONIC3: f64 = 3.0;
 const I16_MAX: f64 = 32_767.0;
 const I16_MIN: f64 = -32_768.0;
 const CLOCK_OP: &str = concat!("clock_", "gettime");
+
+pub type SharedShaker = Arc<Mutex<ShakerVoice>>;
+
+pub struct ShakerVoice {
+    tone: Tone,
+    channels: usize,
+}
+
+impl ShakerVoice {
+    pub fn new(settings: HapticSettings, channels: u8) -> Self {
+        let channels = usize::from(channels.max(SHAKER_CHANNEL_MIN));
+        Self {
+            tone: Tone::from_settings(settings),
+            channels,
+        }
+    }
+
+    pub fn update(&mut self, frame: &Telemetry, clock: &impl Clock) {
+        self.tone.update(frame, clock);
+    }
+
+    pub fn render(&mut self, nbytes: usize) -> Vec<u8> {
+        self.tone.render_bytes(nbytes, self.channels)
+    }
+}
 
 pub const SOUND_DEVICES: &[&str] = &[
     "sound_engine",
@@ -188,7 +216,7 @@ pub fn capture_sound(name: &str, frames: &[Telemetry]) -> Option<String> {
     let effect = effect_for(name)?;
     let log = Log::new();
     log.open(stream_name(effect), SINK_NAME);
-    let mut tone = Tone::new(effect);
+    let mut tone = Tone::from_settings(capture_settings(effect));
     let clock = Trace { log: &log };
     for (index, frame) in frames.iter().enumerate() {
         log.set_tick(index as u32);
@@ -236,8 +264,8 @@ fn capture_settings(effect: VibrationEffect) -> HapticSettings {
 }
 
 impl Tone {
-    fn new(effect: VibrationEffect) -> Self {
-        let settings = capture_settings(effect);
+    fn from_settings(settings: HapticSettings) -> Self {
+        let effect = settings.effect;
         let duration = if effect == VibrationEffect::GearShift {
             if settings.duration > 0.0 {
                 settings.duration
@@ -390,23 +418,28 @@ impl Tone {
     }
 
     fn render(&mut self) -> Vec<u8> {
-        let bytes_per_frame = BYTES_PER_SAMPLE * CHANNELS;
-        let length = PCM_FRAMES * bytes_per_frame;
-        let mut samples = vec![0i16; length / BYTES_PER_SAMPLE];
+        self.render_bytes(PCM_FRAMES * BYTES_PER_SAMPLE * CHANNELS, CHANNELS)
+    }
+
+    fn render_bytes(&mut self, nbytes: usize, channels: usize) -> Vec<u8> {
+        if nbytes == 0 || channels == 0 {
+            return vec![0u8; nbytes];
+        }
+        let bytes_per_frame = BYTES_PER_SAMPLE * channels;
+        let frames = nbytes / bytes_per_frame;
+        let mut bytes = vec![0u8; nbytes];
         let coeff = coeffs();
-        let frames = length / bytes_per_frame;
         let gear = self.effect == VibrationEffect::GearShift;
         for index in 0..frames {
             let fade = self.amplitude_scale(gear);
             let sample = self.sine_frame(fade, &coeff);
-            for channel in 0..CHANNELS {
-                samples[index * CHANNELS + channel] = sample;
+            let start = index * bytes_per_frame;
+            for channel in 0..channels {
+                let offset = start + channel * BYTES_PER_SAMPLE;
+                let end = offset + BYTES_PER_SAMPLE;
+                bytes[offset..end].copy_from_slice(&sample.to_le_bytes());
             }
             self.advance_gear(&coeff);
-        }
-        let mut bytes = Vec::with_capacity(length);
-        for sample in samples {
-            bytes.extend_from_slice(&sample.to_le_bytes());
         }
         bytes
     }
@@ -683,4 +716,34 @@ fn clamp_i16(sample: f64) -> i16 {
         return i16::MIN;
     }
     sample.round_ties_even() as i16
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ENGINE_RPM: u32 = 3_000;
+    const ENGINE_IDLE: u32 = 800;
+    const ENGINE_MAX: u32 = 7_000;
+    const ENGINE_THROTTLE: f64 = 1.0;
+    const ENGINE_CHANNELS: u8 = 2;
+    const RENDER_BYTES: usize = PCM_FRAMES * BYTES_PER_SAMPLE * CHANNELS;
+
+    #[test]
+    fn engine_update_renders_samples() {
+        let mut voice = ShakerVoice::new(
+            capture_settings(VibrationEffect::EngineRpm),
+            ENGINE_CHANNELS,
+        );
+        let silent = voice.render(RENDER_BYTES);
+        assert!(silent.iter().all(|byte| *byte == 0));
+        let mut frame = Telemetry::new();
+        frame.set_rpms(ENGINE_RPM);
+        frame.set_idlerpm(ENGINE_IDLE);
+        frame.set_maxrpm(ENGINE_MAX);
+        frame.set_gas(ENGINE_THROTTLE);
+        voice.update(&frame, &VirtualClock::new());
+        let played = voice.render(RENDER_BYTES);
+        assert!(played.iter().any(|byte| *byte != 0));
+    }
 }

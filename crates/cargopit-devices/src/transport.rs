@@ -4,7 +4,10 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::sync::Mutex;
 use std::time::Duration;
+
+use crate::sound::{ShakerVoice, SharedShaker};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransportError {
@@ -497,11 +500,15 @@ impl PulseSession {
         Self::from_parts(None, None, PulseOutcome::ConnectFailed)
     }
 
-    pub fn connect_shaker(&mut self, request: &ShakerRequest) -> Result<(), String> {
+    pub fn connect_shaker(
+        &mut self,
+        request: &ShakerRequest,
+        voice: Option<SharedShaker>,
+    ) -> Result<(), String> {
         if self.outcome != PulseOutcome::Ready {
             return Err(PULSE_CONTEXT_MISSING.to_string());
         }
-        let connected = self.connect_shaker_while_locked(request);
+        let connected = self.connect_shaker_while_locked(request, voice);
         match connected {
             Ok(stream) => {
                 self.streams.push(stream);
@@ -514,6 +521,7 @@ impl PulseSession {
     fn connect_shaker_while_locked(
         &mut self,
         request: &ShakerRequest,
+        voice: Option<SharedShaker>,
     ) -> Result<Box<libpulse_binding::stream::Stream>, String> {
         let Some(mainloop) = self.mainloop.as_mut() else {
             return Err(PULSE_CONTEXT_MISSING.to_string());
@@ -522,7 +530,7 @@ impl PulseSession {
             return Err(PULSE_CONTEXT_MISSING.to_string());
         };
         mainloop.lock();
-        let connected = connect_shaker_locked(mainloop, context, request);
+        let connected = connect_shaker_locked(mainloop, context, request, voice);
         let result = match connected {
             Ok(stream) => Ok(stream),
             Err(()) => Err(context_errno(context)),
@@ -575,6 +583,7 @@ fn connect_shaker_locked(
     mainloop: &mut libpulse_binding::mainloop::threaded::Mainloop,
     context: &mut libpulse_binding::context::Context,
     request: &ShakerRequest,
+    voice: Option<SharedShaker>,
 ) -> Result<Box<libpulse_binding::stream::Stream>, ()> {
     use libpulse_binding::proplist::Proplist;
     use libpulse_binding::sample::{Format, Spec};
@@ -622,7 +631,7 @@ fn connect_shaker_locked(
         return Err(());
     }
     boxed.set_write_callback(Some(Box::new(move |nbytes| {
-        write_silence(stream_ptr, nbytes);
+        write_playback(stream_ptr, nbytes, voice.as_ref());
     })));
     unmute_shaker(context, &boxed);
     Ok(boxed)
@@ -789,6 +798,36 @@ fn release_stream(mut stream: libpulse_binding::stream::Stream) {
     stream.set_state_callback(None);
     stream.set_write_callback(None);
     let _ = stream.disconnect();
+}
+
+fn write_playback(
+    stream: *mut libpulse_binding::stream::Stream,
+    nbytes: usize,
+    voice: Option<&SharedShaker>,
+) {
+    let Some(voice) = voice else {
+        write_silence(stream, nbytes);
+        return;
+    };
+    let bytes = render_voice(voice, nbytes);
+    write_bytes(stream, &bytes);
+}
+
+fn render_voice(voice: &Mutex<ShakerVoice>, nbytes: usize) -> Vec<u8> {
+    if nbytes == 0 {
+        return Vec::new();
+    }
+    let mut voice = voice.lock().unwrap_or_else(|poison| poison.into_inner());
+    voice.render(nbytes)
+}
+
+fn write_bytes(stream: *mut libpulse_binding::stream::Stream, bytes: &[u8]) {
+    use libpulse_binding::stream::SeekMode;
+
+    if stream.is_null() || bytes.is_empty() {
+        return;
+    }
+    let _ = unsafe { (*stream).write_copy(bytes, 0, SeekMode::Relative) };
 }
 
 fn write_silence(stream: *mut libpulse_binding::stream::Stream, nbytes: usize) {
@@ -994,17 +1033,20 @@ mod tests {
     fn shaker_connect_reports_a_missing_context() {
         let mut session = PulseSession::not_ready();
         let err = session
-            .connect_shaker(&ShakerRequest {
-                sink: "alsa_output.test".to_string(),
-                node: "cargopit.Gear".to_string(),
-                stream_name: "Gear".to_string(),
-                effect_name: "Gear".to_string(),
-                tyre_name: None,
-                volume_percent: 40,
-                channels: SHAKER_CHANNELS_STEREO,
-                mask: (SHAKER_CHANNEL_BIT << SHAKER_CHANNELS_STEREO) - SHAKER_CHANNEL_BIT,
-                gear: true,
-            })
+            .connect_shaker(
+                &ShakerRequest {
+                    sink: "alsa_output.test".to_string(),
+                    node: "cargopit.Gear".to_string(),
+                    stream_name: "Gear".to_string(),
+                    effect_name: "Gear".to_string(),
+                    tyre_name: None,
+                    volume_percent: 40,
+                    channels: SHAKER_CHANNELS_STEREO,
+                    mask: (SHAKER_CHANNEL_BIT << SHAKER_CHANNELS_STEREO) - SHAKER_CHANNEL_BIT,
+                    gear: true,
+                },
+                None,
+            )
             .expect_err("missing context");
         assert_eq!(err, PULSE_CONTEXT_MISSING);
     }
@@ -1027,7 +1069,9 @@ mod tests {
             mask: (SHAKER_CHANNEL_BIT << SHAKER_CHANNELS_STEREO) - SHAKER_CHANNEL_BIT,
             gear: true,
         };
-        session.connect_shaker(&request).expect("shaker playback");
+        session
+            .connect_shaker(&request, None)
+            .expect("shaker playback");
         session.disconnect_shakers();
     }
 }
