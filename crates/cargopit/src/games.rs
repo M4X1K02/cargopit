@@ -431,6 +431,11 @@ pub const UNSUPPORTED_SIM_FEATURE: i32 = 6;
 pub const MSG_SHIFTLIGHTS_INIT: &str = "Initializing arduino device for shiftlights.";
 pub const MSG_SERIAL_HAPTIC_INIT: &str = "Initializing arduino device for haptic effects.";
 pub const MSG_SIMLED_INIT: &str = "Initializing arduino device for simled.";
+pub const MSG_SIMLED_CUSTOM_INIT: &str = "Initializing arduino device for custom simled.";
+pub const MSG_SIMLED_COUNT_ATTEMPT: &str = "Attempting to retrieve num lights from port...";
+pub const MSG_SIMLED_COUNT_SEND: &str = "Sending message to get num lights";
+pub const MSG_SIMLED_LUA_INIT: &str = "LUA config specified for this device... initializing...";
+pub const MSG_SIMLED_LUA_OK: &str = "LUA config setup successful.";
 pub const MSG_SERIAL_HAPTIC_UPDATING: &str = "arduino haptic device updating";
 pub const MSG_SERIAL_HAPTIC_ZERO: &str = "set zero to arduino device";
 pub const MSG_MOZA_NEW_INIT: &str = "Initializing new firmware Moza serial wheel device.";
@@ -570,6 +575,22 @@ pub fn serial_free_message(path: &str) -> String {
 
 pub fn shiftlights_lit_message(lit: i32) -> String {
     format!("Updating arduino device lights to {lit}")
+}
+
+pub fn simled_count_message(count: i32) -> String {
+    format!("numlights is {count}\n")
+}
+
+pub fn simled_count_invalid_message(text: &str) -> String {
+    format!("Invalid LED count received from serial device: {text}")
+}
+
+pub fn simled_count_wait_message(code: i32) -> String {
+    format!("Error getting bytes available from serial port: {code}")
+}
+
+pub fn simled_custom_wrote_message(size: i32) -> String {
+    format!("custom led wrote {size} bytes")
 }
 
 pub fn arduino_copy_message(size: i32) -> String {
@@ -1279,6 +1300,39 @@ mod tests {
             "Initializing arduino device for haptic effects."
         );
         assert_eq!(MSG_SIMLED_INIT, "Initializing arduino device for simled.");
+        assert_eq!(
+            MSG_SIMLED_CUSTOM_INIT,
+            "Initializing arduino device for custom simled."
+        );
+        assert_eq!(
+            MSG_SIMLED_COUNT_ATTEMPT,
+            "Attempting to retrieve num lights from port..."
+        );
+        assert_eq!(MSG_SIMLED_COUNT_SEND, "Sending message to get num lights");
+        const SIMLED_SAMPLE_COUNT: i32 = 8;
+        const SIMLED_SAMPLE_BYTES: i32 = 38;
+        const SIMLED_SAMPLE_WAIT: i32 = -1;
+        assert_eq!(
+            simled_count_message(SIMLED_SAMPLE_COUNT),
+            "numlights is 8\n"
+        );
+        assert_eq!(
+            simled_count_invalid_message("nope"),
+            "Invalid LED count received from serial device: nope"
+        );
+        assert_eq!(
+            simled_count_wait_message(SIMLED_SAMPLE_WAIT),
+            "Error getting bytes available from serial port: -1"
+        );
+        assert_eq!(
+            MSG_SIMLED_LUA_INIT,
+            "LUA config specified for this device... initializing..."
+        );
+        assert_eq!(MSG_SIMLED_LUA_OK, "LUA config setup successful.");
+        assert_eq!(
+            simled_custom_wrote_message(SIMLED_SAMPLE_BYTES),
+            "custom led wrote 38 bytes"
+        );
         assert_eq!(MSG_SERIAL_HAPTIC_UPDATING, "arduino haptic device updating");
         assert_eq!(MSG_SERIAL_HAPTIC_ZERO, "set zero to arduino device");
         const HAPTIC_SAMPLE_SPEED: i32 = 255;
