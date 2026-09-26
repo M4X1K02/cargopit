@@ -77,6 +77,18 @@ mod tests {
         assert_eq!(parsed.simapiversion, SIMAPI_VERSION_VALUE as u8);
         assert_eq!(parsed.valid, 1);
     }
+
+    #[test]
+    fn publish_bytes_rejects_a_closed_map() {
+        let mut session = GameSession::new();
+        assert!(!session.map_open());
+        assert!(session.published_bytes().is_none());
+        assert!(!session.publish_bytes(&[0u8; 1]));
+        let mut bytes = vec![0u8; SIMDATA_SIZE];
+        assert!(!session.publish_bytes(&bytes));
+        bytes[0] = 1;
+        assert!(!session.publish_bytes(&bytes));
+    }
 }
 
 pub const WHEEL_COUNT: usize = 4;
