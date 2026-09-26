@@ -94,9 +94,26 @@ const MOZA_R5_CHECK_BYTE: usize = 10;
 const MOZA_BLINK_BIT: u32 = 7;
 const MOZA_PERCENT: f32 = 100.0;
 const KS_MASK_TEMPLATE: [u8; 11] = [0x7e, 0x06, 0x3f, 0x17, 0x1a, 0, 0, 0, 0, 0, 0];
-const KS_MASK_SIZE: usize = 11;
-const KS_COLOR_SIZE: usize = 27;
-const FLAG_YELLOW: u8 = 1;
+pub const MOZA_KS_MASK_SIZE: usize = 11;
+pub const MOZA_KS_COLOR_SIZE: usize = 27;
+pub const MOZA_KS_MASK_LEN: i32 = MOZA_KS_MASK_SIZE as i32;
+pub const MOZA_KS_INIT_PACKETS: usize = 6;
+pub const MOZA_KS_FLAG_UNSET: u8 = 0xff;
+const KS_MASK_SIZE: usize = MOZA_KS_MASK_SIZE;
+const KS_COLOR_SIZE: usize = MOZA_KS_COLOR_SIZE;
+pub const MOZA_KS_FLAG_COLORS: usize = 2;
+const KS_FLAG_PAIR: usize = MOZA_KS_FLAG_COLORS;
+const KS_FLAG_LED_LO: u8 = 0;
+const KS_FLAG_LED_MID: u8 = 1;
+const KS_FLAG_LED_HI: u8 = 2;
+const KS_FLAG_LED_RIGHT: u8 = 7;
+const KS_RPM_LED_75: u8 = 3;
+const KS_RPM_LED_97: u8 = 6;
+const KS_MASK_BYTE_LEFT: usize = 6;
+const KS_MASK_BYTE_RIGHT: usize = 7;
+const KS_MASK_BYTE_FAR: usize = 8;
+pub const MOZA_KS_FLAG_YELLOW: u8 = 1;
+const FLAG_YELLOW: u8 = MOZA_KS_FLAG_YELLOW;
 const KS_BLINK_SHIFT: u32 = 7;
 const KS_BLINK_PERCENT: i32 = 98;
 const STATUS_ACTIVE: u32 = 2;
@@ -951,7 +968,100 @@ fn ks_color(template: [u8; KS_COLOR_SIZE]) -> [u8; KS_COLOR_SIZE] {
     bytes
 }
 
-fn ks_init_colors() -> [[u8; KS_COLOR_SIZE]; 6] {
+pub fn moza_ks_init_colors() -> [[u8; MOZA_KS_COLOR_SIZE]; MOZA_KS_INIT_PACKETS] {
+    ks_init_colors()
+}
+
+pub struct MozaKsWheel {
+    last_flag: u8,
+}
+
+pub struct MozaKsTick {
+    pub rpm: i32,
+    pub maxrpm: i32,
+    pub mask: [u8; MOZA_KS_MASK_SIZE],
+    pub flag_colors: Option<[[u8; MOZA_KS_COLOR_SIZE]; MOZA_KS_FLAG_COLORS]>,
+}
+
+impl Default for MozaKsWheel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MozaKsWheel {
+    pub fn new() -> Self {
+        Self {
+            last_flag: MOZA_KS_FLAG_UNSET,
+        }
+    }
+
+    pub fn tick(&mut self, frame: &Telemetry) -> Option<MozaKsTick> {
+        if frame.maxrpm() == 0 {
+            return None;
+        }
+        let flag = frame.player_flag();
+        let flag_colors = self.take_flag_colors(flag);
+        Some(MozaKsTick {
+            rpm: logged_rpm(frame.rpms()),
+            maxrpm: logged_rpm(frame.maxrpm()),
+            mask: ks_mask(frame),
+            flag_colors,
+        })
+    }
+
+    fn take_flag_colors(
+        &mut self,
+        flag: u8,
+    ) -> Option<[[u8; MOZA_KS_COLOR_SIZE]; MOZA_KS_FLAG_COLORS]> {
+        if flag == self.last_flag {
+            return None;
+        }
+        self.last_flag = flag;
+        Some(ks_flag_colors(flag))
+    }
+}
+
+fn logged_rpm(value: u32) -> i32 {
+    i32::from_ne_bytes(value.to_ne_bytes())
+}
+
+fn ks_flag_colors(flag: u8) -> [[u8; KS_COLOR_SIZE]; KS_FLAG_PAIR] {
+    if flag == FLAG_YELLOW {
+        return [ks_yellow_left(), ks_yellow_right()];
+    }
+    [ks_off_left(), ks_off_right()]
+}
+
+fn ks_yellow_left() -> [u8; KS_COLOR_SIZE] {
+    ks_color([
+        0x7e, 0x16, 0x3f, 0x17, 0x19, 0, 0, 0xff, 0xaa, 0, 1, 0xff, 0xaa, 0, 2, 0xff, 0xaa, 0, 0,
+        0xff, 0xaa, 0, 1, 0xff, 0xaa, 0, 0,
+    ])
+}
+
+fn ks_yellow_right() -> [u8; KS_COLOR_SIZE] {
+    ks_color([
+        0x7e, 0x16, 0x3f, 0x17, 0x19, 0, 15, 0xff, 0xaa, 0, 16, 0xff, 0xaa, 0, 17, 0xff, 0xaa, 0,
+        15, 0xff, 0xaa, 0, 16, 0xff, 0xaa, 0, 0,
+    ])
+}
+
+fn ks_off_left() -> [u8; KS_COLOR_SIZE] {
+    ks_color([
+        0x7e, 0x16, 0x3f, 0x17, 0x19, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
+        0, 0,
+    ])
+}
+
+fn ks_off_right() -> [u8; KS_COLOR_SIZE] {
+    ks_color([
+        0x7e, 0x16, 0x3f, 0x17, 0x19, 0, 15, 0, 0, 0, 16, 0, 0, 0, 17, 0, 0, 0, 15, 0, 0, 0, 16, 0,
+        0, 0, 0,
+    ])
+}
+
+fn ks_init_colors() -> [[u8; KS_COLOR_SIZE]; MOZA_KS_INIT_PACKETS] {
     [
         ks_color([
             0x7e, 0x16, 0x3f, 0x17, 0x19, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xff, 0, 0, 4,
@@ -973,10 +1083,7 @@ fn ks_init_colors() -> [[u8; KS_COLOR_SIZE]; 6] {
             0x7e, 0x16, 0x3f, 0x17, 0x19, 1, 5, 0xff, 0, 0, 6, 0xff, 0, 0, 7, 0xff, 0, 0, 8, 0xff,
             0, 0, 9, 0xff, 0, 0, 0,
         ]),
-        ks_color([
-            0x7e, 0x16, 0x3f, 0x17, 0x19, 0, 15, 0, 0, 0, 16, 0, 0, 0, 17, 0, 0, 0, 15, 0, 0, 0,
-            16, 0, 0, 0, 0,
-        ]),
+        ks_off_right(),
     ]
 }
 
@@ -989,9 +1096,10 @@ fn ks_mask(frame: &Telemetry) -> [u8; KS_MASK_SIZE] {
     }
     set_ks_bits(&mut bytes, percent);
     if frame.player_flag() == FLAG_YELLOW {
-        bytes[6] |= (1 << 0) | (1 << 1) | (1 << 2);
-        bytes[7] |= 1 << 7;
-        bytes[8] |= (1 << 0) | (1 << 1);
+        bytes[KS_MASK_BYTE_LEFT] |=
+            (1 << KS_FLAG_LED_LO) | (1 << KS_FLAG_LED_MID) | (1 << KS_FLAG_LED_HI);
+        bytes[KS_MASK_BYTE_RIGHT] |= 1 << KS_FLAG_LED_RIGHT;
+        bytes[KS_MASK_BYTE_FAR] |= (1 << KS_FLAG_LED_LO) | (1 << KS_FLAG_LED_MID);
     }
     bytes[10] = moza_checksum(&bytes);
     bytes
@@ -999,18 +1107,18 @@ fn ks_mask(frame: &Telemetry) -> [u8; KS_MASK_SIZE] {
 
 fn set_ks_bits(bytes: &mut [u8; KS_MASK_SIZE], percent: i32) {
     const STEPS: [(i32, usize, u8); 12] = [
-        (75, 6, 3),
-        (77, 6, 4),
-        (79, 6, 5),
-        (81, 6, 6),
-        (83, 6, 7),
-        (85, 7, 0),
-        (87, 7, 1),
-        (89, 7, 2),
-        (91, 7, 3),
-        (93, 7, 4),
-        (95, 7, 5),
-        (97, 7, 6),
+        (75, KS_MASK_BYTE_LEFT, KS_RPM_LED_75),
+        (77, KS_MASK_BYTE_LEFT, 4),
+        (79, KS_MASK_BYTE_LEFT, 5),
+        (81, KS_MASK_BYTE_LEFT, 6),
+        (83, KS_MASK_BYTE_LEFT, 7),
+        (85, KS_MASK_BYTE_RIGHT, 0),
+        (87, KS_MASK_BYTE_RIGHT, 1),
+        (89, KS_MASK_BYTE_RIGHT, 2),
+        (91, KS_MASK_BYTE_RIGHT, 3),
+        (93, KS_MASK_BYTE_RIGHT, 4),
+        (95, KS_MASK_BYTE_RIGHT, 5),
+        (97, KS_MASK_BYTE_RIGHT, KS_RPM_LED_97),
     ];
     for (threshold, index, bit) in STEPS {
         if percent >= threshold {
@@ -1910,5 +2018,102 @@ mod tests {
         let mut clear = *bytes;
         clear[MOZA_R5_CHECK_BYTE] = 0;
         assert_eq!(bytes[MOZA_R5_CHECK_BYTE], moza_checksum(&clear));
+    }
+
+    #[test]
+    fn moza_ks_init_colors_are_checksummed() {
+        let colors = moza_ks_init_colors();
+        assert_eq!(colors.len(), MOZA_KS_INIT_PACKETS);
+        for packet in colors {
+            assert_color_checksum(&packet);
+        }
+    }
+
+    #[test]
+    fn moza_ks_full_rpm_sets_the_shift_bits() {
+        const SAMPLE_RPM: u32 = 8_000;
+        let mask = ks_mask(&rpm_frame(SAMPLE_RPM, SAMPLE_RPM, 0, 0));
+        assert_ne!(mask[KS_MASK_BYTE_LEFT] & (1 << KS_RPM_LED_75), 0);
+        assert_ne!(mask[KS_MASK_BYTE_RIGHT] & (1 << KS_RPM_LED_97), 0);
+        assert_mask_checksum(&mask);
+    }
+
+    #[test]
+    fn moza_ks_blink_clears_the_rpm_mask() {
+        const SAMPLE_RPM: u32 = 8_000;
+        let blink = 1u64 << KS_BLINK_SHIFT;
+        let blinking = ks_mask(&rpm_frame(SAMPLE_RPM, SAMPLE_RPM, blink, 0));
+        let dark = ks_mask(&rpm_frame(0, SAMPLE_RPM, 0, 0));
+        assert_eq!(blinking, dark);
+    }
+
+    #[test]
+    fn moza_ks_yellow_flag_stays_on_during_blink() {
+        const SAMPLE_RPM: u32 = 8_000;
+        let blink = 1u64 << KS_BLINK_SHIFT;
+        let mask = ks_mask(&rpm_frame(SAMPLE_RPM, SAMPLE_RPM, blink, FLAG_YELLOW));
+        let left = (1 << KS_FLAG_LED_LO) | (1 << KS_FLAG_LED_MID) | (1 << KS_FLAG_LED_HI);
+        let far = (1 << KS_FLAG_LED_LO) | (1 << KS_FLAG_LED_MID);
+        assert_eq!(mask[KS_MASK_BYTE_LEFT] & left, left);
+        assert_ne!(mask[KS_MASK_BYTE_RIGHT] & (1 << KS_FLAG_LED_RIGHT), 0);
+        assert_eq!(mask[KS_MASK_BYTE_FAR] & far, far);
+        assert_eq!(mask[KS_MASK_BYTE_LEFT] & (1 << KS_RPM_LED_75), 0);
+    }
+
+    #[test]
+    fn moza_ks_sends_flag_colors_when_the_flag_changes() {
+        const SAMPLE_RPM: u32 = 4_000;
+        const SAMPLE_MAX: u32 = 8_000;
+        let mut wheel = MozaKsWheel::new();
+        let mut frame = rpm_frame(SAMPLE_RPM, SAMPLE_MAX, 0, 0);
+        let first = wheel.tick(&frame).expect("first");
+        let colors = first.flag_colors.expect("off colors");
+        assert_eq!(colors[0], ks_off_left());
+        assert_eq!(colors[1], ks_off_right());
+        let second = wheel.tick(&frame).expect("second");
+        assert!(second.flag_colors.is_none());
+        assert_eq!(first.mask, second.mask);
+        frame.set_player_flag(FLAG_YELLOW);
+        let yellow = wheel.tick(&frame).expect("yellow");
+        let colors = yellow.flag_colors.expect("yellow colors");
+        assert_eq!(colors[0], ks_yellow_left());
+        assert_eq!(colors[1], ks_yellow_right());
+    }
+
+    #[test]
+    fn moza_ks_zero_max_rpm_skips_the_tick() {
+        const SAMPLE_RPM: u32 = 4_000;
+        const SAMPLE_MAX: u32 = 8_000;
+        let mut wheel = MozaKsWheel::new();
+        assert!(wheel.tick(&rpm_frame(SAMPLE_RPM, 0, 0, 0)).is_none());
+        let step = wheel
+            .tick(&rpm_frame(SAMPLE_RPM, SAMPLE_MAX, 0, 0))
+            .expect("later");
+        assert!(step.flag_colors.is_some());
+        assert_eq!(step.rpm, i32::try_from(SAMPLE_RPM).unwrap_or(i32::MAX));
+        assert_eq!(step.maxrpm, i32::try_from(SAMPLE_MAX).unwrap_or(i32::MAX));
+    }
+
+    fn rpm_frame(rpm: u32, maxrpm: u32, mtick: u64, flag: u8) -> Telemetry {
+        let mut frame = Telemetry::new();
+        frame.set_rpms(rpm);
+        frame.set_maxrpm(maxrpm);
+        frame.set_mtick(mtick);
+        frame.set_player_flag(flag);
+        frame
+    }
+
+    fn assert_color_checksum(packet: &[u8; MOZA_KS_COLOR_SIZE]) {
+        let mut clear = *packet;
+        let last = MOZA_KS_COLOR_SIZE - 1;
+        clear[last] = 0;
+        assert_eq!(packet[last], moza_checksum(&clear));
+    }
+
+    fn assert_mask_checksum(packet: &[u8; MOZA_KS_MASK_SIZE]) {
+        let mut clear = *packet;
+        let last = MOZA_KS_MASK_SIZE - 1;
+        clear[last] = 0;
+        assert_eq!(packet[last], moza_checksum(&clear));
     }
 }

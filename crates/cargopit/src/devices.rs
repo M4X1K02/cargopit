@@ -7,7 +7,8 @@
 //! over HID and sends feature reports when that play value changes. A SimNet pedal
 //! opens over HID and writes its motor report when that play value changes. A Moza R9 serial wheel opens its port and
 //! writes the new-firmware LED frames. A Moza R5, R8, or R3 opens its serial port and
-//! writes the shift-light mask on each tick. Shift lights open their serial port and write
+//! writes the shift-light mask on each tick. A Moza KS Pro opens its serial port, writes
+//! the color table, and updates the shift-light mask and flag colors on each tick. Shift lights open their serial port and write
 //! one lit-count byte on each tick. SimWind opens its serial port and writes speed
 //! and fan power on each tick. Serial haptic opens its port when the sim supports
 //! haptics and writes an eight-byte motor report on each tick. SimLED opens its
@@ -28,7 +29,7 @@ use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
 use cargopit_devices::clock::{SystemClock, VirtualClock};
 use cargopit_devices::haptic::{HapticEffect, HapticSettings, TyreId, VibrationEffect};
 use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedMode};
-use cargopit_devices::serial::{self, MozaNewWheel};
+use cargopit_devices::serial::{self, MozaKsWheel, MozaNewWheel};
 use cargopit_devices::sound::SharedShaker;
 use cargopit_devices::telemetry::Telemetry;
 use cargopit_devices::transport::{PulseSession, RealHid, RealSerial, ShakerRequest, ShareWarning};
@@ -88,6 +89,7 @@ pub struct LoadedDevices {
     gt: Vec<bool>,
     arduino_custom: Vec<bool>,
     moza_r5: Vec<bool>,
+    ks: Vec<Option<MozaKsWheel>>,
     csl: Vec<Option<CslPedal>>,
     p1000: Vec<Option<P1000Pedal>>,
     simnet: Vec<Option<SimNetPedal>>,
@@ -143,6 +145,7 @@ impl LoadedDevices {
             gt: Vec::new(),
             arduino_custom: Vec::new(),
             moza_r5: Vec::new(),
+            ks: Vec::new(),
             csl: Vec::new(),
             p1000: Vec::new(),
             simnet: Vec::new(),
@@ -217,6 +220,7 @@ impl LoadedDevices {
         let mut notices = self.write_tach(index, frame);
         notices.extend(self.write_moza(index, frame, now_ns));
         notices.extend(self.write_moza_r5(index, frame));
+        notices.extend(self.write_moza_ks(index, frame));
         notices.extend(self.write_shiftlights(index, frame));
         notices.extend(self.write_simwind(index, frame));
         notices.extend(self.write_serial_haptic(index, frame, now_ns));
@@ -791,6 +795,40 @@ impl LoadedDevices {
         ]
     }
 
+    fn write_moza_ks(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+        let Some(step) = self.ks_step(index, frame) else {
+            return Vec::new();
+        };
+        self.write_ks_step(index, &step)
+    }
+
+    fn ks_step(&mut self, index: usize, frame: &Telemetry) -> Option<serial::MozaKsTick> {
+        let wheel = self.ks.get_mut(index)?.as_mut()?;
+        wheel.tick(frame)
+    }
+
+    fn write_ks_step(&mut self, index: usize, step: &serial::MozaKsTick) -> Vec<InitNotice> {
+        let Some(port) = self.serials.get_mut(index) else {
+            return Vec::new();
+        };
+        if let Some(colors) = step.flag_colors {
+            for packet in colors {
+                let _ = write_serial_frame(port, &packet);
+            }
+        }
+        let _ = write_serial_frame(port, &step.mask);
+        vec![
+            notice(
+                Level::Debug,
+                games::moza_r5_copy_message(serial::MOZA_KS_MASK_LEN),
+            ),
+            notice(
+                Level::Trace,
+                games::moza_r5_write_message(&step.mask, step.rpm, step.maxrpm),
+            ),
+        ]
+    }
+
     fn write_moza(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
         let step = {
             let Some(wheel) = self.wheels.get_mut(index).and_then(Option::as_mut) else {
@@ -1079,6 +1117,7 @@ fn open_profile_with(
     let mut gt = Vec::new();
     let mut arduino_custom = Vec::new();
     let mut moza_r5 = Vec::new();
+    let mut ks = Vec::new();
     let mut csl = Vec::new();
     let mut p1000 = Vec::new();
     let mut simnet = Vec::new();
@@ -1122,6 +1161,7 @@ fn open_profile_with(
         gt.push(considered.gt);
         arduino_custom.push(considered.arduino_custom);
         moza_r5.push(considered.moza_r5);
+        ks.push(considered.ks);
         csl.push(considered.csl);
         p1000.push(considered.p1000);
         simnet.push(considered.simnet);
@@ -1163,6 +1203,7 @@ fn open_profile_with(
             gt,
             arduino_custom,
             moza_r5,
+            ks,
             csl,
             p1000,
             simnet,
@@ -1214,6 +1255,7 @@ struct Considered {
     gt: bool,
     arduino_custom: bool,
     moza_r5: bool,
+    ks: Option<MozaKsWheel>,
     csl: Option<CslPedal>,
     p1000: Option<P1000Pedal>,
     simnet: Option<SimNetPedal>,
@@ -1272,6 +1314,9 @@ fn consider_entry(
     }
     if moza_r5_entry(entry) {
         return consider_moza_r5(entry, slot, id, disable_audio, attempt);
+    }
+    if moza_ks_entry(entry) {
+        return consider_moza_ks(entry, slot, id, disable_audio, attempt);
     }
     if sound_entry(entry) {
         return consider_sound(entry, slot, id, disable_audio, supports_haptics);
@@ -1373,6 +1418,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1440,6 +1486,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1469,6 +1516,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1498,6 +1546,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1649,6 +1698,7 @@ fn revburner_attempt(
                 gt: false,
                 arduino_custom: false,
                 moza_r5: false,
+                ks: None,
                 csl: None,
                 p1000: None,
                 simnet: None,
@@ -1676,6 +1726,7 @@ fn revburner_attempt(
             gt: false,
             arduino_custom: false,
             moza_r5: false,
+            ks: None,
             csl: None,
             p1000: None,
             simnet: None,
@@ -1702,6 +1753,7 @@ fn revburner_attempt(
             gt: false,
             arduino_custom: false,
             moza_r5: false,
+            ks: None,
             csl: None,
             p1000: None,
             simnet: None,
@@ -1841,6 +1893,7 @@ fn p1000_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: Some(P1000Pedal {
             effect,
@@ -1980,6 +2033,7 @@ fn simnet_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: Some(SimNetPedal {
@@ -2067,6 +2121,7 @@ fn csl_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: Some(CslPedal {
             file,
             effect,
@@ -2457,6 +2512,7 @@ fn gt_ready(
         gt: true,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2540,6 +2596,7 @@ fn g29_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2575,6 +2632,7 @@ fn c5_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2610,6 +2668,7 @@ fn c12_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2740,6 +2799,7 @@ fn shiftlights_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2814,6 +2874,7 @@ fn simwind_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2903,6 +2964,7 @@ fn serial_haptic_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -3086,6 +3148,7 @@ fn arduino_custom_ready(
         gt: false,
         arduino_custom: true,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -3208,6 +3271,7 @@ fn simled_custom_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -3435,6 +3499,7 @@ fn simled_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -3544,6 +3609,96 @@ fn moza_r5_ready(
         gt: false,
         arduino_custom: false,
         moza_r5: true,
+        ks: None,
+        csl: None,
+        p1000: None,
+        simnet: None,
+        shift_lights: None,
+        simwind: None,
+        serial_haptic: None,
+        simled: None,
+        custom_leds: None,
+    }
+}
+
+fn moza_ks_entry(entry: &DeviceEntry) -> bool {
+    serial_wheel_hardware(entry, names::HARDWARE_MOZA_KS_PRO)
+}
+
+fn consider_moza_ks(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let path = device_port(entry);
+    let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
+    let notices = serial_lookup_notices(
+        &path,
+        configured,
+        names::SUBTYPE_SERIAL_WHEEL,
+        games::MSG_MOZA_NEW_INIT.to_string(),
+    );
+    let baud = serial_baud(configured);
+    match open_serial(attempt, &path, baud) {
+        OpenedSerial::Missing => serial_open_failed(notices),
+        OpenedSerial::Ready(port) => finish_moza_ks(entry, id, path, notices, port, baud),
+    }
+}
+
+fn finish_moza_ks(
+    entry: &DeviceEntry,
+    id: i32,
+    path: String,
+    mut notices: Vec<InitNotice>,
+    mut port: SerialPort,
+    baud: u32,
+) -> Considered {
+    notices.extend(moza_ready_notices(baud));
+    if !write_ks_init(&mut port) {
+        drop(port);
+        return reject_opened_serial(&path, notices);
+    }
+    moza_ks_ready(entry, id, notices, port)
+}
+
+fn write_ks_init(port: &mut SerialPort) -> bool {
+    for packet in serial::moza_ks_init_colors() {
+        if !write_serial_frame(port, &packet) {
+            return false;
+        }
+    }
+    true
+}
+
+fn moza_ks_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: SerialPort,
+) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: port,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: None,
+        gt: false,
+        arduino_custom: false,
+        moza_r5: false,
+        ks: Some(MozaKsWheel::new()),
         csl: None,
         p1000: None,
         simnet: None,
@@ -3667,6 +3822,7 @@ fn finish_moza(
         gt: false,
         arduino_custom: false,
         moza_r5: false,
+        ks: None,
         csl: None,
         p1000: None,
         simnet: None,
@@ -5607,10 +5763,53 @@ mod tests {
     }
 
     #[test]
-    fn moza_ks_pro_stays_closed() {
+    fn moza_ks_without_a_port_stays_closed() {
         const PORT: &str = "/dev/ttyMOZA-KS";
         let hardware = names::name_for(names::HARDWARE, names::HARDWARE_MOZA_KS_PRO).expect("ks");
         let config = moza_wheel_config(PORT, keys::BAUD_DEFAULT, hardware);
+        let mut probed = String::new();
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| {
+                probed = path.to_string();
+                false
+            },
+        );
+        assert_eq!(probed, PORT);
+        assert!(missing.devices.is_empty());
+        assert!(missing
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_MOZA_NEW_INIT));
+        assert!(missing
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_SERIAL_OPEN_ERROR));
+        assert!(missing
+            .notices
+            .iter()
+            .all(|notice| notice.message != games::MSG_SERIAL_PORT_OPENED));
+        assert!(missing
+            .notices
+            .iter()
+            .all(|notice| notice.message != games::MSG_MOZA_ARMED));
+    }
+
+    #[test]
+    fn moza_ks_writes_colors_and_the_mask() {
+        const PORT: &str = "/dev/ttyMOZA-KS";
+        const SAMPLE_RPM: u32 = 8_000;
+        const SAMPLE_MAX: u32 = 8_000;
+        const IDLE_RPM: u32 = 4_000;
+        let hardware = names::name_for(names::HARDWARE, names::HARDWARE_MOZA_KS_PRO).expect("ks");
+        let config = moza_wheel_config(PORT, keys::BAUD_DEFAULT, hardware);
+        let configured = serial_baud(keys::BAUD_DEFAULT);
+        let floor = serial::moza_r9_open_baud(keys::BAUD_DEFAULT);
         let loaded = open_profile_ports(
             &config,
             0,
@@ -5620,15 +5819,108 @@ mod tests {
             |_vendor, _product| false,
             |_path| true,
         );
-        assert!(loaded.devices.is_empty());
+        assert_eq!(loaded.devices.len(), 1);
+        assert_ne!(configured, floor);
+        let subtype = games::serial_subtype_message(names::SUBTYPE_SERIAL_WHEEL);
+        assert!(notice_before(
+            &loaded.notices,
+            &subtype,
+            games::MSG_MOZA_NEW_INIT
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_MOZA_NEW_INIT,
+            games::MSG_SERIAL_START
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_SERIAL_START,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
         assert!(loaded
             .notices
             .iter()
-            .any(|notice| { notice.message == games::could_not_initialize_message(CLASS_SERIAL) }));
+            .any(|notice| { notice.message == games::serial_baud_message(configured) }));
         assert!(loaded
             .notices
             .iter()
-            .all(|notice| notice.message != games::MSG_MOZA_R5_INIT));
+            .all(|notice| notice.message != games::serial_baud_message(floor)));
+        assert!(loaded
+            .notices
+            .iter()
+            .all(|notice| notice.message != games::MSG_MOZA_ARMED));
+        let mut expected: Vec<Vec<u8>> = serial::moza_ks_init_colors()
+            .into_iter()
+            .map(|packet| packet.to_vec())
+            .collect();
+        assert_eq!(
+            loaded
+                .devices
+                .captured_serial(0)
+                .map(|frames| frames.to_vec()),
+            Some(expected.clone())
+        );
+        let copied = games::moza_r5_copy_message(serial::MOZA_KS_MASK_LEN);
+        let mut devices = loaded.devices;
+        let mut idle = Telemetry::new();
+        idle.set_rpms(IDLE_RPM);
+        idle.set_maxrpm(0);
+        let skipped = devices.tick(0, &idle, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_serial(0).map(|frames| frames.len()),
+            Some(serial::MOZA_KS_INIT_PACKETS)
+        );
+        assert!(skipped.iter().all(|notice| notice.message != copied));
+        let mut frame = Telemetry::new();
+        frame.set_rpms(SAMPLE_RPM);
+        frame.set_maxrpm(SAMPLE_MAX);
+        let mut reference = serial::MozaKsWheel::new();
+        let first = reference.tick(&frame).expect("first");
+        push_ks_step(&mut expected, &first);
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_serial(0).map(|frames| frames.to_vec()),
+            Some(expected.clone())
+        );
+        let wrote = games::moza_r5_write_message(&first.mask, first.rpm, first.maxrpm);
+        assert!(tick
+            .iter()
+            .any(|notice| notice.level == Level::Debug && notice.message == copied));
+        assert!(tick
+            .iter()
+            .any(|notice| notice.level == Level::Trace && notice.message == wrote));
+        let second = reference.tick(&frame).expect("second");
+        assert!(second.flag_colors.is_none());
+        push_ks_step(&mut expected, &second);
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_serial(0).map(|frames| frames.to_vec()),
+            Some(expected.clone())
+        );
+        frame.set_player_flag(serial::MOZA_KS_FLAG_YELLOW);
+        let yellow = reference.tick(&frame).expect("yellow");
+        assert!(yellow.flag_colors.is_some());
+        push_ks_step(&mut expected, &yellow);
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_serial(0).map(|frames| frames.to_vec()),
+            Some(expected)
+        );
+        let released = devices.release(PROBE_OPEN_NS);
+        assert!(released
+            .iter()
+            .any(|notice| notice.message == games::serial_free_message(PORT)));
+        assert!(released.iter().all(|notice| notice.message != copied));
+        assert!(devices.captured_serial(0).is_none());
+    }
+
+    fn push_ks_step(frames: &mut Vec<Vec<u8>>, step: &serial::MozaKsTick) {
+        if let Some(colors) = step.flag_colors {
+            for packet in colors {
+                frames.push(packet.to_vec());
+            }
+        }
+        frames.push(step.mask.to_vec());
     }
 
     #[test]
