@@ -1,7 +1,8 @@
 //! Configured devices for one play session. A USB tachometer opens the RevBurner
 //! and writes its pulse report on each tick. A Logitech G29, a Cammus C5, and a
 //! Cammus C12 open and write their LED reports on each tick. A C12 with a Lua file
-//! writes one packet per shift light. A Moza R9 serial wheel opens its port and
+//! writes one packet per shift light. A Simagic GT Neo with a Lua file sends
+//! feature reports for all 73 LEDs. A Moza R9 serial wheel opens its port and
 //! writes the new-firmware LED frames. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
@@ -57,6 +58,7 @@ pub struct LoadedDevices {
     g29: Vec<bool>,
     c5: Vec<bool>,
     c12: Vec<bool>,
+    gt: Vec<bool>,
     luas: Vec<Option<LuaHost>>,
 }
 
@@ -101,6 +103,7 @@ impl LoadedDevices {
             g29: Vec::new(),
             c5: Vec::new(),
             c12: Vec::new(),
+            gt: Vec::new(),
             luas: Vec::new(),
         }
     }
@@ -161,6 +164,7 @@ impl LoadedDevices {
         notices.extend(self.write_g29(index, frame.rpms(), frame.maxrpm()));
         notices.extend(self.write_c5(index, frame));
         notices.extend(self.write_c12(index, frame));
+        notices.extend(self.write_gt(index, frame));
         self.update_sound(index, frame, now_ns);
         notices
     }
@@ -266,7 +270,7 @@ impl LoadedDevices {
     }
 
     fn write_c12_lua(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
-        let painted = self.c12_lua_colors(index, frame);
+        let painted = self.script_colors(index, frame, usb::C12_LED_TOTAL);
         if let Some(detail) = painted.failure {
             eprintln!("{}", games::lua_call_failed_message(&detail));
         }
@@ -278,13 +282,55 @@ impl LoadedDevices {
         notices
     }
 
-    fn c12_lua_colors(&mut self, index: usize, frame: &Telemetry) -> LuaPaint {
+    fn write_gt(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+        if !self.gt.get(index).copied().unwrap_or(false) {
+            return Vec::new();
+        }
+        let painted = self.script_colors(index, frame, usb::GT_NEO_LEDS);
+        if let Some(detail) = painted.failure {
+            eprintln!("{}", games::lua_call_failed_message(&detail));
+        }
+        self.send_gt_features(index, &painted.leds)
+    }
+
+    fn send_gt_features(&mut self, index: usize, colors: &[u8]) -> Vec<InitNotice> {
+        let mut notices = Vec::new();
+        let mut first = true;
+        for report in usb::gt_neo_reports(colors) {
+            if self.feature_index(index, &report, &mut notices) {
+                first = false;
+                continue;
+            }
+            if first {
+                eprintln!("{}", games::MSG_GT_FEATURE_FAILED);
+                first = false;
+                continue;
+            }
+            eprintln!("{}", games::MSG_GT_FEATURE_CHUNK_FAILED);
+            break;
+        }
+        notices
+    }
+
+    fn feature_index(
+        &mut self,
+        index: usize,
+        report: &[u8],
+        notices: &mut Vec<InitNotice>,
+    ) -> bool {
+        let Some(port) = self.ports.get_mut(index) else {
+            return false;
+        };
+        feature_port(port, report, notices)
+    }
+
+    fn script_colors(&mut self, index: usize, frame: &Telemetry, total: i64) -> LuaPaint {
         let Some(host) = self.luas.get_mut(index).and_then(Option::as_mut) else {
             return LuaPaint::blank();
         };
         let clock = SystemClock::new();
         let mut sim = frame.clone_buf();
-        let script = host.call_script(&mut sim, usb::C12_LED_TOTAL, &clock);
+        let script = host.call_script(&mut sim, total, &clock);
         let Ok((tick, failure)) = script else {
             return LuaPaint::blank();
         };
@@ -295,11 +341,13 @@ impl LoadedDevices {
     }
 
     fn close_c12_lua(&mut self, notices: &mut Vec<InitNotice>) {
-        for slot in &mut self.luas {
+        for (index, slot) in self.luas.iter_mut().enumerate() {
             if slot.is_none() {
                 continue;
             }
-            notices.push(notice(Level::Trace, games::MSG_C12_LUA_CLOSE));
+            if self.c12.get(index).copied().unwrap_or(false) {
+                notices.push(notice(Level::Trace, games::MSG_C12_LUA_CLOSE));
+            }
             slot.take();
         }
     }
@@ -648,6 +696,7 @@ fn open_profile_with(
     let mut g29 = Vec::new();
     let mut c5 = Vec::new();
     let mut c12 = Vec::new();
+    let mut gt = Vec::new();
     let mut luas = Vec::new();
     let mut setup_notices = Vec::new();
     let mut notices = Vec::new();
@@ -680,6 +729,7 @@ fn open_profile_with(
         g29.push(considered.g29);
         c5.push(considered.c5);
         c12.push(considered.c12);
+        gt.push(considered.gt);
         luas.push(considered.lua);
         devices.push(prepared.device);
         effects.push(prepared.effect);
@@ -710,6 +760,7 @@ fn open_profile_with(
             g29,
             c5,
             c12,
+            gt,
             luas,
         },
         setup_notices,
@@ -748,6 +799,7 @@ struct Considered {
     c5: bool,
     c12: bool,
     lua: Option<LuaHost>,
+    gt: bool,
 }
 
 enum SerialPort {
@@ -782,6 +834,9 @@ fn consider_entry(
     }
     if c12_entry(entry) {
         return consider_c12(entry, slot, id, disable_audio, attempt);
+    }
+    if gt_entry(entry) {
+        return consider_gt(entry, slot, id, disable_audio, attempt);
     }
     consider_closed(entry, slot, disable_audio)
 }
@@ -856,6 +911,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         c5: false,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -912,6 +968,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         c5: false,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -930,6 +987,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         c5: false,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -948,6 +1006,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         c5: false,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -1088,6 +1147,7 @@ fn revburner_attempt(
                 c5: false,
                 c12: false,
                 lua: None,
+                gt: false,
             }
         }
         OpenedHid::Live(hid) => Considered {
@@ -1104,6 +1164,7 @@ fn revburner_attempt(
             c5: false,
             c12: false,
             lua: None,
+            gt: false,
         },
         OpenedHid::Simulated => Considered {
             setup_notices: prep.notices,
@@ -1119,6 +1180,7 @@ fn revburner_attempt(
             c5: false,
             c12: false,
             lua: None,
+            gt: false,
         },
     }
 }
@@ -1152,6 +1214,10 @@ fn c5_entry(entry: &DeviceEntry) -> bool {
 
 fn c12_entry(entry: &DeviceEntry) -> bool {
     usb_wheel_hardware(entry, names::HARDWARE_CAMMUS_C12)
+}
+
+fn gt_entry(entry: &DeviceEntry) -> bool {
+    usb_wheel_hardware(entry, names::HARDWARE_SIMAGIC_GT_NEO)
 }
 
 fn usb_wheel_hardware(entry: &DeviceEntry, hardware: i32) -> bool {
@@ -1219,7 +1285,7 @@ fn consider_c12(
     disable_audio: bool,
     attempt: &mut HidAttempt<'_>,
 ) -> Considered {
-    let (setup, lua_path) = c12_config(entry);
+    let (setup, lua_path) = lua_config(entry);
     if let Some(skip) = device_skip(entry, disable_audio) {
         return skipped(setup, skip, slot);
     }
@@ -1239,7 +1305,7 @@ fn consider_c12(
     attach_setup(opened, setup)
 }
 
-fn c12_config(entry: &DeviceEntry) -> (Vec<InitNotice>, Option<PathBuf>) {
+fn lua_config(entry: &DeviceEntry) -> (Vec<InitNotice>, Option<PathBuf>) {
     match config_source(entry) {
         ConfigSource::Unset => (
             vec![notice(Level::Trace, games::MSG_TACH_CONFIG_NONE)],
@@ -1256,6 +1322,89 @@ fn c12_config(entry: &DeviceEntry) -> (Vec<InitNotice>, Option<PathBuf>) {
                 Some(path),
             )
         }
+    }
+}
+
+fn consider_gt(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    let (setup, lua_path) = lua_config(entry);
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(setup, skip, slot);
+    }
+    let mut notices = vec![
+        notice(Level::Info, games::MSG_INIT_USB),
+        notice(Level::Info, games::MSG_INIT_WHEEL),
+        notice(Level::Info, games::MSG_GT_ATTEMPT),
+    ];
+    let Some(path) = lua_path else {
+        notices.push(notice(Level::Error, games::MSG_GT_NEEDS_CONFIG));
+        return attach_setup(
+            usb_not_initialized(notices, games::USB_INIT_LUA_FAILED),
+            setup,
+        );
+    };
+    notices.push(notice(Level::Info, games::MSG_GT_INIT));
+    let opened = match open_hid(attempt, usb::GT_NEO_VID, usb::GT_NEO_PID) {
+        OpenedHid::Missing => wheel_missing(notices, games::MSG_GT_MISSING),
+        OpenedHid::Live(hid) => finish_gt(entry, id, notices, HidPort::Live(hid), path),
+        OpenedHid::Simulated => finish_gt(entry, id, notices, HidPort::Captured(Vec::new()), path),
+    };
+    attach_setup(opened, setup)
+}
+
+fn finish_gt(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: HidPort,
+    path: PathBuf,
+) -> Considered {
+    let mut ready = gt_ready(entry, id, notices, port);
+    ready.notices.push(notice(Level::Trace, games::MSG_GT_LUA));
+    match LuaHost::load_file(&path, LuaLedMode::Usb) {
+        Ok(host) => {
+            ready.lua = Some(host);
+            ready
+        }
+        Err(detail) => {
+            ready
+                .notices
+                .push(notice(Level::Error, games::MSG_C12_LUA_ISSUE));
+            eprintln!("{}", games::lua_load_failed_message(&detail));
+            let notices = std::mem::take(&mut ready.notices);
+            drop(ready);
+            usb_not_initialized(notices, games::USB_INIT_LUA_FAILED)
+        }
+    }
+}
+
+fn gt_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    mut notices: Vec<InitNotice>,
+    port: HidPort,
+) -> Considered {
+    notices.push(notice(Level::Debug, games::MSG_GT_FOUND));
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port,
+        tach: inactive_tach(),
+        serial: SerialPort::Closed,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: None,
+        gt: true,
     }
 }
 
@@ -1328,6 +1477,7 @@ fn g29_ready(
         c5: false,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -1352,6 +1502,7 @@ fn c5_ready(
         c5: true,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -1376,6 +1527,7 @@ fn c12_ready(
         c5: false,
         c12: true,
         lua: None,
+        gt: false,
     }
 }
 
@@ -1477,6 +1629,7 @@ fn moza_open_failed(mut notices: Vec<InitNotice>) -> Considered {
         c5: false,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -1547,6 +1700,7 @@ fn finish_moza(
         c5: false,
         c12: false,
         lua: None,
+        gt: false,
     }
 }
 
@@ -1631,6 +1785,20 @@ fn notice(level: Level, message: impl Into<String>) -> InitNotice {
     InitNotice {
         level,
         message: message.into(),
+    }
+}
+
+fn feature_port(port: &mut HidPort, report: &[u8], notices: &mut Vec<InitNotice>) -> bool {
+    match port {
+        HidPort::Live(hid) => hid.send_feature(report).is_ok(),
+        HidPort::Captured(log) => {
+            log.push(report.to_vec());
+            true
+        }
+        HidPort::Closed => {
+            notices.push(notice(Level::Debug, games::MSG_REVBURNER_NO_HANDLE));
+            false
+        }
     }
 }
 
@@ -2363,6 +2531,168 @@ mod tests {
             .notices
             .iter()
             .any(|notice| notice.message == games::could_not_initialize_message(CLASS_USB)));
+    }
+
+    #[test]
+    fn gt_neo_without_config_does_not_open() {
+        const GT_FPS: i64 = 60;
+        let config = wheel_config(GT_FPS, names::HARDWARE_SIMAGIC_GT_NEO);
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| panic!("hid open"),
+            |_path| false,
+        );
+        assert!(missing.devices.is_empty());
+        assert!(missing
+            .setup_notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_TACH_CONFIG_NONE));
+        assert!(notice_has(&missing.notices, games::MSG_GT_ATTEMPT));
+        assert!(notice_has(&missing.notices, games::MSG_GT_NEEDS_CONFIG));
+        assert!(notice_has(
+            &missing.notices,
+            &games::usb_init_error_message(games::USB_INIT_LUA_FAILED)
+        ));
+        assert!(notice_has(
+            &missing.notices,
+            &games::could_not_initialize_message(CLASS_USB)
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_GT_INIT));
+        assert!(notice_absent(&missing.notices, games::MSG_GT_FOUND));
+        assert!(notice_absent(&missing.notices, games::MSG_GT_LUA));
+        let mut named = wheel_config(GT_FPS, names::HARDWARE_SIMAGIC_GT_NEO);
+        named.profiles[0].devices[0].set_str(keys::KEY_CONFIG, keys::CONFIG_VALUE_NONE);
+        let named = open_profile_ports(
+            &named,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| panic!("hid open"),
+            |_path| false,
+        );
+        assert!(named.devices.is_empty());
+        assert!(named
+            .setup_notices
+            .iter()
+            .all(|notice| notice.message != games::MSG_TACH_CONFIG_NONE));
+        assert!(notice_has(&named.notices, games::MSG_GT_NEEDS_CONFIG));
+        assert!(notice_absent(&named.notices, games::MSG_GT_INIT));
+    }
+
+    #[test]
+    fn gt_neo_missing_wheel_is_not_scheduled() {
+        const GT_FPS: i64 = 60;
+        let path = std::env::temp_dir().join("cargopit-gt-neo-absent.lua");
+        let config = wheel_with_config(GT_FPS, names::HARDWARE_SIMAGIC_GT_NEO, &path);
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| false,
+        );
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_GT_INIT));
+        assert!(notice_has(&missing.notices, games::MSG_GT_MISSING));
+        assert!(notice_has(
+            &missing.notices,
+            &games::usb_init_error_message(games::ERROR_UNKNOWN)
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_GT_LUA));
+        assert!(notice_absent(&missing.notices, games::MSG_C12_LUA_ISSUE));
+        assert!(notice_absent(&missing.notices, games::MSG_GT_FOUND));
+    }
+
+    #[test]
+    fn gt_neo_lua_sends_feature_reports() {
+        const GT_FPS: i64 = 60;
+        const FIRST_LED_RED: usize = 0;
+        let path = std::env::temp_dir().join("cargopit-gt-neo-leds.lua");
+        let source = format!("set_led_to_color({}, RED)\n", usb::GT_NEO_LUA_FIRST);
+        let _script = TempScript::write(&path, &source);
+        let config = wheel_with_config(GT_FPS, names::HARDWARE_SIMAGIC_GT_NEO, &path);
+        let mut opened_gt = false;
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |vendor, product| {
+                opened_gt = vendor == usb::GT_NEO_VID && product == usb::GT_NEO_PID;
+                opened_gt
+            },
+            |_path| false,
+        );
+        assert!(opened_gt);
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(notice_has(&loaded.notices, games::MSG_GT_FOUND));
+        assert!(notice_has(&loaded.notices, games::MSG_GT_LUA));
+        let shown = path.display().to_string();
+        assert!(loaded
+            .setup_notices
+            .iter()
+            .any(|notice| notice.message == games::tach_config_load_message(&shown)));
+        let mut colors = vec![0u8; usb::gt_neo_color_len()];
+        colors[FIRST_LED_RED] = u8::MAX;
+        let expected: Vec<Vec<u8>> = usb::gt_neo_reports(&colors)
+            .into_iter()
+            .map(|report| report.to_vec())
+            .collect();
+        let mut devices = loaded.devices;
+        let _tick = devices.tick(0, &Telemetry::new(), PROBE_OPEN_NS);
+        assert_eq!(devices.captured_reports(0), Some(expected.as_slice()));
+        let before = expected.len();
+        let released = devices.release(PROBE_OPEN_NS);
+        assert_eq!(
+            devices.captured_reports(0).map(|frames| frames.len()),
+            Some(before)
+        );
+        assert!(notice_absent(&released, games::MSG_C12_LUA_CLOSE));
+    }
+
+    #[test]
+    fn gt_neo_lua_failure_is_not_scheduled() {
+        const GT_FPS: i64 = 60;
+        let path = std::env::temp_dir().join("cargopit-gt-neo-missing.lua");
+        let _ = std::fs::remove_file(&path);
+        let config = wheel_with_config(GT_FPS, names::HARDWARE_SIMAGIC_GT_NEO, &path);
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| true,
+            |_path| false,
+        );
+        assert!(loaded.devices.is_empty());
+        assert!(notice_has(&loaded.notices, games::MSG_GT_FOUND));
+        assert!(notice_has(&loaded.notices, games::MSG_GT_LUA));
+        assert!(notice_has(&loaded.notices, games::MSG_C12_LUA_ISSUE));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::usb_init_error_message(games::USB_INIT_LUA_FAILED)
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::could_not_initialize_message(CLASS_USB)
+        ));
+    }
+
+    fn notice_has(notices: &[InitNotice], message: &str) -> bool {
+        notices.iter().any(|notice| notice.message == message)
+    }
+
+    fn notice_absent(notices: &[InitNotice], message: &str) -> bool {
+        notices.iter().all(|notice| notice.message != message)
     }
 
     fn wheel_with_config(fps: i64, hardware: i32, config_path: &Path) -> CargopitConfig {

@@ -111,6 +111,17 @@ impl RealHid {
         }
         Ok(wrote as usize)
     }
+
+    pub fn send_feature(&mut self, data: &[u8]) -> Result<usize, TransportError> {
+        if data.is_empty() {
+            return Err(TransportError::Failed);
+        }
+        let wrote = unsafe { hid_send_feature_report(self.device, data.as_ptr(), data.len()) };
+        if wrote < 0 {
+            return Err(TransportError::Failed);
+        }
+        Ok(wrote as usize)
+    }
 }
 
 impl Drop for RealHid {
@@ -131,6 +142,11 @@ unsafe extern "C" {
         serial_number: *const libc::wchar_t,
     ) -> *mut std::ffi::c_void;
     fn hid_write(device: *mut std::ffi::c_void, data: *const u8, length: usize) -> i32;
+    fn hid_send_feature_report(
+        device: *mut std::ffi::c_void,
+        data: *const u8,
+        length: usize,
+    ) -> i32;
     fn hid_close(device: *mut std::ffi::c_void);
 }
 

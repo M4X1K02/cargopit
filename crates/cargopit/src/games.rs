@@ -266,6 +266,14 @@ pub const MSG_C12_MISSING: &str = "Could not find attached Cammus C12 Wheel";
 pub const MSG_C12_LUA: &str = "Using lua file for cammus c12 device";
 pub const MSG_C12_LUA_ISSUE: &str = "There is an issue with your lua script";
 pub const MSG_C12_LUA_CLOSE: &str = "closing lua";
+pub const MSG_GT_ATTEMPT: &str = "Attempting to initialize Simagic GT Neo";
+pub const MSG_GT_INIT: &str = "initializing Simagic GT Neo wheel...";
+pub const MSG_GT_FOUND: &str = "Found Simagic GT Neo Wheel...";
+pub const MSG_GT_MISSING: &str = "Could not find attached GT Neo Wheel";
+pub const MSG_GT_LUA: &str = "Using lua file";
+pub const MSG_GT_NEEDS_CONFIG: &str = "Simagic GT Neo requires lua config file to function";
+pub const MSG_GT_FEATURE_FAILED: &str = "Failed to send HID feature report";
+pub const MSG_GT_FEATURE_CHUNK_FAILED: &str = "Failed to send HID feature report chunk";
 pub const MSG_INIT_TACH: &str = "initializing tachometer device...";
 pub const MSG_INIT_REVBURNER: &str = "initializing revburner tachometer...";
 pub const MSG_REVBURNER_MISSING: &str = "Could not find attached RevBurner tachometer";
@@ -876,6 +884,20 @@ mod tests {
         assert_eq!(MSG_C12_LUA, "Using lua file for cammus c12 device");
         assert_eq!(MSG_C12_LUA_ISSUE, "There is an issue with your lua script");
         assert_eq!(MSG_C12_LUA_CLOSE, "closing lua");
+        assert_eq!(MSG_GT_ATTEMPT, "Attempting to initialize Simagic GT Neo");
+        assert_eq!(MSG_GT_INIT, "initializing Simagic GT Neo wheel...");
+        assert_eq!(MSG_GT_FOUND, "Found Simagic GT Neo Wheel...");
+        assert_eq!(MSG_GT_MISSING, "Could not find attached GT Neo Wheel");
+        assert_eq!(MSG_GT_LUA, "Using lua file");
+        assert_eq!(
+            MSG_GT_NEEDS_CONFIG,
+            "Simagic GT Neo requires lua config file to function"
+        );
+        assert_eq!(MSG_GT_FEATURE_FAILED, "Failed to send HID feature report");
+        assert_eq!(
+            MSG_GT_FEATURE_CHUNK_FAILED,
+            "Failed to send HID feature report chunk"
+        );
         assert_eq!(USB_INIT_LUA_FAILED, -1);
         assert_eq!(
             usb_init_error_message(USB_INIT_LUA_FAILED),
