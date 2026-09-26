@@ -11,7 +11,8 @@
 //! and fan power on each tick. Serial haptic opens its port when the sim supports
 //! haptics and writes an eight-byte motor report on each tick. SimLED opens its
 //! serial port and writes a shift-light packet on each tick. A custom SimLED queries the LED
-//! count, loads its Lua file, and writes a script-painted packet on each tick. A sound device logs the C init sequence,
+//! count, loads its Lua file, and writes a script-painted packet on each tick. A custom Arduino
+//! loads its Lua file and writes the script Message on each tick. A sound device logs the C init sequence,
 //! connects its Pulse playback stream, and renders haptic samples on each tick.
 
 use std::fs::OpenOptions;
@@ -57,6 +58,7 @@ const C5_RELEASE_VELOCITY: u32 = 0;
 const ASSUME_SIM_SUPPORTS_HAPTICS: bool = true;
 const SIMLED_COUNT_UNSET: i32 = 0;
 const SIMLED_INPUT_WAIT_ERROR: i32 = -1;
+const ARDUINO_CUSTOM_LED_TOTAL: i64 = 0;
 const HAPTIC_AMPLITUDE_UNITY: i64 = 100;
 const HAPTIC_MOTOR_DEFAULT: i64 = 1;
 const HAPTIC_FREQUENCY_DEFAULT: i64 = 0;
@@ -83,6 +85,7 @@ pub struct LoadedDevices {
     c5: Vec<bool>,
     c12: Vec<bool>,
     gt: Vec<bool>,
+    arduino_custom: Vec<bool>,
     csl: Vec<Option<CslPedal>>,
     p1000: Vec<Option<P1000Pedal>>,
     simnet: Vec<Option<SimNetPedal>>,
@@ -136,6 +139,7 @@ impl LoadedDevices {
             c5: Vec::new(),
             c12: Vec::new(),
             gt: Vec::new(),
+            arduino_custom: Vec::new(),
             csl: Vec::new(),
             p1000: Vec::new(),
             simnet: Vec::new(),
@@ -214,6 +218,7 @@ impl LoadedDevices {
         notices.extend(self.write_serial_haptic(index, frame, now_ns));
         notices.extend(self.write_simled(index, frame));
         notices.extend(self.write_simled_custom(index, frame));
+        notices.extend(self.write_arduino_custom(index, frame));
         notices.extend(self.write_g29(index, frame.rpms(), frame.maxrpm()));
         notices.extend(self.write_c5(index, frame));
         notices.extend(self.write_c12(index, frame));
@@ -499,6 +504,7 @@ impl LoadedDevices {
         };
         LuaPaint {
             leds: tick.leds,
+            message: tick.message,
             failure: failure.map(|err| lua_detail(&err)),
         }
     }
@@ -730,6 +736,20 @@ impl LoadedDevices {
         ]
     }
 
+    fn write_arduino_custom(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
+        if !self.arduino_custom.get(index).copied().unwrap_or(false) {
+            return Vec::new();
+        }
+        let painted = self.script_colors(index, frame, ARDUINO_CUSTOM_LED_TOTAL);
+        if let Some(detail) = painted.failure.as_deref() {
+            eprintln!("{}", games::lua_call_failed_message(detail));
+        }
+        let Some(message) = painted.message else {
+            return Vec::new();
+        };
+        write_arduino_message(self.serials.get_mut(index), &message)
+    }
+
     fn haptic_tick(
         &mut self,
         index: usize,
@@ -835,6 +855,20 @@ fn write_serial_frames(port: Option<&mut SerialPort>, frames: &[Vec<u8>]) -> boo
     last_ok
 }
 
+fn write_arduino_message(port: Option<&mut SerialPort>, message: &str) -> Vec<InitNotice> {
+    let copied = i32::try_from(message.len()).unwrap_or(i32::MAX);
+    if let Some(port) = port {
+        let _ = write_serial_frame(port, message.as_bytes());
+    }
+    vec![
+        notice(Level::Trace, games::arduino_copy_message(copied)),
+        notice(
+            Level::Trace,
+            games::arduino_custom_wrote_message(message, copied),
+        ),
+    ]
+}
+
 fn write_serial_frame(port: &mut SerialPort, frame: &[u8]) -> bool {
     match port {
         SerialPort::Live { port, .. } => port.write(frame).is_ok(),
@@ -885,6 +919,7 @@ enum ConfigSource {
 
 struct LuaPaint {
     leds: Vec<u8>,
+    message: Option<String>,
     failure: Option<String>,
 }
 
@@ -892,6 +927,7 @@ impl LuaPaint {
     fn blank() -> Self {
         Self {
             leds: Vec::new(),
+            message: None,
             failure: None,
         }
     }
@@ -1017,6 +1053,7 @@ fn open_profile_with(
     let mut c5 = Vec::new();
     let mut c12 = Vec::new();
     let mut gt = Vec::new();
+    let mut arduino_custom = Vec::new();
     let mut csl = Vec::new();
     let mut p1000 = Vec::new();
     let mut simnet = Vec::new();
@@ -1058,6 +1095,7 @@ fn open_profile_with(
         c5.push(considered.c5);
         c12.push(considered.c12);
         gt.push(considered.gt);
+        arduino_custom.push(considered.arduino_custom);
         csl.push(considered.csl);
         p1000.push(considered.p1000);
         simnet.push(considered.simnet);
@@ -1097,6 +1135,7 @@ fn open_profile_with(
             c5,
             c12,
             gt,
+            arduino_custom,
             csl,
             p1000,
             simnet,
@@ -1146,6 +1185,7 @@ struct Considered {
     c12: bool,
     lua: Option<LuaHost>,
     gt: bool,
+    arduino_custom: bool,
     csl: Option<CslPedal>,
     p1000: Option<P1000Pedal>,
     simnet: Option<SimNetPedal>,
@@ -1195,6 +1235,9 @@ fn consider_entry(
     }
     if simled_entry(entry) {
         return consider_simled(entry, slot, id, disable_audio, attempt);
+    }
+    if arduino_custom_entry(entry) {
+        return consider_arduino_custom(entry, slot, id, disable_audio, attempt);
     }
     if moza_new_entry(entry) {
         return consider_moza(entry, slot, id, disable_audio, attempt);
@@ -1297,6 +1340,7 @@ fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: boo
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1362,6 +1406,7 @@ fn unopened(notices: Vec<InitNotice>) -> Considered {
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1389,6 +1434,7 @@ fn skipped(setup_notices: Vec<InitNotice>, skip: DeviceSkip, slot: i32) -> Consi
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1416,6 +1462,7 @@ fn setup_only(setup_notices: Vec<InitNotice>) -> Considered {
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -1565,6 +1612,7 @@ fn revburner_attempt(
                 c12: false,
                 lua: None,
                 gt: false,
+                arduino_custom: false,
                 csl: None,
                 p1000: None,
                 simnet: None,
@@ -1590,6 +1638,7 @@ fn revburner_attempt(
             c12: false,
             lua: None,
             gt: false,
+            arduino_custom: false,
             csl: None,
             p1000: None,
             simnet: None,
@@ -1614,6 +1663,7 @@ fn revburner_attempt(
             c12: false,
             lua: None,
             gt: false,
+            arduino_custom: false,
             csl: None,
             p1000: None,
             simnet: None,
@@ -1751,6 +1801,7 @@ fn p1000_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: Some(P1000Pedal {
             effect,
@@ -1888,6 +1939,7 @@ fn simnet_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: Some(SimNetPedal {
@@ -1973,6 +2025,7 @@ fn csl_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: Some(CslPedal {
             file,
             effect,
@@ -2361,6 +2414,7 @@ fn gt_ready(
         c12: false,
         lua: None,
         gt: true,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2442,6 +2496,7 @@ fn g29_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2475,6 +2530,7 @@ fn c5_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2508,6 +2564,7 @@ fn c12_ready(
         c12: true,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2636,6 +2693,7 @@ fn shiftlights_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2708,6 +2766,7 @@ fn simwind_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2795,6 +2854,7 @@ fn serial_haptic_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -2881,6 +2941,113 @@ fn haptic_indexes(haptics: &[Option<SerialHaptic>]) -> Vec<usize> {
         .collect()
 }
 
+fn arduino_custom_entry(entry: &DeviceEntry) -> bool {
+    if entry_kind(entry) != DeviceKind::Serial {
+        return false;
+    }
+    let kind = entry.get_str(keys::KEY_TYPE).unwrap_or("");
+    names::lookup(names::SERIAL_TYPES, kind) == Some(names::SUBTYPE_ARDUINO_CUSTOM)
+}
+
+fn consider_arduino_custom(
+    entry: &DeviceEntry,
+    slot: i32,
+    id: i32,
+    disable_audio: bool,
+    attempt: &mut HidAttempt<'_>,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let path = device_port(entry);
+    let configured = entry.get_i64(keys::KEY_BAUD).unwrap_or(keys::BAUD_DEFAULT);
+    let Some(script) = device_script_path(entry) else {
+        return arduino_custom_without_script(&path, configured);
+    };
+    let mut notices = serial_lookup_notices(
+        &path,
+        configured,
+        names::SUBTYPE_ARDUINO_CUSTOM,
+        games::MSG_ARDUINO_CUSTOM_INIT.to_string(),
+    );
+    let baud = serial_baud(configured);
+    let port = match open_serial(attempt, &path, baud) {
+        OpenedSerial::Missing => return serial_open_failed(notices),
+        OpenedSerial::Ready(port) => port,
+    };
+    notices.extend(moza_ready_notices(baud));
+    load_arduino_script(entry, id, notices, port, &path, script)
+}
+
+fn arduino_custom_without_script(path: &str, configured: i64) -> Considered {
+    let mut notices = serial_preamble(
+        names::SUBTYPE_ARDUINO_CUSTOM,
+        games::MSG_ARDUINO_CUSTOM_INIT.to_string(),
+    );
+    notices.push(notice(Level::Info, games::MSG_SERIAL_START));
+    notices.push(notice(
+        Level::Info,
+        games::serial_init_port_message(path, configured),
+    ));
+    serial_rejected(notices, games::SERIAL_OPEN_ERROR)
+}
+
+fn load_arduino_script(
+    entry: &DeviceEntry,
+    id: i32,
+    mut notices: Vec<InitNotice>,
+    port: SerialPort,
+    path: &str,
+    script: PathBuf,
+) -> Considered {
+    notices.push(notice(Level::Info, games::MSG_SIMLED_LUA_INIT));
+    match LuaHost::load_file(&script, LuaLedMode::Serial) {
+        Ok(host) => {
+            notices.push(notice(Level::Info, games::MSG_SIMLED_LUA_OK));
+            arduino_custom_ready(entry, id, notices, port, host)
+        }
+        Err(detail) => {
+            eprintln!("{}", games::lua_load_failed_message(&detail));
+            drop(port);
+            reject_opened_serial(path, notices)
+        }
+    }
+}
+
+fn arduino_custom_ready(
+    entry: &DeviceEntry,
+    id: i32,
+    notices: Vec<InitNotice>,
+    port: SerialPort,
+    host: LuaHost,
+) -> Considered {
+    Considered {
+        setup_notices: Vec::new(),
+        notices,
+        prepared: Some(build_device(entry, id)),
+        port: HidPort::Closed,
+        tach: inactive_tach(),
+        serial: port,
+        wheel: None,
+        sound: None,
+        voice: None,
+        g29: false,
+        c5: false,
+        c12: false,
+        lua: Some(host),
+        gt: false,
+        arduino_custom: true,
+        csl: None,
+        p1000: None,
+        simnet: None,
+        shift_lights: None,
+        simwind: None,
+        serial_haptic: None,
+        simled: None,
+        custom_leds: None,
+    }
+}
+
 fn simled_custom_entry(entry: &DeviceEntry) -> bool {
     if entry_kind(entry) != DeviceKind::Serial || !simled_script(entry) {
         return false;
@@ -2927,10 +3094,10 @@ fn reject_simled_count(path: &str, mut notices: Vec<InitNotice>) -> Considered {
         Level::Info,
         games::simled_count_message(SIMLED_COUNT_UNSET),
     ));
-    reject_simled_port(path, notices)
+    reject_opened_serial(path, notices)
 }
 
-fn reject_simled_port(path: &str, mut notices: Vec<InitNotice>) -> Considered {
+fn reject_opened_serial(path: &str, mut notices: Vec<InitNotice>) -> Considered {
     notices.push(notice(Level::Debug, games::serial_free_message(path)));
     serial_rejected(notices, games::SERIAL_OPEN_ERROR)
 }
@@ -2943,8 +3110,8 @@ fn load_simled_script(
     count: i32,
     path: &str,
 ) -> Considered {
-    let Some(script) = simled_script_path(entry) else {
-        return reject_simled_port(path, notices);
+    let Some(script) = device_script_path(entry) else {
+        return reject_opened_serial(path, notices);
     };
     notices.push(notice(Level::Info, games::MSG_SIMLED_LUA_INIT));
     match LuaHost::load_file(&script, LuaLedMode::Serial) {
@@ -2955,12 +3122,12 @@ fn load_simled_script(
         Err(detail) => {
             eprintln!("{}", games::lua_load_failed_message(&detail));
             drop(port);
-            reject_simled_port(path, notices)
+            reject_opened_serial(path, notices)
         }
     }
 }
 
-fn simled_script_path(entry: &DeviceEntry) -> Option<PathBuf> {
+fn device_script_path(entry: &DeviceEntry) -> Option<PathBuf> {
     match config_source(entry) {
         ConfigSource::File(path) => Some(path),
         ConfigSource::Unset | ConfigSource::NamedNone => None,
@@ -2990,6 +3157,7 @@ fn simled_custom_ready(
         c12: false,
         lua: Some(host),
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -3215,6 +3383,7 @@ fn simled_ready(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -3375,6 +3544,7 @@ fn finish_moza(
         c12: false,
         lua: None,
         gt: false,
+        arduino_custom: false,
         csl: None,
         p1000: None,
         simnet: None,
@@ -4625,6 +4795,272 @@ mod tests {
             &loaded.notices,
             &games::serial_free_message(PORT)
         ));
+    }
+
+    const ARDUINO_CUSTOM_LUA: &str = "Message = \"parity\"\n";
+    const ARDUINO_CUSTOM_QUIET: &str = "-- quiet\n";
+    const ARDUINO_CUSTOM_ERROR: &str = "Message = \"parity\"\nerror(\"boom\")\n";
+    const ARDUINO_CUSTOM_MESSAGE: &str = "parity";
+    const ARDUINO_SCRIPT_NAME: &str = "cargopit-arduino-custom.lua";
+    const ARDUINO_QUIET_SCRIPT_NAME: &str = "cargopit-arduino-custom-quiet.lua";
+    const ARDUINO_ERROR_SCRIPT_NAME: &str = "cargopit-arduino-custom-error.lua";
+    const ARDUINO_MISSING_SCRIPT_NAME: &str = "cargopit-arduino-custom-missing.lua";
+
+    #[test]
+    fn arduino_custom_missing_port_is_not_scheduled() {
+        const PORT: &str = "/dev/ttyCUSTOM-TEST";
+        let _script = custom_script(ARDUINO_SCRIPT_NAME, ARDUINO_CUSTOM_LUA);
+        let config = arduino_custom_config(PORT, Some(ARDUINO_SCRIPT_NAME));
+        let mut seen = String::new();
+        let missing = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| {
+                seen = path.to_string();
+                false
+            },
+        );
+        assert_eq!(seen, PORT);
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_ARDUINO_CUSTOM_INIT));
+        assert!(notice_has(&missing.notices, games::MSG_SERIAL_OPEN_ERROR));
+        assert!(notice_absent(
+            &missing.notices,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_SIMLED_LUA_INIT));
+    }
+
+    #[test]
+    fn arduino_custom_writes_the_script_message_every_tick() {
+        const PORT: &str = "/dev/ttyCUSTOM-TEST";
+        const REPEATED_TICKS: usize = 2;
+        let _script = custom_script(ARDUINO_SCRIPT_NAME, ARDUINO_CUSTOM_LUA);
+        let config = arduino_custom_config(PORT, Some(ARDUINO_SCRIPT_NAME));
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| path == PORT,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        assert!(arduino_custom_notice_order(&loaded.notices));
+        assert!(notice_absent(
+            &loaded.notices,
+            games::MSG_SIMLED_COUNT_ATTEMPT
+        ));
+        assert_eq!(
+            loaded.devices.captured_serial(0).map(|frames| frames.len()),
+            Some(0)
+        );
+        let copied = i32::try_from(ARDUINO_CUSTOM_MESSAGE.len()).unwrap_or(i32::MAX);
+        let mut devices = loaded.devices;
+        let frame = shift_frame(0, 0);
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_has(&tick, &games::arduino_copy_message(copied)));
+        assert!(notice_has(
+            &tick,
+            &games::arduino_custom_wrote_message(ARDUINO_CUSTOM_MESSAGE, copied)
+        ));
+        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let frames = devices.captured_serial(0).expect("captured").to_vec();
+        assert_eq!(frames.len(), REPEATED_TICKS);
+        assert!(frames
+            .iter()
+            .all(|frame| frame == ARDUINO_CUSTOM_MESSAGE.as_bytes()));
+        let released = devices.release(PROBE_OPEN_NS);
+        assert!(notice_has(&released, &games::serial_free_message(PORT)));
+        assert!(notice_absent(
+            &released,
+            &games::arduino_copy_message(copied)
+        ));
+        assert!(notice_absent(
+            &released,
+            &games::arduino_custom_wrote_message(ARDUINO_CUSTOM_MESSAGE, copied)
+        ));
+        assert!(notice_absent(&released, games::MSG_C12_LUA_CLOSE));
+        assert!(devices.captured_serial(0).is_none());
+    }
+
+    #[test]
+    fn arduino_custom_without_a_message_writes_nothing() {
+        const PORT: &str = "/dev/ttyCUSTOM-TEST";
+        let _script = custom_script(ARDUINO_QUIET_SCRIPT_NAME, ARDUINO_CUSTOM_QUIET);
+        let config = arduino_custom_config(PORT, Some(ARDUINO_QUIET_SCRIPT_NAME));
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| path == PORT,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        let mut devices = loaded.devices;
+        let tick = devices.tick(0, &shift_frame(0, 0), PROBE_OPEN_NS);
+        assert!(tick.is_empty());
+        assert_eq!(
+            devices.captured_serial(0).map(|frames| frames.len()),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn arduino_custom_keeps_a_message_set_before_a_script_error() {
+        const PORT: &str = "/dev/ttyCUSTOM-TEST";
+        let _script = custom_script(ARDUINO_ERROR_SCRIPT_NAME, ARDUINO_CUSTOM_ERROR);
+        let config = arduino_custom_config(PORT, Some(ARDUINO_ERROR_SCRIPT_NAME));
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |path| path == PORT,
+        );
+        assert_eq!(loaded.devices.len(), 1);
+        let copied = i32::try_from(ARDUINO_CUSTOM_MESSAGE.len()).unwrap_or(i32::MAX);
+        let mut devices = loaded.devices;
+        let tick = devices.tick(0, &shift_frame(0, 0), PROBE_OPEN_NS);
+        assert!(notice_has(
+            &tick,
+            &games::arduino_custom_wrote_message(ARDUINO_CUSTOM_MESSAGE, copied)
+        ));
+        assert_eq!(
+            devices.captured_serial(0).map(|frames| frames.to_vec()),
+            Some(vec![ARDUINO_CUSTOM_MESSAGE.as_bytes().to_vec()])
+        );
+    }
+
+    #[test]
+    fn arduino_custom_missing_script_is_not_scheduled() {
+        const PORT: &str = "/dev/ttyCUSTOM-TEST";
+        let path = std::env::temp_dir().join(ARDUINO_MISSING_SCRIPT_NAME);
+        let _ = std::fs::remove_file(&path);
+        let config = arduino_custom_config(PORT, Some(ARDUINO_MISSING_SCRIPT_NAME));
+        let loaded = open_profile_ports(
+            &config,
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| true,
+        );
+        assert!(loaded.devices.is_empty());
+        assert!(notice_has(&loaded.notices, games::MSG_SIMLED_LUA_INIT));
+        assert!(notice_absent(&loaded.notices, games::MSG_SIMLED_LUA_OK));
+        assert!(notice_absent(
+            &loaded.notices,
+            games::MSG_SIMLED_COUNT_ATTEMPT
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_init_error_message(games::SERIAL_OPEN_ERROR)
+        ));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::serial_free_message(PORT)
+        ));
+    }
+
+    #[test]
+    fn arduino_custom_without_a_script_does_not_open() {
+        const PORT: &str = "/dev/ttyCUSTOM-TEST";
+        let mut seen = false;
+        let missing = open_profile_ports(
+            &arduino_custom_config(PORT, None),
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| {
+                seen = true;
+                true
+            },
+        );
+        assert!(!seen);
+        assert!(missing.devices.is_empty());
+        assert!(notice_has(&missing.notices, games::MSG_ARDUINO_CUSTOM_INIT));
+        assert!(notice_has(&missing.notices, games::MSG_SERIAL_START));
+        assert!(notice_absent(
+            &missing.notices,
+            games::MSG_SERIAL_PORT_OPENED
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_SERIAL_OPENING));
+        assert!(notice_has(
+            &missing.notices,
+            &games::serial_init_error_message(games::SERIAL_OPEN_ERROR)
+        ));
+        let mut seen_none = false;
+        let named_none = open_profile_ports(
+            &arduino_custom_config(PORT, Some(keys::CONFIG_VALUE_NONE)),
+            0,
+            false,
+            PLAY_USES_PULSES,
+            PROBE_OPEN_NS,
+            |_vendor, _product| false,
+            |_path| {
+                seen_none = true;
+                true
+            },
+        );
+        assert!(!seen_none);
+        assert!(named_none.devices.is_empty());
+        assert!(notice_has(
+            &named_none.notices,
+            games::MSG_ARDUINO_CUSTOM_INIT
+        ));
+    }
+
+    fn arduino_custom_config(port: &str, script: Option<&str>) -> CargopitConfig {
+        const CUSTOM_FPS: i64 = 60;
+        let mut device = DeviceEntry::new();
+        device.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        let kind = names::name_for(names::SERIAL_TYPES, names::SUBTYPE_ARDUINO_CUSTOM)
+            .expect("arduino custom");
+        device.set_str(keys::KEY_TYPE, kind);
+        device.set_str(keys::KEY_DEVPATH, port);
+        device.set_int(keys::KEY_BAUD, keys::BAUD_DEFAULT);
+        if let Some(name) = script {
+            let path = if name.eq_ignore_ascii_case(keys::CONFIG_VALUE_NONE) {
+                name.to_string()
+            } else {
+                std::env::temp_dir().join(name).display().to_string()
+            };
+            device.set_str(keys::KEY_CONFIG, path);
+        }
+        device.set_bool(keys::KEY_ENABLED, true);
+        device.set_int(keys::KEY_FPS, CUSTOM_FPS);
+        CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        }
+    }
+
+    fn arduino_custom_notice_order(notices: &[InitNotice]) -> bool {
+        let messages = [
+            games::serial_subtype_message(names::SUBTYPE_ARDUINO_CUSTOM),
+            games::MSG_ARDUINO_CUSTOM_INIT.to_string(),
+            games::MSG_SERIAL_START.to_string(),
+            games::MSG_SERIAL_PORT_OPENED.to_string(),
+            games::MSG_SIMLED_LUA_INIT.to_string(),
+            games::MSG_SIMLED_LUA_OK.to_string(),
+        ];
+        notice_sequence(notices, &messages)
     }
 
     struct SimLedSpanConfig {

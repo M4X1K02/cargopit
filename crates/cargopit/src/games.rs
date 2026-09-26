@@ -432,6 +432,7 @@ pub const MSG_SHIFTLIGHTS_INIT: &str = "Initializing arduino device for shiftlig
 pub const MSG_SERIAL_HAPTIC_INIT: &str = "Initializing arduino device for haptic effects.";
 pub const MSG_SIMLED_INIT: &str = "Initializing arduino device for simled.";
 pub const MSG_SIMLED_CUSTOM_INIT: &str = "Initializing arduino device for custom simled.";
+pub const MSG_ARDUINO_CUSTOM_INIT: &str = "Initializing custom arduino device.";
 pub const MSG_SIMLED_COUNT_ATTEMPT: &str = "Attempting to retrieve num lights from port...";
 pub const MSG_SIMLED_COUNT_SEND: &str = "Sending message to get num lights";
 pub const MSG_SIMLED_LUA_INIT: &str = "LUA config specified for this device... initializing...";
@@ -591,6 +592,10 @@ pub fn simled_count_wait_message(code: i32) -> String {
 
 pub fn simled_custom_wrote_message(size: i32) -> String {
     format!("custom led wrote {size} bytes")
+}
+
+pub fn arduino_custom_wrote_message(message: &str, size: i32) -> String {
+    format!("custom arduino wrote message {message} of {size} bytes")
 }
 
 pub fn arduino_copy_message(size: i32) -> String {
@@ -1303,6 +1308,16 @@ mod tests {
         assert_eq!(
             MSG_SIMLED_CUSTOM_INIT,
             "Initializing arduino device for custom simled."
+        );
+        assert_eq!(
+            MSG_ARDUINO_CUSTOM_INIT,
+            "Initializing custom arduino device."
+        );
+        const ARDUINO_SAMPLE_MESSAGE: &str = "parity";
+        const ARDUINO_SAMPLE_BYTES: i32 = 6;
+        assert_eq!(
+            arduino_custom_wrote_message(ARDUINO_SAMPLE_MESSAGE, ARDUINO_SAMPLE_BYTES),
+            "custom arduino wrote message parity of 6 bytes"
         );
         assert_eq!(
             MSG_SIMLED_COUNT_ATTEMPT,
