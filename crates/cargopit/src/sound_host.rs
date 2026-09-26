@@ -224,6 +224,7 @@ impl SoundSettings {
         Some(Arc::new(Mutex::new(ShakerVoice::new(
             self.haptic(effect),
             channels,
+            noise_hz(self.noise),
         ))))
     }
 
@@ -319,6 +320,11 @@ fn pan_mask(pan: i64, channels: i64, all: u32) -> u32 {
         return all;
     };
     1u32 << shift
+}
+
+fn noise_hz(noise: i64) -> f64 {
+    let narrowed = i32::try_from(noise).unwrap_or(if noise < 0 { i32::MIN } else { i32::MAX });
+    f64::from(narrowed as u32)
 }
 
 fn u32_from_i64(value: i64) -> u32 {
@@ -430,5 +436,15 @@ mod tests {
             .collect();
         assert!(messages.contains(&volume.as_str()));
         assert!(messages.contains(&mask.as_str()));
+    }
+
+    #[test]
+    fn noise_uses_the_c_unsigned_cast() {
+        const SAMPLE_NOISE: i64 = 10;
+        const NEGATIVE_NOISE: i64 = -1;
+        const UNSIGNED_NEGATIVE: f64 = 4_294_967_295.0;
+        assert_eq!(noise_hz(SAMPLE_NOISE), f64::from(SAMPLE_NOISE as u32));
+        assert_eq!(noise_hz(NEGATIVE_NOISE), UNSIGNED_NEGATIVE);
+        assert_eq!(noise_hz(0), 0.0);
     }
 }

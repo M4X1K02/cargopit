@@ -56,6 +56,9 @@ const HARMONIC2: f64 = 2.0;
 const HARMONIC3: f64 = 3.0;
 const I16_MAX: f64 = 32_767.0;
 const I16_MIN: f64 = -32_768.0;
+const NOISE_BIPOLAR_SPAN: f64 = 2.0;
+const NOISE_BIPOLAR_OFFSET: f64 = 1.0;
+const NOISE_OFF: f64 = 0.0;
 const CLOCK_OP: &str = concat!("clock_", "gettime");
 
 pub type SharedShaker = Arc<Mutex<ShakerVoice>>;
@@ -66,12 +69,11 @@ pub struct ShakerVoice {
 }
 
 impl ShakerVoice {
-    pub fn new(settings: HapticSettings, channels: u8) -> Self {
+    pub fn new(settings: HapticSettings, channels: u8, noise_hz: f64) -> Self {
         let channels = usize::from(channels.max(SHAKER_CHANNEL_MIN));
-        Self {
-            tone: Tone::from_settings(settings),
-            channels,
-        }
+        let mut tone = Tone::from_settings(settings);
+        tone.noise = noise_hz;
+        Self { tone, channels }
     }
 
     pub fn update(&mut self, frame: &Telemetry, clock: &impl Clock) {
@@ -132,6 +134,7 @@ struct Tone {
     lp1: f64,
     lp2: f64,
     last_gear: u32,
+    noise: f64,
 }
 
 impl Log {
@@ -297,6 +300,7 @@ impl Tone {
             lp1: 0.0,
             lp2: 0.0,
             last_gear: GEAR_NEUTRAL,
+            noise: NOISE_OFF,
         }
     }
 
@@ -491,7 +495,7 @@ impl Tone {
         drive = drive.clamp(0.0, MAX_DRIVE);
         let mut sample = drive * self.harmonic_wave() * self.firing_envelope();
         sample = self.lowpass(sample, coeff.rate);
-        let stepped = clamp_hz(self.play_frequency);
+        let stepped = clamp_hz(apply_noise(self.play_frequency, self.noise));
         advance_cycle(&mut self.phase, stepped, coeff.rate);
         advance_cycle(&mut self.pulse_phase, self.pulse_hz, coeff.rate);
         clamp_i16(sample * I16_MAX)
@@ -567,6 +571,22 @@ fn coeffs() -> Coeff {
 
 fn clamp_unit(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
+}
+
+fn apply_noise(base: f64, noise: f64) -> f64 {
+    if noise <= NOISE_OFF {
+        return base;
+    }
+    offset_frequency(base, noise, noise_unit())
+}
+
+fn offset_frequency(base: f64, noise: f64, unit: f64) -> f64 {
+    base + unit * noise
+}
+
+fn noise_unit() -> f64 {
+    let draw = unsafe { libc::rand() };
+    f64::from(draw) / f64::from(libc::RAND_MAX) * NOISE_BIPOLAR_SPAN - NOISE_BIPOLAR_OFFSET
 }
 
 fn clamp_hz(hz: f64) -> f64 {
@@ -734,6 +754,7 @@ mod tests {
         let mut voice = ShakerVoice::new(
             capture_settings(VibrationEffect::EngineRpm),
             ENGINE_CHANNELS,
+            NOISE_OFF,
         );
         let silent = voice.render(RENDER_BYTES);
         assert!(silent.iter().all(|byte| *byte == 0));
@@ -745,5 +766,22 @@ mod tests {
         voice.update(&frame, &VirtualClock::new());
         let played = voice.render(RENDER_BYTES);
         assert!(played.iter().any(|byte| *byte != 0));
+    }
+
+    #[test]
+    fn noise_offsets_frequency_the_way_c_does() {
+        const BASE_HZ: f64 = 40.0;
+        const NOISE_HZ: f64 = 10.0;
+        const UNIT_HIGH: f64 = 1.0;
+        const UNIT_LOW: f64 = -1.0;
+        assert_eq!(apply_noise(BASE_HZ, NOISE_OFF), BASE_HZ);
+        assert_eq!(
+            offset_frequency(BASE_HZ, NOISE_HZ, UNIT_HIGH),
+            BASE_HZ + NOISE_HZ
+        );
+        assert_eq!(
+            offset_frequency(BASE_HZ, NOISE_HZ, UNIT_LOW),
+            BASE_HZ - NOISE_HZ
+        );
     }
 }
