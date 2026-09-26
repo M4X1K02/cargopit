@@ -488,12 +488,7 @@ fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, simulator_a
     if parts.devices.pending {
         parts.devices.pending = false;
         parts.devices.scheduler.clear();
-        parts.devices.loaded = load_configured(
-            parsed,
-            simulator_api,
-            parts.clock.monotonic_ns(),
-            parts.devices.tyres.supports_haptics,
-        );
+        parts.devices.loaded = load_configured(parsed, simulator_api, parts.clock.monotonic_ns());
         for index in 0..parts.devices.loaded.len() {
             let fps = parts
                 .devices
@@ -572,12 +567,7 @@ fn publish_tyres(session: &mut GameSession, snapshot: &mut games::FrameSnapshot,
     }
 }
 
-fn load_configured(
-    parsed: &cli::Invocation,
-    simulator_api: i32,
-    now_ns: u64,
-    supports_haptics: bool,
-) -> LoadedDevices {
+fn load_configured(parsed: &cli::Invocation, simulator_api: i32, now_ns: u64) -> LoadedDevices {
     let path = games::config_path_for(
         parsed.config_file.as_deref().map(std::path::Path::new),
         parsed.config_dir.as_deref().map(std::path::Path::new),
@@ -599,14 +589,7 @@ fn load_configured(
     let Some(index) = devices::profile_index(config.profiles.len(), parsed.config_index) else {
         return LoadedDevices::empty();
     };
-    announce_device_init(
-        parsed,
-        &config,
-        index,
-        simulator_api,
-        now_ns,
-        supports_haptics,
-    )
+    announce_device_init(parsed, &config, index, simulator_api, now_ns)
 }
 
 fn announce_device_init(
@@ -615,7 +598,6 @@ fn announce_device_init(
     index: usize,
     simulator_api: i32,
     now_ns: u64,
-    supports_haptics: bool,
 ) -> LoadedDevices {
     let devices = &config.profiles[index].devices;
     let device_count = i32::try_from(devices.len()).unwrap_or(i32::MAX);
@@ -626,13 +608,7 @@ fn announce_device_init(
         &games::loading_confignum_message(confignum, device_count),
     );
     slog(parsed, Level::Info, games::MSG_PARSING_CONFIG);
-    let loaded = devices::open_profile_at(
-        config,
-        index,
-        parsed.disable_audio,
-        now_ns,
-        supports_haptics,
-    );
+    let loaded = devices::open_profile_at(config, index, parsed.disable_audio, now_ns);
     log_notices(parsed, loaded.setup_notices);
     slog(
         parsed,
