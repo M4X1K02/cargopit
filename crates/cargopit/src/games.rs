@@ -427,6 +427,7 @@ pub const MSG_TACH_GRANULARITY_INVALID: &str =
 pub const MSG_TACH_GETTING_PULSES: &str = "Getting pulses for current tachometer revs";
 pub const MSG_REVBURNER_NO_HANDLE: &str = "no handle";
 pub const SERIAL_OPEN_ERROR: i32 = -1;
+pub const MSG_SHIFTLIGHTS_INIT: &str = "Initializing arduino device for shiftlights.";
 pub const MSG_MOZA_NEW_INIT: &str = "Initializing new firmware Moza serial wheel device.";
 pub const MSG_SERIAL_START: &str = "Starting serial device initialization";
 pub const MSG_SERIAL_NO_EXISTING: &str = "no existing connections found, looking to create new";
@@ -560,6 +561,14 @@ pub fn sound_connect_error(node: &str, sink: &str, err: &str) -> String {
 
 pub fn serial_free_message(path: &str) -> String {
     format!("freeing physical device {path}")
+}
+
+pub fn shiftlights_lit_message(lit: i32) -> String {
+    format!("Updating arduino device lights to {lit}")
+}
+
+pub fn arduino_copy_message(size: i32) -> String {
+    format!("copying {size} bytes to arduino device")
 }
 
 pub fn tach_config_load_message(path: &str) -> String {
@@ -1208,6 +1217,18 @@ mod tests {
         assert_eq!(
             unknown_haptic_message(9),
             "Initializing unknown haptic effect type 9."
+        );
+        assert_eq!(
+            MSG_SHIFTLIGHTS_INIT,
+            "Initializing arduino device for shiftlights."
+        );
+        assert_eq!(
+            shiftlights_lit_message(1),
+            "Updating arduino device lights to 1"
+        );
+        assert_eq!(
+            arduino_copy_message(cargopit_devices::serial::SHIFT_PACKET_LEN),
+            "copying 1 bytes to arduino device"
         );
         assert_eq!(MSG_MOZA_ARM_FAILED, "Moza R9 telemetry arm failed");
         assert_eq!(MSG_MOZA_ARMED, "Moza R9 telemetry mode armed");

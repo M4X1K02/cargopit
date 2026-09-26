@@ -363,11 +363,18 @@ fn revlights_lit(rpm: i32, maxrpm: i32, steps: i32) -> i32 {
     (rpm / interval).min(steps)
 }
 
+pub const SHIFT_PACKET_LEN: i32 = 1;
+
+pub fn shiftlights_byte(rpm: u32, maxrpm: u32, lights: i32) -> u8 {
+    let lit = revlights_lit(rpm as i32, maxrpm as i32, lights);
+    lit as u8
+}
+
 fn run_shiftlights(log: &Log, frames: &[Telemetry], baud: i32) -> usize {
     let id = log.open_port(CAPTURE_PORT, baud);
     each_frame(log, frames, |_log, frame| {
-        let lit = revlights_lit(frame.rpms() as i32, frame.maxrpm() as i32, SHIFT_LIGHTS);
-        log.write_port(id, &[lit as u8]);
+        let lit = shiftlights_byte(frame.rpms(), frame.maxrpm(), SHIFT_LIGHTS);
+        log.write_port(id, &[lit]);
     });
     id
 }
@@ -1350,4 +1357,24 @@ pub fn moza_r9_open_baud(configured: i64) -> u32 {
     let configured = u32::try_from(configured).unwrap_or(0);
     let floor = u32::try_from(BAUD_R9_FLOOR).unwrap_or(0);
     configured.max(floor)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SAMPLE_RPM: u32 = 4_000;
+    const SAMPLE_MAX_RPM: u32 = 8_000;
+    const SAMPLE_LIGHTS: i32 = 6;
+    const SAMPLE_LIT: u8 = 3;
+
+    #[test]
+    fn shiftlights_byte_counts_leds_up_to_the_redline() {
+        assert_eq!(
+            shiftlights_byte(SAMPLE_RPM, SAMPLE_MAX_RPM, SAMPLE_LIGHTS),
+            SAMPLE_LIT
+        );
+        assert_eq!(shiftlights_byte(0, SAMPLE_MAX_RPM, SAMPLE_LIGHTS), 0);
+        assert_eq!(shiftlights_byte(SAMPLE_RPM, SAMPLE_MAX_RPM, 0), 0);
+    }
 }
