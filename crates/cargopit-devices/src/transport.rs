@@ -225,6 +225,14 @@ const PULSE_SMOKE_FRAMES: usize = 48;
 const PULSE_POLL_ATTEMPTS: u32 = 50;
 const PULSE_POLL_MS: u64 = 20;
 const PULSE_APP_NAME: &str = "cargopit";
+pub const PULSE_HOST_APP_NAME: &str = "Cargopit";
+pub const PULSE_CONTEXT_UNCONNECTED: i32 = 0;
+pub const PULSE_CONTEXT_CONNECTING: i32 = 1;
+pub const PULSE_CONTEXT_AUTHORIZING: i32 = 2;
+pub const PULSE_CONTEXT_SETTING_NAME: i32 = 3;
+pub const PULSE_CONTEXT_READY: i32 = 4;
+pub const PULSE_CONTEXT_FAILED: i32 = 5;
+pub const PULSE_CONTEXT_TERMINATED: i32 = 6;
 
 #[derive(Clone, Debug, Default)]
 pub struct FakePulse {
@@ -365,19 +373,141 @@ fn wait_ready(
 ) -> bool {
     use libpulse_binding::context::State;
 
+    poll_settled(mainloop, context) == Some(State::Ready)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PulseOutcome {
+    Ready,
+    ConnectFailed,
+    ContextFailed { state: i32 },
+    NotCreated,
+}
+
+pub struct PulseSession {
+    mainloop: Option<libpulse_binding::mainloop::threaded::Mainloop>,
+    context: Option<libpulse_binding::context::Context>,
+    outcome: PulseOutcome,
+}
+
+impl PulseSession {
+    pub fn open() -> Self {
+        let Some(mut mainloop) = libpulse_binding::mainloop::threaded::Mainloop::new() else {
+            return Self::from_parts(None, None, PulseOutcome::NotCreated);
+        };
+        let Some(mut context) =
+            libpulse_binding::context::Context::new(&mainloop, PULSE_HOST_APP_NAME)
+        else {
+            return Self::from_parts(Some(mainloop), None, PulseOutcome::NotCreated);
+        };
+        if let Some(outcome) = reject_context(&mut mainloop, &mut context) {
+            return Self::from_parts(Some(mainloop), Some(context), outcome);
+        }
+        let outcome = outcome_from_state(poll_settled(&mut mainloop, &context));
+        Self::from_parts(Some(mainloop), Some(context), outcome)
+    }
+
+    pub fn outcome(&self) -> PulseOutcome {
+        self.outcome
+    }
+
+    pub fn context_created(&self) -> bool {
+        self.context.is_some()
+    }
+
+    fn from_parts(
+        mainloop: Option<libpulse_binding::mainloop::threaded::Mainloop>,
+        context: Option<libpulse_binding::context::Context>,
+        outcome: PulseOutcome,
+    ) -> Self {
+        Self {
+            mainloop,
+            context,
+            outcome,
+        }
+    }
+}
+
+impl Drop for PulseSession {
+    fn drop(&mut self) {
+        let Some(mainloop) = self.mainloop.as_mut() else {
+            self.context.take();
+            return;
+        };
+        mainloop.lock();
+        drop(self.context.take());
+        mainloop.unlock();
+        self.mainloop.take();
+    }
+}
+
+fn reject_context(
+    mainloop: &mut libpulse_binding::mainloop::threaded::Mainloop,
+    context: &mut libpulse_binding::context::Context,
+) -> Option<PulseOutcome> {
+    mainloop.lock();
+    if mainloop.start().is_err() {
+        mainloop.unlock();
+        return Some(PulseOutcome::ConnectFailed);
+    }
+    if context
+        .connect(None, libpulse_binding::context::FlagSet::NOFLAGS, None)
+        .is_err()
+    {
+        mainloop.unlock();
+        return Some(PulseOutcome::ConnectFailed);
+    }
+    mainloop.unlock();
+    None
+}
+
+fn outcome_from_state(state: Option<libpulse_binding::context::State>) -> PulseOutcome {
+    use libpulse_binding::context::State;
+
+    let Some(state) = state else {
+        return PulseOutcome::ConnectFailed;
+    };
+    if state == State::Ready {
+        return PulseOutcome::Ready;
+    }
+    if state == State::Failed || state == State::Terminated {
+        return PulseOutcome::ContextFailed {
+            state: pulse_state_code(state),
+        };
+    }
+    PulseOutcome::ConnectFailed
+}
+
+fn poll_settled(
+    mainloop: &mut libpulse_binding::mainloop::threaded::Mainloop,
+    context: &libpulse_binding::context::Context,
+) -> Option<libpulse_binding::context::State> {
+    use libpulse_binding::context::State;
+
     for _ in 0..PULSE_POLL_ATTEMPTS {
         mainloop.lock();
         let state = context.get_state();
         mainloop.unlock();
-        if state == State::Ready {
-            return true;
-        }
-        if state == State::Failed || state == State::Terminated {
-            return false;
+        if state == State::Ready || state == State::Failed || state == State::Terminated {
+            return Some(state);
         }
         std::thread::sleep(Duration::from_millis(PULSE_POLL_MS));
     }
-    false
+    None
+}
+
+fn pulse_state_code(state: libpulse_binding::context::State) -> i32 {
+    use libpulse_binding::context::State;
+
+    match state {
+        State::Unconnected => PULSE_CONTEXT_UNCONNECTED,
+        State::Connecting => PULSE_CONTEXT_CONNECTING,
+        State::Authorizing => PULSE_CONTEXT_AUTHORIZING,
+        State::SettingName => PULSE_CONTEXT_SETTING_NAME,
+        State::Ready => PULSE_CONTEXT_READY,
+        State::Failed => PULSE_CONTEXT_FAILED,
+        State::Terminated => PULSE_CONTEXT_TERMINATED,
+    }
 }
 
 #[cfg(test)]
@@ -433,11 +563,36 @@ mod tests {
     }
 
     #[test]
+    fn pulse_context_state_codes_match_c() {
+        use libpulse_binding::context::State;
+
+        assert_eq!(State::Unconnected as i32, PULSE_CONTEXT_UNCONNECTED);
+        assert_eq!(State::Connecting as i32, PULSE_CONTEXT_CONNECTING);
+        assert_eq!(State::Authorizing as i32, PULSE_CONTEXT_AUTHORIZING);
+        assert_eq!(State::SettingName as i32, PULSE_CONTEXT_SETTING_NAME);
+        assert_eq!(State::Ready as i32, PULSE_CONTEXT_READY);
+        assert_eq!(State::Failed as i32, PULSE_CONTEXT_FAILED);
+        assert_eq!(State::Terminated as i32, PULSE_CONTEXT_TERMINATED);
+        assert_eq!(pulse_state_code(State::Failed), PULSE_CONTEXT_FAILED);
+    }
+
+    #[test]
     fn pulse_smoke_accepts_a_missing_server() {
         match RealPulse::connect() {
             Ok(mut pulse) => pulse.smoke_write_and_mute().expect("pulse smoke"),
             Err(TransportError::Unavailable) => {}
             Err(TransportError::Failed) => panic!("pulse failed after the server answered"),
+        }
+        let session = PulseSession::open();
+        match session.outcome() {
+            PulseOutcome::Ready | PulseOutcome::ConnectFailed => {
+                assert!(session.context_created());
+            }
+            PulseOutcome::ContextFailed { state } => {
+                assert!(session.context_created());
+                assert!(state == PULSE_CONTEXT_FAILED || state == PULSE_CONTEXT_TERMINATED);
+            }
+            PulseOutcome::NotCreated => panic!("pulse context was not created"),
         }
     }
 }

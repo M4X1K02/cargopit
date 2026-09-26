@@ -22,6 +22,7 @@ use cargopit::tyres::{self, TyreSimFlags};
 use cargopit::udp;
 use cargopit_devices::clock::{Clock, SystemClock};
 use cargopit_devices::telemetry::Telemetry;
+use cargopit_devices::transport::{PulseOutcome, PulseSession};
 use simapi_sys::GameSession;
 
 const STOP_SIGNAL_NONE: i32 = 0;
@@ -86,6 +87,7 @@ fn play(parsed: &cli::Invocation) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     slog(parsed, Level::Info, games::MSG_GAMELOOP_MODE);
+    let pulse = open_pulse(parsed);
     let code = match simd::ensure() {
         EnsureStatus::Ok => {
             let _ = run_discovery(parsed);
@@ -100,6 +102,7 @@ fn play(parsed: &cli::Invocation) -> ExitCode {
         games::game_loop_exit_message,
         games::game_loop_fail_message,
     );
+    close_pulse(parsed, pulse);
     ExitCode::SUCCESS
 }
 
@@ -648,6 +651,7 @@ fn test_mode(parsed: &cli::Invocation) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     slog(parsed, Level::Info, games::MSG_TEST_MODE_BANNER);
+    let pulse = open_pulse(parsed);
     let code = run_test(parsed);
     log_action_exit(
         parsed,
@@ -655,6 +659,7 @@ fn test_mode(parsed: &cli::Invocation) -> ExitCode {
         games::test_exit_message,
         games::test_fail_message,
     );
+    close_pulse(parsed, pulse);
     let _ = io::stdout().flush();
     ExitCode::SUCCESS
 }
@@ -691,6 +696,40 @@ fn run_test(parsed: &cli::Invocation) -> i32 {
             games::ERROR_NONE
         }
     }
+}
+
+fn open_pulse(parsed: &cli::Invocation) -> Option<PulseSession> {
+    if parsed.disable_audio {
+        return None;
+    }
+    slog(parsed, Level::Info, games::MSG_PULSE_CONNECTING);
+    let session = PulseSession::open();
+    match session.outcome() {
+        PulseOutcome::Ready => slog(parsed, Level::Info, games::MSG_PULSE_CONNECTED),
+        PulseOutcome::ConnectFailed | PulseOutcome::NotCreated => {
+            slog(parsed, Level::Error, games::MSG_PULSE_CONNECT_FAILED);
+        }
+        PulseOutcome::ContextFailed { state } => {
+            slog(
+                parsed,
+                Level::Error,
+                &games::pulse_context_failed_message(state),
+            );
+        }
+    }
+    Some(session)
+}
+
+fn close_pulse(parsed: &cli::Invocation, session: Option<PulseSession>) {
+    let Some(session) = session else {
+        return;
+    };
+    let created = session.context_created();
+    drop(session);
+    if !created {
+        return;
+    }
+    slog(parsed, Level::Trace, games::MSG_PULSE_CONTEXT_FREED);
 }
 
 fn prepare_host(parsed: &cli::Invocation) -> bool {
