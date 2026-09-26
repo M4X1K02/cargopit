@@ -40,6 +40,10 @@ pub const CONFIG_IO_FILE: &str = "(null)";
 pub const CONFIG_IO_LINE: i32 = 0;
 pub const CONFIG_IO_TEXT: &str = "file I/O error";
 pub const CONFIG_SYNTAX_TEXT: &str = "syntax error";
+pub const MSG_PULSE_CONNECTING: &str = "connecting pulseaudio...";
+pub const MSG_PULSE_CONNECTED: &str = "successfully connected pulseaudio...";
+pub const MSG_PULSE_CONNECT_FAILED: &str = "pulseaudio connect failed";
+pub const MSG_PULSE_CONTEXT_FREED: &str = "freed pulseaudio context";
 pub const MAPPING_START_MS: u64 = 2000;
 const MS_PER_SECOND: f64 = 1000.0;
 const HALF_MS: f64 = 0.5;
@@ -219,6 +223,10 @@ pub fn test_exit_message(code: i32) -> String {
 
 pub fn test_fail_message(code: i32) -> String {
     format!("Test exited with error code: {code}")
+}
+
+pub fn pulse_context_failed_message(state: i32) -> String {
+    format!("pulseaudio context failed (state {state})")
 }
 
 pub fn home_config_file(name: &str) -> PathBuf {
@@ -495,6 +503,14 @@ mod tests {
             "Test exited with error code: 3"
         );
         assert_eq!(ERROR_UNKNOWN, 1);
+        assert_eq!(MSG_PULSE_CONNECTING, "connecting pulseaudio...");
+        assert_eq!(MSG_PULSE_CONNECTED, "successfully connected pulseaudio...");
+        assert_eq!(MSG_PULSE_CONNECT_FAILED, "pulseaudio connect failed");
+        assert_eq!(MSG_PULSE_CONTEXT_FREED, "freed pulseaudio context");
+        assert_eq!(
+            pulse_context_failed_message(cargopit_devices::transport::PULSE_CONTEXT_FAILED),
+            "pulseaudio context failed (state 5)"
+        );
 
         let missing_issue = inspect_config(&missing).expect_err("missing");
         assert_eq!(missing_issue.file, CONFIG_IO_FILE);
