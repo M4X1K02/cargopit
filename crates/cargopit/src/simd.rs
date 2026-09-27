@@ -11,6 +11,7 @@ pub const ENV_HOME: &str = "HOME";
 pub const ENV_XDG_DATA: &str = "XDG_DATA_HOME";
 pub const ENV_PATH: &str = "PATH";
 pub const PID_FILE: &str = "/tmp/simd.pid";
+pub const LOG_FILE: &str = "/tmp/simd.log";
 pub const START_TIMEOUT_MS: u64 = 3000;
 pub const POLL_MS: u64 = 50;
 const EXEC_BITS: u32 = 0o111;
@@ -23,6 +24,38 @@ pub enum EnsureStatus {
     Ok,
     NotInstalled,
     StartFailed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EnsureStart {
+    AlreadyRunning,
+    StartedSystemd,
+    StartedFrom(PathBuf),
+    NotInstalled,
+    SpawnFailed(PathBuf),
+    DidNotStayRunning(PathBuf),
+}
+
+impl EnsureStart {
+    pub fn status(&self) -> EnsureStatus {
+        match self {
+            Self::AlreadyRunning | Self::StartedSystemd | Self::StartedFrom(_) => EnsureStatus::Ok,
+            Self::NotInstalled => EnsureStatus::NotInstalled,
+            Self::SpawnFailed(_) | Self::DidNotStayRunning(_) => EnsureStatus::StartFailed,
+        }
+    }
+}
+
+pub fn not_installed_stderr() -> String {
+    format!("{REQUIRED_MESSAGE}.\n{INSTALL_HINT}")
+}
+
+pub fn failed_start_stderr() -> String {
+    format!("simd failed to start. See logs or {LOG_FILE}")
+}
+
+pub fn did_not_stay_stderr() -> String {
+    format!("simd did not stay running after start. See {LOG_FILE}")
 }
 
 pub fn find_from_candidates(candidates: &[Option<PathBuf>]) -> Option<PathBuf> {
@@ -85,26 +118,24 @@ pub fn process_running() -> bool {
     false
 }
 
-pub fn ensure() -> EnsureStatus {
+pub fn ensure() -> EnsureStart {
     if process_running() {
-        return EnsureStatus::Ok;
+        return EnsureStart::AlreadyRunning;
     }
     remove_stale_pid();
     if systemd_start() && wait_until_running() {
-        return EnsureStatus::Ok;
+        return EnsureStart::StartedSystemd;
     }
     let Some(path) = find_binary() else {
-        report_not_installed();
-        return EnsureStatus::NotInstalled;
+        return EnsureStart::NotInstalled;
     };
-    if spawn_and_wait(&path).is_err() || !wait_until_running() {
-        return EnsureStatus::StartFailed;
+    if spawn_and_wait(&path).is_err() {
+        return EnsureStart::SpawnFailed(path);
     }
-    EnsureStatus::Ok
-}
-
-fn report_not_installed() {
-    eprintln!("{REQUIRED_MESSAGE}.\n{INSTALL_HINT}");
+    if !wait_until_running() {
+        return EnsureStart::DidNotStayRunning(path);
+    }
+    EnsureStart::StartedFrom(path)
 }
 
 fn remove_stale_pid() {
@@ -208,5 +239,46 @@ mod tests {
             Some(exec.as_path())
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ensure_start_maps_to_c_status_codes() {
+        const SAMPLE_SIMD: &str = "/usr/bin/simd";
+        let path = PathBuf::from(SAMPLE_SIMD);
+        assert_eq!(EnsureStart::AlreadyRunning.status(), EnsureStatus::Ok);
+        assert_eq!(EnsureStart::StartedSystemd.status(), EnsureStatus::Ok);
+        assert_eq!(
+            EnsureStart::StartedFrom(path.clone()).status(),
+            EnsureStatus::Ok
+        );
+        assert_eq!(
+            EnsureStart::NotInstalled.status(),
+            EnsureStatus::NotInstalled
+        );
+        assert_eq!(
+            EnsureStart::SpawnFailed(path.clone()).status(),
+            EnsureStatus::StartFailed
+        );
+        assert_eq!(
+            EnsureStart::DidNotStayRunning(path).status(),
+            EnsureStatus::StartFailed
+        );
+    }
+
+    #[test]
+    fn ensure_stderr_matches_c() {
+        assert_eq!(
+            not_installed_stderr(),
+            "simd is required but is not installed.\nInstall simd (package simd / simd-git, or run ./install.sh) and try again."
+        );
+        assert_eq!(
+            failed_start_stderr(),
+            "simd failed to start. See logs or /tmp/simd.log"
+        );
+        assert_eq!(
+            did_not_stay_stderr(),
+            "simd did not stay running after start. See /tmp/simd.log"
+        );
+        assert_eq!(LOG_FILE, "/tmp/simd.log");
     }
 }

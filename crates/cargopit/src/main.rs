@@ -14,7 +14,7 @@ use cargopit::devices::{self, InitNotice, LoadedDevices};
 use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
 use cargopit::log::{self, Level};
 use cargopit::scheduler::{self, TimerKind};
-use cargopit::simd::{self, EnsureStatus};
+use cargopit::simd::{self, EnsureStart, EnsureStatus};
 use cargopit::stdin_quit;
 use cargopit::tach;
 use cargopit::testmode;
@@ -74,7 +74,9 @@ fn play(parsed: &cli::Invocation) -> ExitCode {
     }
     slog(parsed, Level::Info, games::MSG_GAMELOOP_MODE);
     let mut pulse = open_pulse(parsed);
-    let code = match simd::ensure() {
+    let start = simd::ensure();
+    slog_simd_ensure(parsed, &start);
+    let code = match start.status() {
         EnsureStatus::Ok => {
             let _ = run_discovery(parsed, &mut pulse);
             games::ERROR_NONE
@@ -997,6 +999,19 @@ fn print_test_script(
     });
     for line in script.lines {
         slog(parsed, Level::Info, &line);
+    }
+}
+
+fn slog_simd_ensure(parsed: &cli::Invocation, start: &EnsureStart) {
+    for notice in games::simd_ensure_notices(start) {
+        emit_ensure_notice(parsed, notice);
+    }
+}
+
+fn emit_ensure_notice(parsed: &cli::Invocation, notice: games::EnsureNotice) {
+    match notice {
+        games::EnsureNotice::Slog(level, message) => slog(parsed, level, &message),
+        games::EnsureNotice::Stderr(message) => eprintln!("{message}"),
     }
 }
 

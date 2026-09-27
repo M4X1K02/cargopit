@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::acr;
 use crate::log::Level;
+use crate::simd::{self, EnsureStart};
 
 pub const DAEMON_PROBE_US: u64 = 50_000;
 pub const DR2_GAME_PORT: u16 = 20779;
@@ -94,6 +95,11 @@ pub const MSG_UDP_RECV_START: &str = "starting udp receive loop";
 pub const MSG_UDP_RECV_STARTED: &str = "udp receive loop started";
 pub const MSG_SIMD_STALE_DIRECT: &str =
     "SIMAPI.DAT is not advancing; mapping the simulator directly";
+pub const MSG_SIMD_ALREADY_RUNNING: &str = "simd is already running";
+pub const MSG_SIMD_SYSTEMD: &str = "started simd via systemd user unit";
+pub const MSG_SIMD_RUNNING: &str = "simd is running";
+pub const MSG_SIMD_FAILED_START: &str = "simd failed to start";
+pub const MSG_SIMD_DID_NOT_STAY: &str = "simd did not stay running after start";
 pub const MSG_ACR_SHM_EMPTY: &str =
     "Assetto Corsa Rally telemetry=shm but /dev/shm/acpmf_physics is empty";
 pub const MSG_ACR_SHM_WINE: &str =
@@ -948,6 +954,51 @@ pub fn acr_shm_blank_udp_message(port: i32) -> String {
 
 pub fn mapping_fps_message(fps: i32, interval_ms: u64) -> String {
     format!("starting telemetry mapping at {fps} fps ({interval_ms} ms ticks)")
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EnsureNotice {
+    Slog(Level, String),
+    Stderr(String),
+}
+
+pub fn starting_simd_message(path: &Path) -> String {
+    format!("starting simd from {}", path.display())
+}
+
+pub fn simd_ensure_notices(start: &EnsureStart) -> Vec<EnsureNotice> {
+    match start {
+        EnsureStart::AlreadyRunning => vec![EnsureNotice::Slog(
+            Level::Debug,
+            MSG_SIMD_ALREADY_RUNNING.to_string(),
+        )],
+        EnsureStart::StartedSystemd => vec![EnsureNotice::Slog(
+            Level::Info,
+            MSG_SIMD_SYSTEMD.to_string(),
+        )],
+        EnsureStart::StartedFrom(path) => vec![
+            EnsureNotice::Slog(Level::Info, starting_simd_message(path)),
+            EnsureNotice::Slog(Level::Info, MSG_SIMD_RUNNING.to_string()),
+        ],
+        EnsureStart::NotInstalled => vec![
+            EnsureNotice::Stderr(simd::not_installed_stderr()),
+            EnsureNotice::Slog(Level::Error, simd::REQUIRED_MESSAGE.to_string()),
+        ],
+        EnsureStart::SpawnFailed(path) => {
+            simd_spawn_notices(path, simd::failed_start_stderr(), MSG_SIMD_FAILED_START)
+        }
+        EnsureStart::DidNotStayRunning(path) => {
+            simd_spawn_notices(path, simd::did_not_stay_stderr(), MSG_SIMD_DID_NOT_STAY)
+        }
+    }
+}
+
+fn simd_spawn_notices(path: &Path, stderr: String, error: &str) -> Vec<EnsureNotice> {
+    vec![
+        EnsureNotice::Slog(Level::Info, starting_simd_message(path)),
+        EnsureNotice::Stderr(stderr),
+        EnsureNotice::Slog(Level::Error, error.to_string()),
+    ]
 }
 
 pub fn acr_bridge_notices(outcome: AcrBridgeOutcome, bind_result: i32) -> Vec<(Level, String)> {
@@ -1995,6 +2046,68 @@ mod tests {
         assert_eq!(
             search_tick(seen, false, false),
             PlayAction::StartMapping { use_udp: true }
+        );
+    }
+
+    #[test]
+    fn simd_ensure_notices_match_the_c_host() {
+        const SAMPLE_SIMD: &str = "/usr/bin/simd";
+        let path = PathBuf::from(SAMPLE_SIMD);
+        assert_eq!(MSG_SIMD_ALREADY_RUNNING, "simd is already running");
+        assert_eq!(MSG_SIMD_SYSTEMD, "started simd via systemd user unit");
+        assert_eq!(MSG_SIMD_RUNNING, "simd is running");
+        assert_eq!(MSG_SIMD_FAILED_START, "simd failed to start");
+        assert_eq!(
+            MSG_SIMD_DID_NOT_STAY,
+            "simd did not stay running after start"
+        );
+        assert_eq!(
+            starting_simd_message(&path),
+            "starting simd from /usr/bin/simd"
+        );
+        assert_eq!(
+            simd_ensure_notices(&EnsureStart::AlreadyRunning),
+            vec![EnsureNotice::Slog(
+                Level::Debug,
+                MSG_SIMD_ALREADY_RUNNING.to_string()
+            )]
+        );
+        assert_eq!(
+            simd_ensure_notices(&EnsureStart::StartedSystemd),
+            vec![EnsureNotice::Slog(
+                Level::Info,
+                MSG_SIMD_SYSTEMD.to_string()
+            )]
+        );
+        assert_eq!(
+            simd_ensure_notices(&EnsureStart::StartedFrom(path.clone())),
+            vec![
+                EnsureNotice::Slog(Level::Info, starting_simd_message(&path)),
+                EnsureNotice::Slog(Level::Info, MSG_SIMD_RUNNING.to_string()),
+            ]
+        );
+        assert_eq!(
+            simd_ensure_notices(&EnsureStart::NotInstalled),
+            vec![
+                EnsureNotice::Stderr(simd::not_installed_stderr()),
+                EnsureNotice::Slog(Level::Error, simd::REQUIRED_MESSAGE.to_string()),
+            ]
+        );
+        assert_eq!(
+            simd_ensure_notices(&EnsureStart::SpawnFailed(path.clone())),
+            vec![
+                EnsureNotice::Slog(Level::Info, starting_simd_message(&path)),
+                EnsureNotice::Stderr(simd::failed_start_stderr()),
+                EnsureNotice::Slog(Level::Error, MSG_SIMD_FAILED_START.to_string()),
+            ]
+        );
+        assert_eq!(
+            simd_ensure_notices(&EnsureStart::DidNotStayRunning(path.clone())),
+            vec![
+                EnsureNotice::Slog(Level::Info, starting_simd_message(&path)),
+                EnsureNotice::Stderr(simd::did_not_stay_stderr()),
+                EnsureNotice::Slog(Level::Error, MSG_SIMD_DID_NOT_STAY.to_string()),
+            ]
         );
     }
 }
