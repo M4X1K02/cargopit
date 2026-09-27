@@ -704,28 +704,58 @@ fn draw_list_with_help(
 
 fn draw_form(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
     let Some((list, side)) = split_list_help(area) else {
-        draw_form_list(frame, area, app, tune);
+        draw_form_list_and_logs(frame, area, app, tune);
         return;
     };
-    draw_form_list(frame, list, app, tune);
+    draw_form_list_and_logs(frame, list, app, tune);
     draw_form_side(frame, side, app, tune);
 }
 
+fn draw_form_list_and_logs(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
+    if !tune {
+        draw_form_list(frame, area, app, tune);
+        return;
+    }
+    let Some((fields, logs)) = split_tune_fields_and_logs(area) else {
+        draw_tune_logs_stacked(frame, area, app);
+        return;
+    };
+    draw_form_list(frame, fields, app, true);
+    draw_tune_logs(frame, logs, app);
+}
+
+fn split_tune_fields_and_logs(area: Rect) -> Option<(Rect, Rect)> {
+    let spare = area.width.saturating_sub(consts::LAYOUT_FORM_LIST_MIN);
+    if spare < consts::LAYOUT_TUNE_LOG_MIN_WIDTH {
+        return None;
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(consts::LAYOUT_FORM_LIST_MIN),
+            Constraint::Min(consts::LAYOUT_TUNE_LOG_MIN_WIDTH),
+        ])
+        .split(area);
+    Some((chunks[0], chunks[1]))
+}
+
+fn draw_tune_logs_stacked(frame: &mut Frame, area: Rect, app: &App) {
+    let log_height = consts::LAYOUT_TUNE_LOG_HEIGHT.min(area.height.saturating_sub(1));
+    if log_height == 0 {
+        draw_form_list(frame, area, app, true);
+        return;
+    }
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(log_height)])
+        .split(area);
+    draw_form_list(frame, chunks[0], app, true);
+    draw_tune_logs(frame, chunks[1], app);
+}
+
 fn draw_form_side(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
-    let show_diagram = area.height
-        >= consts::LAYOUT_FORM_HELP_HEIGHT
-            + consts::LAYOUT_FORM_TEST_MIN_HEIGHT
-            + consts::LAYOUT_FORM_DIAGRAM_MIN_HEIGHT;
-    if !show_diagram {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(consts::LAYOUT_FORM_HELP_HEIGHT),
-                Constraint::Min(1),
-            ])
-            .split(area);
-        draw_field_help(frame, chunks[0], app, tune);
-        draw_device_test_panel(frame, chunks[1], app);
+    if tune || !form_side_diagram_fits(area) {
+        draw_help_and_test(frame, area, app, tune);
         return;
     }
     let chunks = Layout::default()
@@ -741,17 +771,36 @@ fn draw_form_side(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
     draw_form_diagram(frame, chunks[2], app);
 }
 
+fn form_side_diagram_fits(area: Rect) -> bool {
+    area.height
+        >= consts::LAYOUT_FORM_HELP_HEIGHT
+            + consts::LAYOUT_FORM_TEST_MIN_HEIGHT
+            + consts::LAYOUT_FORM_DIAGRAM_MIN_HEIGHT
+}
+
+fn draw_help_and_test(frame: &mut Frame, area: Rect, app: &App, tune: bool) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(consts::LAYOUT_FORM_HELP_HEIGHT),
+            Constraint::Min(1),
+        ])
+        .split(area);
+    draw_field_help(frame, chunks[0], app, tune);
+    draw_device_test_panel(frame, chunks[1], app);
+}
+
 fn draw_device_test_panel(frame: &mut Frame, area: Rect, app: &App) {
-    let height = area.height.saturating_sub(consts::LAYOUT_BORDER_LINES) as usize;
     frame.render_widget(
-        Paragraph::new(device_test_lines(app, height)).block(theme::panel_line(
-            profile_scoped_title(consts::TITLE_DEVICE_TEST, app),
-        )),
+        Paragraph::new(device_test_lines(app)).block(theme::panel_line(profile_scoped_title(
+            consts::TITLE_DEVICE_TEST,
+            app,
+        ))),
         area,
     );
 }
 
-fn device_test_lines(app: &App, height: usize) -> Vec<Line<'static>> {
+fn device_test_lines(app: &App) -> Vec<Line<'static>> {
     let status = if app.test_running() {
         consts::TEST_PANEL_RUNNING
     } else {
@@ -759,12 +808,6 @@ fn device_test_lines(app: &App, height: usize) -> Vec<Line<'static>> {
     };
     let mut lines = vec![Line::from(Span::styled(status, theme::style_ok()))];
     lines.extend(device_test_telemetry_lines(app));
-    let log_room = height.saturating_sub(lines.len() + 1);
-    if log_room == 0 {
-        return lines;
-    }
-    lines.push(Line::from(""));
-    lines.extend(device_test_log_lines(app, log_room.saturating_sub(1)));
     lines
 }
 
@@ -797,16 +840,39 @@ fn device_test_telemetry_lines(app: &App) -> Vec<Line<'static>> {
     ]
 }
 
-fn device_test_log_lines(app: &App, limit: usize) -> Vec<Line<'static>> {
+fn draw_tune_logs(frame: &mut Frame, area: Rect, app: &App) {
+    let limit = area.height.saturating_sub(consts::LAYOUT_BORDER_LINES) as usize;
+    let lines = tune_log_lines(app, limit);
+    frame.render_widget(
+        Paragraph::new(lines).block(theme::panel_line(Line::from(Span::styled(
+            consts::TITLE_TUNE_LOGS,
+            theme::style_log(),
+        )))),
+        area,
+    );
+}
+
+fn tune_log_lines(app: &App, limit: usize) -> Vec<Line<'static>> {
     let steps = app.logs.recent_containing(consts::TEST_STEP_PREFIX, limit);
     let lines = if steps.is_empty() {
         app.logs.recent_from(SessionKind::Test.as_str(), limit)
     } else {
         steps
     };
+    if lines.is_empty() {
+        return vec![Line::from(Span::styled(
+            consts::TEST_LOG_EMPTY,
+            theme::style_log(),
+        ))];
+    }
     lines
         .into_iter()
-        .map(|line| Line::from(Span::styled(line.text.clone(), log_line_style(&line.text))))
+        .map(|line| {
+            Line::from(Span::styled(
+                format!("{}{}", consts::TEST_LOG_PREFIX, line.text),
+                theme::style_log(),
+            ))
+        })
         .collect()
 }
 
@@ -2136,6 +2202,10 @@ mod tests {
     fn tune_hint_pins_below_the_field_table() {
         with_app(|app| {
             app.form = crate::form::DeviceForm::blank();
+            app.logs.push(
+                SessionKind::Test.as_str().into(),
+                "test step: focused effect".into(),
+            );
             app.tab = consts::TAB_DEVICES;
             app.screen = Screen::DeviceTune;
             let dump = render_dump_size(app, 120, 28);
@@ -2152,6 +2222,20 @@ mod tests {
                     );
                 }
             }
+            assert!(dump.contains(consts::TITLE_TUNE_LOGS), "{dump}");
+            assert!(dump.contains(consts::TEST_LOG_PREFIX), "{dump}");
+            let title = dump
+                .lines()
+                .find(|line| line.contains(consts::TITLE_TUNE))
+                .expect("tune title");
+            assert!(
+                title.contains(consts::TITLE_TUNE_LOGS),
+                "test logs should sit beside the tune fields:\n{dump}"
+            );
+            assert!(
+                !dump.contains(consts::DIAGRAM_TITLE_PREVIEW),
+                "tune screen has no preview panel:\n{dump}"
+            );
         });
     }
 
