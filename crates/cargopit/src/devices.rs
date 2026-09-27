@@ -32,7 +32,7 @@ use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
 use cargopit_devices::clock::{SystemClock, VirtualClock};
 use cargopit_devices::haptic::{
-    HapticEffect, HapticPlay, HapticSettings, HapticTrace, TyreId, VibrationEffect,
+    HapticEffect, HapticPlay, HapticSettings, HapticTrace, Modulation, TyreId, VibrationEffect,
 };
 use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedLevel, LuaLedLog, LuaLedMode};
 use cargopit_devices::serial::{self, MozaKsWheel, MozaNewWheel};
@@ -1502,6 +1502,7 @@ impl Drop for SerialPort {
 fn device_parse_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
     let mut notices = device_trace_notices(entry);
     notices.extend(device_class_notices(entry));
+    notices.extend(haptic_settings_notices(entry));
     notices
 }
 
@@ -1541,6 +1542,86 @@ fn device_class_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
         Some(invalid) => vec![invalid],
         None => Vec::new(),
     }
+}
+
+fn haptic_settings_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    if !uses_haptic_settings(entry) {
+        return Vec::new();
+    }
+    let mut notices = vec![
+        notice(Level::Trace, games::MSG_ANALYSING_HAPTIC),
+        notice(Level::Info, games::MSG_READING_HAPTIC),
+    ];
+    notices.extend(modulation_notices(entry));
+    if lookup_device_class(entry.get_str(keys::KEY_DEVICE)) == Some(names::DEVICE_SOUND) {
+        notices.push(notice(Level::Info, games::MSG_READING_SOUND));
+    }
+    notices
+}
+
+fn uses_haptic_settings(entry: &DeviceEntry) -> bool {
+    match lookup_device_class(entry.get_str(keys::KEY_DEVICE)) {
+        Some(names::DEVICE_SOUND) => true,
+        Some(names::DEVICE_USB) => matches!(
+            names::lookup(
+                names::USB_TYPES,
+                entry.get_str(keys::KEY_TYPE).unwrap_or("")
+            ),
+            Some(names::SUBTYPE_USB_HAPTIC | names::SUBTYPE_USB_WHEEL)
+        ),
+        Some(names::DEVICE_SERIAL) => {
+            names::lookup(
+                names::SERIAL_TYPES,
+                entry.get_str(keys::KEY_TYPE).unwrap_or(""),
+            ) == Some(names::SUBTYPE_SERIAL_HAPTIC)
+        }
+        _ => false,
+    }
+}
+
+fn modulation_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    match names::parse_modulation(
+        entry.get_str(keys::KEY_MODULATION),
+        entry_frequency(entry),
+        entry_frequency_max(entry),
+    ) {
+        names::ModulationParse::Missing => {
+            vec![notice(Level::Debug, games::MSG_MODULATION_MISSING)]
+        }
+        names::ModulationParse::Invalid(name) => {
+            vec![notice(Level::Warn, games::invalid_modulation_message(name))]
+        }
+        names::ModulationParse::FrequencyNeedsMax => {
+            vec![notice(Level::Warn, games::MSG_MODULATION_FREQ_FALLBACK)]
+        }
+        names::ModulationParse::Found(value) => {
+            vec![notice(
+                Level::Info,
+                games::modulation_found_message(names::modulation_label(value)),
+            )]
+        }
+    }
+}
+
+fn entry_frequency(entry: &DeviceEntry) -> i64 {
+    entry
+        .get_i64(keys::KEY_FREQUENCY)
+        .unwrap_or(HAPTIC_FREQUENCY_DEFAULT)
+}
+
+fn entry_frequency_max(entry: &DeviceEntry) -> i64 {
+    entry
+        .get_i64(keys::KEY_FREQUENCY_MAX)
+        .unwrap_or(HAPTIC_FREQUENCY_DEFAULT)
+}
+
+fn entry_modulation(entry: &DeviceEntry) -> Modulation {
+    Modulation::from_id(names::modulation_value(
+        entry.get_str(keys::KEY_MODULATION),
+        entry_frequency(entry),
+        entry_frequency_max(entry),
+    ))
+    .unwrap_or(Modulation::None)
 }
 
 fn lookup_device_class(name: Option<&str>) -> Option<i32> {
@@ -2589,6 +2670,8 @@ fn csl_effect(entry: &DeviceEntry, effect: i32) -> Option<HapticEffect> {
         ),
         duration: csl_duration(entry, effect),
         motor_position: configured_motor(entry),
+        frequency_max: u32_from_i64(entry_frequency_max(entry)),
+        modulation: entry_modulation(entry),
         ..HapticSettings::default()
     }))
 }
@@ -4634,6 +4717,118 @@ mod tests {
             &loaded.setup_notices,
             &games::invalid_device_subtype_message(games::DEVICE_NAME_MISSING)
         ));
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            games::MSG_ANALYSING_HAPTIC
+        ));
+    }
+
+    #[test]
+    fn setup_notices_log_c_haptic_settings_and_modulation() {
+        const FREQ: i64 = 40;
+        const FREQ_MAX: i64 = 80;
+        const INVALID_MODULATION: &str = "bogus";
+        let mut wheel = DeviceEntry::new();
+        wheel.set_str(keys::KEY_DEVICE, keys::CLASS_USB);
+        wheel.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        let loaded = load_parse_device(wheel);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Trace,
+            games::MSG_ANALYSING_HAPTIC
+        ));
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Info,
+            games::MSG_READING_HAPTIC
+        ));
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Debug,
+            games::MSG_MODULATION_MISSING
+        ));
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            games::MSG_READING_SOUND
+        ));
+
+        let mut frequency = DeviceEntry::new();
+        frequency.set_str(keys::KEY_DEVICE, keys::CLASS_USB);
+        frequency.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        frequency.set_str(keys::KEY_MODULATION, "Frequency");
+        frequency.set_int(keys::KEY_FREQUENCY, FREQ);
+        let loaded = load_parse_device(frequency);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            games::MSG_MODULATION_FREQ_FALLBACK
+        ));
+
+        let mut valid = DeviceEntry::new();
+        valid.set_str(keys::KEY_DEVICE, keys::CLASS_USB);
+        valid.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        valid.set_str(keys::KEY_MODULATION, "Frequency");
+        valid.set_int(keys::KEY_FREQUENCY, FREQ);
+        valid.set_int(keys::KEY_FREQUENCY_MAX, FREQ_MAX);
+        let loaded = load_parse_device(valid);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Info,
+            &games::modulation_found_message(names::modulation_label(names::MODULATION_FREQUENCY))
+        ));
+
+        let mut amplify = DeviceEntry::new();
+        amplify.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        amplify.set_str(keys::KEY_TYPE, keys::TYPE_HAPTIC);
+        amplify.set_str(keys::KEY_MODULATION, "Amplify");
+        let loaded = load_parse_device(amplify);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Info,
+            &games::modulation_found_message(names::modulation_label(names::MODULATION_AMPLIFY))
+        ));
+
+        let mut invalid = DeviceEntry::new();
+        invalid.set_str(keys::KEY_DEVICE, keys::CLASS_SOUND);
+        invalid.set_str(keys::KEY_MODULATION, INVALID_MODULATION);
+        let loaded = load_parse_device(invalid);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::invalid_modulation_message(INVALID_MODULATION)
+        ));
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Info,
+            games::MSG_READING_SOUND
+        ));
+
+        let mut moza = DeviceEntry::new();
+        moza.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        moza.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        let loaded = load_parse_device(moza);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            games::MSG_ANALYSING_HAPTIC
+        ));
+    }
+
+    #[test]
+    fn csl_effect_keeps_parsed_frequency_modulation() {
+        const FREQ: i64 = 40;
+        const FREQ_MAX: i64 = 80;
+        let mut entry = DeviceEntry::new();
+        entry.set_str(keys::KEY_EFFECT, "TyreSlip");
+        entry.set_str(keys::KEY_MODULATION, "Frequency");
+        entry.set_int(keys::KEY_FREQUENCY, FREQ);
+        entry.set_int(keys::KEY_FREQUENCY_MAX, FREQ_MAX);
+        let effect = csl_effect(&entry, names::EFFECT_TYRE_SLIP).expect("effect");
+        assert_eq!(effect.modulation(), Modulation::Frequency);
+        assert_eq!(effect.frequency(), u32::try_from(FREQ).unwrap_or(0));
+        assert_eq!(effect.frequency_max(), u32::try_from(FREQ_MAX).unwrap_or(0));
+        entry.set_int(keys::KEY_FREQUENCY_MAX, 0);
+        let fallback = csl_effect(&entry, names::EFFECT_TYRE_SLIP).expect("effect");
+        assert_eq!(fallback.modulation(), Modulation::None);
     }
 
     #[test]

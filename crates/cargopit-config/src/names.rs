@@ -298,6 +298,45 @@ pub const MODULATIONS: &[NameEntry] = &[
     },
 ];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModulationParse<'a> {
+    Missing,
+    Invalid(&'a str),
+    FrequencyNeedsMax,
+    Found(i32),
+}
+
+pub fn parse_modulation(
+    name: Option<&str>,
+    frequency: i64,
+    frequency_max: i64,
+) -> ModulationParse<'_> {
+    let Some(name) = name else {
+        return ModulationParse::Missing;
+    };
+    let Some(value) = lookup(MODULATIONS, name) else {
+        return ModulationParse::Invalid(name);
+    };
+    if value == MODULATION_FREQUENCY && (frequency_max == 0 || frequency_max < frequency) {
+        return ModulationParse::FrequencyNeedsMax;
+    }
+    ModulationParse::Found(value)
+}
+
+pub fn modulation_value(name: Option<&str>, frequency: i64, frequency_max: i64) -> i32 {
+    match parse_modulation(name, frequency, frequency_max) {
+        ModulationParse::Found(value) => value,
+        _ => MODULATION_NONE,
+    }
+}
+
+pub fn modulation_label(value: i32) -> &'static str {
+    if let Some(name) = name_for(MODULATIONS, value) {
+        return name;
+    }
+    name_for(MODULATIONS, MODULATION_NONE).expect("modulation none name")
+}
+
 pub fn lookup(table: &[NameEntry], name: &str) -> Option<i32> {
     if name.is_empty() {
         return None;
