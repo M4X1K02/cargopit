@@ -267,6 +267,7 @@ impl LoadedDevices {
                 games::device_runner_message(id, self.updates(index), DEVICE_RUNNER_OVERRUNS),
             ));
         }
+        self.append_usb_free_notices(&mut notices);
         self.write_release_zeros(&mut notices);
         self.blank_g29(&mut notices);
         self.blank_c5(&mut notices);
@@ -608,6 +609,42 @@ impl LoadedDevices {
         Some((sample, map.pulses.len()))
     }
 
+    fn append_usb_free_notices(&self, notices: &mut Vec<InitNotice>) {
+        for index in 0..self.devices.len() {
+            notices.extend(self.usb_free_notices(index));
+        }
+    }
+
+    fn usb_free_notices(&self, index: usize) -> Vec<InitNotice> {
+        if !self.device_is_usb(index) {
+            return Vec::new();
+        }
+        let mut notices = vec![notice(Level::Trace, games::MSG_USB_DEVICE_FREE.to_string())];
+        if self.is_usb_wheel_or_pedal(index) {
+            notices.push(notice(
+                Level::Trace,
+                games::MSG_WHEEL_DEVICE_FREE.to_string(),
+            ));
+        }
+        notices
+    }
+
+    fn device_is_usb(&self, index: usize) -> bool {
+        self.devices
+            .get(index)
+            .is_some_and(|device| device.kind() == DeviceKind::Usb)
+    }
+
+    fn is_usb_wheel_or_pedal(&self, index: usize) -> bool {
+        flag_at(&self.g29, index)
+            || flag_at(&self.c5, index)
+            || flag_at(&self.c12, index)
+            || flag_at(&self.gt, index)
+            || option_at(&self.csl, index)
+            || option_at(&self.p1000, index)
+            || option_at(&self.simnet, index)
+    }
+
     fn write_release_zeros(&mut self, notices: &mut Vec<InitNotice>) {
         let report = usb::revburner_report(0);
         let active: Vec<usize> = self
@@ -915,6 +952,14 @@ fn final_serial_path(port: &SerialPort) -> Option<String> {
         return None;
     }
     Some(shared.path.clone())
+}
+
+fn flag_at(flags: &[bool], index: usize) -> bool {
+    flags.get(index).copied().unwrap_or(false)
+}
+
+fn option_at<T>(slots: &[Option<T>], index: usize) -> bool {
+    slots.get(index).is_some_and(Option::is_some)
 }
 
 fn moza_step_notices(step: &cargopit_devices::serial::MozaNewStep) -> Vec<InitNotice> {
@@ -4666,6 +4711,17 @@ mod tests {
         assert!(released.iter().any(|notice| {
             notice.message == games::device_runner_message(0, loaded.updates(0), 0)
         }));
+        assert!(notice_has_level(
+            &released,
+            Level::Trace,
+            games::MSG_USB_DEVICE_FREE
+        ));
+        assert!(notice_absent(&released, games::MSG_WHEEL_DEVICE_FREE));
+        assert!(notice_before(
+            &released,
+            &games::device_runner_message(0, loaded.updates(0), 0),
+            games::MSG_USB_DEVICE_FREE
+        ));
         let reports = loaded.captured_reports(0).expect("reports");
         assert_eq!(
             reports.last().map(Vec::as_slice),
@@ -4895,6 +4951,8 @@ mod tests {
         assert!(repeated);
         let released = devices.release(PROBE_OPEN_NS);
         assert!(notice_has(&released, &games::serial_free_message(PORT)));
+        assert!(notice_absent(&released, games::MSG_USB_DEVICE_FREE));
+        assert!(notice_absent(&released, games::MSG_WHEEL_DEVICE_FREE));
         assert!(notice_absent(
             &released,
             &games::shiftlights_lit_message(i32::from(expected))
@@ -6674,12 +6732,27 @@ mod tests {
         assert!(tick
             .iter()
             .any(|notice| notice.message == games::g29_write_message(&expected, rpm)));
-        let _ = devices.release(PROBE_OPEN_NS);
+        let released = devices.release(PROBE_OPEN_NS);
         let blank = usb::g29_report(G29_RELEASE_RPM, G29_RELEASE_RPM).to_vec();
         assert_eq!(
             devices.captured_reports(0).and_then(|frames| frames.last()),
             Some(&blank)
         );
+        assert!(notice_has_level(
+            &released,
+            Level::Trace,
+            games::MSG_USB_DEVICE_FREE
+        ));
+        assert!(notice_has_level(
+            &released,
+            Level::Trace,
+            games::MSG_WHEEL_DEVICE_FREE
+        ));
+        assert!(notice_before(
+            &released,
+            games::MSG_USB_DEVICE_FREE,
+            games::MSG_WHEEL_DEVICE_FREE
+        ));
     }
 
     fn g29_config(fps: i64) -> CargopitConfig {
@@ -6898,6 +6971,16 @@ mod tests {
             devices.captured_reports(0).map(|frames| frames.len()),
             Some(before)
         );
+        assert!(notice_before(
+            &released,
+            games::MSG_USB_DEVICE_FREE,
+            games::MSG_WHEEL_DEVICE_FREE
+        ));
+        assert!(notice_before(
+            &released,
+            games::MSG_WHEEL_DEVICE_FREE,
+            games::MSG_C12_LUA_CLOSE
+        ));
         assert!(released
             .iter()
             .any(|notice| notice.message == games::MSG_C12_LUA_CLOSE));
