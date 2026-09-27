@@ -27,6 +27,20 @@ pub const MSG_RELOAD: &str = "reload requested, releasing devices to load the sa
 pub const MSG_APPLYING_SETTINGS: &str = "applying settings";
 pub const MSG_SETTINGS_APPLIED: &str = "settings applied";
 pub const MSG_CHECKING_DIAMETERS: &str = "checking for diameters config";
+pub const MSG_TYRE_TIMER_START: &str =
+    "Starting timer to calculate tyre diameters and save to config file";
+pub const MSG_TYRE_LOAD_ATTEMPT: &str = "attempting load of tyre diameter config";
+pub const MSG_TYRE_LOAD_FAILED: &str = "could not load tyre diameter config";
+pub const MSG_TYRE_CALCULATE: &str =
+    "could not find tyre diameter in config file, attempting to calculate new";
+pub const MSG_TYRE_MEASURED: &str = "Successfully set tyre diameters for wheel slip effects.";
+pub const MSG_TYRE_MISSING: &str = "failed to find tyre diameter data";
+pub const MSG_TYRE_FOUND: &str = "tyre diameter data found";
+pub const MSG_TYRE_FILE_OPEN: &str = "Could not open diameters save file.";
+pub const MSG_TYRE_FILE_CREATE: &str = "Could not open diameters save file, creating new.";
+pub const MSG_TYRE_FILE_CORRUPT: &str = "diameters config file corrupted";
+pub const MSG_TYRE_PARSING: &str = "parsing diameters config file";
+pub const MSG_TYRE_WRITE_ERROR: &str = "Error while writing file.";
 pub const MSG_OPENED_CONFIG: &str = "Opened and validated cargopit configuration file";
 pub const MSG_GAMELOOP_MODE: &str = "running cargopit in gameloop mode..";
 pub const MSG_TEST_MODE_BANNER: &str = "running cargopit in test mode...";
@@ -212,6 +226,30 @@ pub fn testing_config_message(path: &str) -> String {
 
 pub fn diameters_debug_message(path: &str, config_check: i32) -> String {
     format!("using diameters file {path} {config_check}")
+}
+
+pub fn car_is_message(car: &str) -> String {
+    format!("car is {car}")
+}
+
+pub fn tyre_saving_message(car: &str) -> String {
+    format!("saving new tyre diameter config for car {car}")
+}
+
+pub fn tyre_compare_message(live: &str, saved: &str, live_sim: i32, saved_sim: i32) -> String {
+    format!("{live} {saved} {live_sim} {saved_sim}")
+}
+
+pub fn tyre_found_car_message(car: &str, diameters: &[f64]) -> String {
+    let mut message = format!("found saved car {car} with tyre diameters");
+    for diameter in diameters {
+        message.push_str(&format!(" {diameter:.6}"));
+    }
+    message
+}
+
+pub fn tyre_saved_message(path: &str, sim: i32, car: &str) -> String {
+    format!("New configuration successfully written to: {path} for sim {sim}, car {car}\n")
 }
 
 pub fn config_issue_message(file: &str, line: i32, text: &str) -> String {
@@ -943,6 +981,55 @@ mod tests {
         assert_eq!(MSG_APPLYING_SETTINGS, "applying settings");
         assert_eq!(MSG_SETTINGS_APPLIED, "settings applied");
         assert_eq!(MSG_CHECKING_DIAMETERS, "checking for diameters config");
+        assert_eq!(
+            MSG_TYRE_TIMER_START,
+            "Starting timer to calculate tyre diameters and save to config file"
+        );
+        assert_eq!(
+            MSG_TYRE_LOAD_ATTEMPT,
+            "attempting load of tyre diameter config"
+        );
+        assert_eq!(MSG_TYRE_LOAD_FAILED, "could not load tyre diameter config");
+        assert_eq!(
+            MSG_TYRE_CALCULATE,
+            "could not find tyre diameter in config file, attempting to calculate new"
+        );
+        assert_eq!(
+            MSG_TYRE_MEASURED,
+            "Successfully set tyre diameters for wheel slip effects."
+        );
+        assert_eq!(MSG_TYRE_MISSING, "failed to find tyre diameter data");
+        assert_eq!(MSG_TYRE_FOUND, "tyre diameter data found");
+        assert_eq!(MSG_TYRE_FILE_OPEN, "Could not open diameters save file.");
+        assert_eq!(
+            MSG_TYRE_FILE_CREATE,
+            "Could not open diameters save file, creating new."
+        );
+        assert_eq!(MSG_TYRE_FILE_CORRUPT, "diameters config file corrupted");
+        assert_eq!(MSG_TYRE_PARSING, "parsing diameters config file");
+        const TYRE_CAR: &str = "mx5";
+        const TYRE_CAR_UPPER: &str = "MX5";
+        const TYRE_SIM: i32 = 690_790;
+        const TYRE_DIAMETER: f64 = 0.62;
+        const TYRE_SAVE_PATH: &str = "/tmp/diameters.config";
+        assert_eq!(MSG_TYRE_WRITE_ERROR, "Error while writing file.");
+        assert_eq!(car_is_message(TYRE_CAR), "car is mx5");
+        assert_eq!(
+            tyre_saving_message(TYRE_CAR),
+            "saving new tyre diameter config for car mx5"
+        );
+        assert_eq!(
+            tyre_compare_message(TYRE_CAR, TYRE_CAR_UPPER, TYRE_SIM, TYRE_SIM),
+            "mx5 MX5 690790 690790"
+        );
+        assert_eq!(
+            tyre_found_car_message(TYRE_CAR, &[TYRE_DIAMETER; simapi_sys::WHEEL_COUNT]),
+            "found saved car mx5 with tyre diameters 0.620000 0.620000 0.620000 0.620000"
+        );
+        assert_eq!(
+            tyre_saved_message(TYRE_SAVE_PATH, TYRE_SIM, TYRE_CAR),
+            "New configuration successfully written to: /tmp/diameters.config for sim 690790, car mx5\n"
+        );
         assert_eq!(
             MSG_OPENED_CONFIG,
             "Opened and validated cargopit configuration file"
