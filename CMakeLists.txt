@@ -59,7 +59,11 @@ file(GLOB_RECURSE CARGOPIT_RUST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/crates/*.toml"
     "${CMAKE_SOURCE_DIR}/tui/*.rs"
     "${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simapi/*.c"
-    "${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simapi/*.h")
+    "${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simapi/*.h"
+    "${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simmap/*.c"
+    "${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simmap/*.h"
+    "${CMAKE_SOURCE_DIR}/crates/simapi-sys/csrc/*.c"
+    "${CMAKE_SOURCE_DIR}/crates/simapi-sys/csrc/*.h")
 
 add_custom_command(
     OUTPUT ${CARGO_OUTPUTS}
