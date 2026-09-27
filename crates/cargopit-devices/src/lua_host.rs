@@ -22,6 +22,12 @@ const RGB_CHANNELS: usize = 3;
 const LED_FULL: u8 = u8::MAX;
 const LED_ORANGE_GREEN: u8 = 165;
 const MESSAGE_GLOBAL: &str = "Message";
+const FN_SET_LED_RANGE_TO_COLOR: &str = "set_led_range_to_color";
+const FN_SET_LED_RANGE_TO_RGB: &str = "set_led_range_to_rgb_color";
+const FN_SET_LED_TO_RGB: &str = "set_led_to_rgb_color";
+const FN_LED_CLEAR_ALL: &str = "led_clear_all";
+const MSG_INVALID_RANGE: &str = "Invalid range, doing nothing";
+const EMPTY_LED_BYTE: u8 = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LuaLedMode {
@@ -34,12 +40,58 @@ pub enum LuaLedMode {
 pub struct LuaHost {
     lua: Lua,
     leds: Rc<RefCell<Vec<u8>>>,
+    logs: Rc<RefCell<Vec<LuaLedLog>>>,
     mode: LuaLedMode,
 }
 
 pub struct LuaTick {
     pub message: Option<String>,
     pub leds: Vec<u8>,
+    pub slog: Vec<LuaLedLog>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LuaLedLevel {
+    Trace,
+    Debug,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LuaLedLog {
+    pub level: LuaLedLevel,
+    pub message: String,
+}
+
+pub fn lua_called_message(name: &str) -> String {
+    format!("lua called c function {name}")
+}
+
+pub fn lua_range_start_message(start: i32) -> String {
+    format!("lua range start is {start}")
+}
+
+pub fn lua_range_end_message(end: i32) -> String {
+    format!("lua range end is {end}")
+}
+
+pub fn lua_color_message(color: i32) -> String {
+    format!("lua color is {color}")
+}
+
+pub fn lua_color_channel_message(index: i32, value: i32) -> String {
+    format!("lua color{index} is {value}")
+}
+
+pub fn lua_led_message(led: i32) -> String {
+    format!("lua led is {led}")
+}
+
+pub fn lua_num_leds_message(count: i32) -> String {
+    format!("num leds is {count}")
+}
+
+pub fn lua_first_byte_message(byte: u8) -> String {
+    format!("first byte of buff is x{byte:02x}")
 }
 
 impl LuaHost {
@@ -88,6 +140,7 @@ impl LuaHost {
         let led_count = led_limit(total_leds);
         self.leds.borrow_mut().clear();
         self.leds.borrow_mut().resize(led_count * RGB_CHANNELS, 0);
+        self.logs.borrow_mut().clear();
         self.publish_simdata(sim)?;
         self.lua.globals().set("TotalLeds", total_leds)?;
         self.register_leds()?;
@@ -96,7 +149,15 @@ impl LuaHost {
         let invoked = func.call::<()>(());
         let message = self.script_message()?;
         let leds = self.leds.borrow().clone();
-        Ok((LuaTick { message, leds }, invoked.err()))
+        let slog = self.logs.borrow().clone();
+        Ok((
+            LuaTick {
+                message,
+                leds,
+                slog,
+            },
+            invoked.err(),
+        ))
     }
 
     fn install(lua: Lua, chunk: Function, mode: LuaLedMode) -> LuaResult<Self> {
@@ -104,6 +165,7 @@ impl LuaHost {
         Ok(Self {
             lua,
             leds: Rc::new(RefCell::new(Vec::new())),
+            logs: Rc::new(RefCell::new(Vec::new())),
             mode,
         })
     }
@@ -164,44 +226,49 @@ impl LuaHost {
 
     fn register_leds(&self) -> LuaResult<()> {
         let leds = self.leds.clone();
+        let logs = self.logs.clone();
         self.lua.globals().set(
             "set_led_to_color",
             self.lua
                 .create_function(move |lua, (led, color): (f64, f64)| {
-                    paint_one(&leds, lua, led, named_rgb(color as i32));
+                    set_led_named(&leds, &logs, lua, led, color);
                     Ok(())
                 })?,
         )?;
         let leds = self.leds.clone();
+        let logs = self.logs.clone();
         self.lua.globals().set(
             "set_led_range_to_color",
             self.lua
                 .create_function(move |lua, (start, end, color): (f64, f64, f64)| {
-                    paint_range(&leds, lua, start, end, named_rgb(color as i32));
+                    set_range_named(&leds, &logs, lua, start, end, color);
                     Ok(())
                 })?,
         )?;
         let leds = self.leds.clone();
+        let logs = self.logs.clone();
         self.lua.globals().set(
             "set_led_to_rgb_color",
             self.lua
                 .create_function(move |lua, (led, color): (f64, f64)| {
-                    paint_one(&leds, lua, led, packed_rgb(color as i32));
+                    set_led_packed(&leds, &logs, lua, led, color);
                     Ok(())
                 })?,
         )?;
         let leds = self.leds.clone();
+        let logs = self.logs.clone();
         self.lua.globals().set(
             "set_led_range_to_rgb_color",
             self.lua
                 .create_function(move |lua, (start, end, color): (f64, f64, f64)| {
-                    paint_range(&leds, lua, start, end, packed_rgb(color as i32));
+                    set_range_packed(&leds, &logs, lua, start, end, color);
                     Ok(())
                 })?,
         )?;
         let leds = self.leds.clone();
+        let logs = self.logs.clone();
         let clear_all = self.lua.create_function(move |lua, (): ()| {
-            clear_count(&leds, lua, 0, led_count(lua));
+            clear_all_leds(&leds, &logs, lua);
             Ok(())
         })?;
         self.lua.globals().set("led_clear_all", clear_all.clone())?;
@@ -279,44 +346,177 @@ fn packed_rgb(color: i32) -> [u8; RGB_CHANNELS] {
     ]
 }
 
-fn paint_one(leds: &Rc<RefCell<Vec<u8>>>, lua: &Lua, led: f64, rgb: [u8; RGB_CHANNELS]) {
-    let index = (led as i32) - 1;
-    let count = led_count(lua);
-    if index < 0 || index as usize >= count {
+fn lua_i32(value: f64) -> i32 {
+    value as i32
+}
+
+fn num_leds(lua: &Lua) -> i32 {
+    i32::try_from(led_count(lua)).unwrap_or(i32::MAX)
+}
+
+fn push_trace(logs: &Rc<RefCell<Vec<LuaLedLog>>>, message: String) {
+    logs.borrow_mut().push(LuaLedLog {
+        level: LuaLedLevel::Trace,
+        message,
+    });
+}
+
+fn push_debug(logs: &Rc<RefCell<Vec<LuaLedLog>>>, message: String) {
+    logs.borrow_mut().push(LuaLedLog {
+        level: LuaLedLevel::Debug,
+        message,
+    });
+}
+
+fn slog_called(logs: &Rc<RefCell<Vec<LuaLedLog>>>, name: &str) {
+    push_trace(logs, lua_called_message(name));
+}
+
+fn slog_first_byte(logs: &Rc<RefCell<Vec<LuaLedLog>>>, leds: &Rc<RefCell<Vec<u8>>>) {
+    let byte = leds.borrow().first().copied().unwrap_or(EMPTY_LED_BYTE);
+    push_trace(logs, lua_first_byte_message(byte));
+}
+
+fn set_led_named(
+    leds: &Rc<RefCell<Vec<u8>>>,
+    logs: &Rc<RefCell<Vec<LuaLedLog>>>,
+    lua: &Lua,
+    led: f64,
+    color: f64,
+) {
+    slog_called(logs, FN_SET_LED_TO_RGB);
+    let led = lua_i32(led);
+    let color = lua_i32(color);
+    push_debug(logs, lua_led_message(led));
+    push_debug(logs, lua_color_message(color));
+    let index = led - 1;
+    let count = num_leds(lua);
+    push_debug(logs, lua_num_leds_message(count));
+    if index < 0 || index >= count {
         return;
     }
+    slog_first_byte(logs, leds);
+    write_led(&mut leds.borrow_mut(), index as usize, named_rgb(color));
+}
+
+fn set_led_packed(
+    leds: &Rc<RefCell<Vec<u8>>>,
+    logs: &Rc<RefCell<Vec<LuaLedLog>>>,
+    lua: &Lua,
+    led: f64,
+    color: f64,
+) {
+    slog_called(logs, FN_SET_LED_TO_RGB);
+    let led = lua_i32(led);
+    let rgb = packed_rgb(lua_i32(color));
+    push_debug(logs, lua_led_message(led));
+    slog_rgb_channels(logs, rgb);
+    let index = led - 1;
+    let count = num_leds(lua);
+    push_debug(logs, lua_num_leds_message(count));
+    if index < 0 || index >= count {
+        return;
+    }
+    slog_first_byte(logs, leds);
     write_led(&mut leds.borrow_mut(), index as usize, rgb);
 }
 
-fn paint_range(
+const COLOR_CHANNEL_0: i32 = 0;
+const COLOR_CHANNEL_1: i32 = 1;
+const COLOR_CHANNEL_2: i32 = 2;
+
+fn slog_rgb_channels(logs: &Rc<RefCell<Vec<LuaLedLog>>>, rgb: [u8; RGB_CHANNELS]) {
+    push_debug(
+        logs,
+        lua_color_channel_message(COLOR_CHANNEL_0, i32::from(rgb[RGB_RED])),
+    );
+    push_debug(
+        logs,
+        lua_color_channel_message(COLOR_CHANNEL_1, i32::from(rgb[RGB_GREEN])),
+    );
+    push_debug(
+        logs,
+        lua_color_channel_message(COLOR_CHANNEL_2, i32::from(rgb[RGB_BLUE])),
+    );
+}
+
+fn set_range_named(
     leds: &Rc<RefCell<Vec<u8>>>,
+    logs: &Rc<RefCell<Vec<LuaLedLog>>>,
     lua: &Lua,
     start: f64,
     end: f64,
-    rgb: [u8; RGB_CHANNELS],
+    color: f64,
 ) {
-    let mut range_start = (start as i32) - 1;
-    let mut range_end = end as i32;
-    let count = led_count(lua) as i32;
-    if range_end > count {
-        range_end = count;
-    }
-    if range_start < 0 || range_end <= range_start {
+    slog_called(logs, FN_SET_LED_RANGE_TO_COLOR);
+    let start = lua_i32(start);
+    let end = lua_i32(end);
+    let color = lua_i32(color);
+    push_debug(logs, lua_range_start_message(start));
+    push_debug(logs, lua_range_end_message(end));
+    push_debug(logs, lua_color_message(color));
+    let range_start = start - 1;
+    let count = num_leds(lua);
+    push_debug(logs, lua_num_leds_message(count));
+    let Some((from, to)) = clamp_led_range(range_start, end, count) else {
+        push_trace(logs, MSG_INVALID_RANGE.to_string());
         return;
-    }
-    let mut buf = leds.borrow_mut();
-    while range_start < range_end {
-        write_led(&mut buf, range_start as usize, rgb);
-        range_start += 1;
-    }
+    };
+    slog_first_byte(logs, leds);
+    paint_span(leds, from, to, named_rgb(color));
 }
 
-fn clear_count(leds: &Rc<RefCell<Vec<u8>>>, lua: &Lua, _ignored_start: i32, count: usize) {
-    let _ = lua;
+fn set_range_packed(
+    leds: &Rc<RefCell<Vec<u8>>>,
+    logs: &Rc<RefCell<Vec<LuaLedLog>>>,
+    lua: &Lua,
+    start: f64,
+    end: f64,
+    color: f64,
+) {
+    slog_called(logs, FN_SET_LED_RANGE_TO_RGB);
+    let start = lua_i32(start);
+    let end = lua_i32(end);
+    let rgb = packed_rgb(lua_i32(color));
+    push_debug(logs, lua_range_start_message(start));
+    push_debug(logs, lua_range_end_message(end));
+    slog_rgb_channels(logs, rgb);
+    let range_start = start - 1;
+    let count = num_leds(lua);
+    push_debug(logs, lua_num_leds_message(count));
+    let Some((from, to)) = clamp_led_range(range_start, end, count) else {
+        return;
+    };
+    slog_first_byte(logs, leds);
+    paint_span(leds, from, to, rgb);
+}
+
+fn clear_all_leds(leds: &Rc<RefCell<Vec<u8>>>, logs: &Rc<RefCell<Vec<LuaLedLog>>>, lua: &Lua) {
+    slog_called(logs, FN_LED_CLEAR_ALL);
+    let count = num_leds(lua);
+    push_debug(logs, lua_num_leds_message(count));
+    slog_first_byte(logs, leds);
+    paint_span(leds, 0, count, [0, 0, 0]);
+}
+
+fn clamp_led_range(range_start: i32, mut range_end: i32, count: i32) -> Option<(i32, i32)> {
+    if range_start < 0 || range_end <= range_start || range_end > count {
+        if range_end > count {
+            range_end = count;
+        }
+        if range_start < 0 || range_end <= range_start {
+            return None;
+        }
+    }
+    Some((range_start, range_end))
+}
+
+fn paint_span(leds: &Rc<RefCell<Vec<u8>>>, from: i32, to: i32, rgb: [u8; RGB_CHANNELS]) {
     let mut buf = leds.borrow_mut();
-    let leds_to_clear = count.min(buf.len() / RGB_CHANNELS);
-    for index in 0..leds_to_clear {
-        write_led(&mut buf, index, [0, 0, 0]);
+    let mut index = from;
+    while index < to {
+        write_led(&mut buf, index as usize, rgb);
+        index += 1;
     }
 }
 
@@ -407,6 +607,94 @@ mod tests {
         host.call(&mut sim, 4, &clock).expect("define");
         let tick = host.call(&mut sim, 4, &clock).expect("run");
         assert!(tick.leds.iter().all(|byte| *byte == 0));
+        assert!(tick
+            .slog
+            .iter()
+            .any(|log| log.message == lua_called_message(FN_LED_CLEAR_ALL)));
+    }
+
+    #[test]
+    fn lua_led_slog_matches_the_c_host() {
+        const LED_COUNT: i64 = 4;
+        const NAMED_LED: i32 = 1;
+        const RANGE_END: i32 = 3;
+        const PACKED_RED: i32 = 0x00ff0000;
+        let named = run_lua("set_led_to_color(1, RED)", LuaLedMode::Usb, LED_COUNT);
+        assert_eq!(
+            named.slog,
+            vec![
+                log_trace(lua_called_message(FN_SET_LED_TO_RGB)),
+                log_debug(lua_led_message(NAMED_LED)),
+                log_debug(lua_color_message(COLOR_RED as i32)),
+                log_debug(lua_num_leds_message(LED_COUNT as i32)),
+                log_trace(lua_first_byte_message(EMPTY_LED_BYTE)),
+            ]
+        );
+        let range = run_lua(
+            "set_led_range_to_color(1, 3, GREEN)",
+            LuaLedMode::Usb,
+            LED_COUNT,
+        );
+        assert!(range
+            .slog
+            .iter()
+            .any(|log| log.message == lua_called_message(FN_SET_LED_RANGE_TO_COLOR)));
+        assert!(range
+            .slog
+            .iter()
+            .any(|log| log.message == lua_range_start_message(NAMED_LED)));
+        assert!(range
+            .slog
+            .iter()
+            .any(|log| log.message == lua_range_end_message(RANGE_END)));
+        let invalid = run_lua(
+            "set_led_range_to_color(3, 1, RED)",
+            LuaLedMode::Usb,
+            LED_COUNT,
+        );
+        assert!(invalid
+            .slog
+            .iter()
+            .any(|log| log.message == MSG_INVALID_RANGE));
+        let packed = run_lua(
+            "set_led_to_rgb_color(1, 0x00ff0000)",
+            LuaLedMode::Usb,
+            LED_COUNT,
+        );
+        assert!(packed
+            .slog
+            .iter()
+            .any(|log| log.message == lua_called_message(FN_SET_LED_TO_RGB)));
+        assert!(packed.slog.iter().any(|log| {
+            log.message == lua_color_channel_message(COLOR_CHANNEL_0, PACKED_RED >> 16)
+        }));
+        let clear = run_lua("led_clear_range()", LuaLedMode::Serial, LED_COUNT);
+        assert!(clear
+            .slog
+            .iter()
+            .any(|log| log.message == lua_called_message(FN_LED_CLEAR_ALL)));
+    }
+
+    fn run_lua(source: &str, mode: LuaLedMode, leds: i64) -> LuaTick {
+        let mut host = LuaHost::load(source, mode).expect("load");
+        let mut sim = Telemetry::new();
+        sim.set_mtick(1);
+        host.call(&mut sim, leds, &VirtualClock::new())
+            .expect("run")
+    }
+
+    fn log_trace(message: String) -> LuaLedLog {
+        LuaLedLog {
+            level: LuaLedLevel::Trace,
+            message,
+        }
+    }
+
+    fn log_debug(message: String) -> LuaLedLog {
+        LuaLedLog {
+            level: LuaLedLevel::Debug,
+            message,
+        }
     }
 
     #[test]
