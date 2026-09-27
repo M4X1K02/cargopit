@@ -26,6 +26,7 @@ use cargopit_devices::transport::{PulseOutcome, PulseSession};
 use simapi_sys::GameSession;
 
 const STOP_SIGNAL_NONE: i32 = 0;
+const SIM_CLEAR_NOT_SIMD: bool = false;
 static STOP_SIGNAL: AtomicI32 = AtomicI32::new(STOP_SIGNAL_NONE);
 
 /// # Safety
@@ -189,6 +190,7 @@ fn run_discovery(parsed: &cli::Invocation, pulse: &mut Option<PulseSession>) -> 
             parsed,
         );
         if play.phase == PlayPhase::Exiting {
+            slog(parsed, Level::Info, games::MSG_THREADS_STOPPED);
             println!();
             return ExitCode::SUCCESS;
         }
@@ -229,11 +231,12 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     };
     parts.devices.tyres.note(observed.flags);
     let play = note_sim(play, seen.sim_exe);
+    let checking = games::datacheck_still_running(play.phase, play.use_udp);
+    let simfree_on_exit =
+        play.phase == PlayPhase::Mapping && !parts.devices.loaded.is_empty() && !play.releasing;
     let play = apply_quit(play, parsed, parts.devices.loaded.len(), parts.quit_poll);
-    let now_ns = parts.clock.monotonic_ns();
     if play.phase == PlayPhase::Exiting {
-        release_configured(parts.devices, parts.pulse.as_mut(), parsed, now_ns);
-        return play;
+        return handle_exit(parts, play, parsed, checking, simfree_on_exit);
     }
     let play = apply_control(
         parts.control,
@@ -241,11 +244,10 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
         parts.pulse.as_mut(),
         play,
         parsed,
-        now_ns,
+        parts.clock.monotonic_ns(),
     );
     if play.phase == PlayPhase::Exiting {
-        release_configured(parts.devices, parts.pulse.as_mut(), parsed, now_ns);
-        return play;
+        return handle_exit(parts, play, parsed, checking, simfree_on_exit);
     }
     if play.releasing {
         return finish_release(parts, play, parsed);
@@ -276,6 +278,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
                     parsed,
                     parts.clock.monotonic_ns(),
                 );
+                slog_simfree(parsed, parts.session);
                 if next.user_stopped {
                     slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
                 } else {
@@ -416,14 +419,41 @@ fn searching(play: PlayLoop) -> PlayLoop {
     }
 }
 
-fn finish_release(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
-    let _ = parts.session.clear(false);
+fn handle_exit(
+    parts: &mut PlayParts<'_>,
+    play: PlayLoop,
+    parsed: &cli::Invocation,
+    checking: bool,
+    simfree: bool,
+) -> PlayLoop {
+    if checking {
+        slog(parsed, Level::Info, games::MSG_STOPPED_CHECKING);
+    }
     release_configured(
         parts.devices,
         parts.pulse.as_mut(),
         parsed,
         parts.clock.monotonic_ns(),
     );
+    if simfree {
+        slog_simfree(parsed, parts.session);
+    }
+    play
+}
+
+fn slog_simfree(parsed: &cli::Invocation, session: &mut GameSession) {
+    let code = session.clear_status(SIM_CLEAR_NOT_SIMD);
+    slog(parsed, Level::Debug, &games::simfree_returned_message(code));
+}
+
+fn finish_release(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation) -> PlayLoop {
+    release_configured(
+        parts.devices,
+        parts.pulse.as_mut(),
+        parsed,
+        parts.clock.monotonic_ns(),
+    );
+    slog_simfree(parsed, parts.session);
     if play.user_stopped {
         slog(parsed, Level::Info, games::MSG_STOPPED_MAPPING);
     }
@@ -495,7 +525,6 @@ fn map_or_release(
     fps: i32,
 ) -> PlayLoop {
     if games::mapping_tick(seen) == PlayAction::Release || games::mapping_should_stop(seen) {
-        let _ = parts.session.clear(false);
         return searching(play);
     }
     if play.use_udp {

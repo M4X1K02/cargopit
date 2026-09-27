@@ -1177,6 +1177,7 @@ fn open_profile_with(
     let mut registry = SerialRegistry::new();
     for (slot, entry) in profile.devices.iter().enumerate() {
         let slot = i32::try_from(slot).unwrap_or(i32::MAX);
+        setup_notices.extend(device_parse_notices(entry));
         let mut considered = consider_entry(
             entry,
             slot,
@@ -1410,6 +1411,104 @@ impl Drop for SerialPort {
         }
         shared.refs.set(refs.saturating_sub(SERIAL_REF_ONE));
     }
+}
+
+fn device_parse_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    let mut notices = device_trace_notices(entry);
+    notices.extend(device_class_notices(entry));
+    notices
+}
+
+fn device_trace_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    let mut notices = vec![
+        notice(
+            Level::Trace,
+            games::device_type_message(slog_name(entry.get_str(keys::KEY_DEVICE))),
+        ),
+        notice(
+            Level::Trace,
+            games::device_subtype_message(slog_name(entry.get_str(keys::KEY_TYPE))),
+        ),
+    ];
+    let Some(path) = entry.get_str(keys::KEY_CONFIG) else {
+        return notices;
+    };
+    notices.push(notice(
+        Level::Trace,
+        games::device_config_file_message(path),
+    ));
+    notices
+}
+
+fn device_class_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    let class_name = entry.get_str(keys::KEY_DEVICE);
+    let Some(class) = lookup_device_class(class_name) else {
+        return vec![notice(
+            Level::Info,
+            games::invalid_device_type_message(slog_name(class_name)),
+        )];
+    };
+    if let Some(invalid) = invalid_subtype_notice(class, entry.get_str(keys::KEY_TYPE)) {
+        return vec![invalid];
+    }
+    match invalid_subsubtype_notice(class, entry.get_str(keys::KEY_SUBTYPE)) {
+        Some(invalid) => vec![invalid],
+        None => Vec::new(),
+    }
+}
+
+fn lookup_device_class(name: Option<&str>) -> Option<i32> {
+    names::lookup(names::DEVICE_CLASSES, name?)
+}
+
+fn invalid_subtype_notice(class: i32, subtype: Option<&str>) -> Option<InitNotice> {
+    if class == names::DEVICE_SOUND {
+        return None;
+    }
+    if subtype_name_ok(class, subtype) {
+        return None;
+    }
+    let name = subtype?;
+    Some(notice(
+        Level::Warn,
+        games::invalid_device_subtype_message(name),
+    ))
+}
+
+fn subtype_name_ok(class: i32, subtype: Option<&str>) -> bool {
+    let Some(name) = subtype else {
+        return false;
+    };
+    let Some(table) = subtype_table(class) else {
+        return false;
+    };
+    names::lookup(table, name).is_some()
+}
+
+fn subtype_table(class: i32) -> Option<&'static [names::NameEntry]> {
+    match class {
+        names::DEVICE_USB => Some(names::USB_TYPES),
+        names::DEVICE_SERIAL => Some(names::SERIAL_TYPES),
+        _ => None,
+    }
+}
+
+fn invalid_subsubtype_notice(class: i32, hardware: Option<&str>) -> Option<InitNotice> {
+    if class != names::DEVICE_USB && class != names::DEVICE_SERIAL {
+        return None;
+    }
+    let name = hardware?;
+    if names::lookup(names::HARDWARE, name).is_some() {
+        return None;
+    }
+    Some(notice(
+        Level::Warn,
+        games::invalid_device_subsubtype_message(name),
+    ))
+}
+
+fn slog_name(value: Option<&str>) -> &str {
+    value.unwrap_or(games::DEVICE_NAME_MISSING)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4370,6 +4469,138 @@ mod tests {
         assert_eq!(device_skip(&muted, true), Some(DeviceSkip::AudioDisabled));
         assert_eq!(device_skip(&muted, false), None);
         loaded_tick_counts();
+    }
+
+    #[test]
+    fn setup_notices_log_c_device_parse_traces() {
+        let xml = sample_xml();
+        let mut device = DeviceEntry::new();
+        device.set_str(keys::KEY_DEVICE, keys::CLASS_USB);
+        device.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        device.set_str(keys::KEY_CONFIG, &xml);
+        let config = CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        };
+        let loaded =
+            open_profile_probed(&config, 0, false, PLAY_USES_PULSES, |_vendor, _product| {
+                false
+            });
+        assert!(notice_has(
+            &loaded.setup_notices,
+            &games::device_type_message(keys::CLASS_USB)
+        ));
+        assert!(notice_has(
+            &loaded.setup_notices,
+            &games::device_subtype_message(keys::TYPE_WHEEL)
+        ));
+        assert!(notice_has(
+            &loaded.setup_notices,
+            &games::device_config_file_message(&xml)
+        ));
+        let mut missing = DeviceEntry::new();
+        missing.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        let empty = CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![missing],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        };
+        let loaded =
+            open_profile_probed(&empty, 0, false, PLAY_USES_PULSES, |_vendor, _product| {
+                false
+            });
+        assert!(notice_has(
+            &loaded.setup_notices,
+            &games::device_type_message(keys::CLASS_SERIAL)
+        ));
+        assert!(notice_has(
+            &loaded.setup_notices,
+            &games::device_subtype_message(games::DEVICE_NAME_MISSING)
+        ));
+        let config_prefix = games::device_config_file_message("");
+        assert!(loaded
+            .setup_notices
+            .iter()
+            .all(|notice| !notice.message.starts_with(&config_prefix)));
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::invalid_device_subtype_message(games::DEVICE_NAME_MISSING)
+        ));
+    }
+
+    #[test]
+    fn setup_notices_log_c_invalid_device_classes() {
+        const UNKNOWN_DEVICE_CLASS: &str = "NotAClass";
+        const UNKNOWN_DEVICE_SUBTYPE: &str = "NotASubtype";
+        const UNKNOWN_DEVICE_HARDWARE: &str = "NotAHardware";
+        let loaded = load_parse_device(DeviceEntry::new());
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Info,
+            &games::invalid_device_type_message(games::DEVICE_NAME_MISSING)
+        ));
+        let mut unknown_class = DeviceEntry::new();
+        unknown_class.set_str(keys::KEY_DEVICE, UNKNOWN_DEVICE_CLASS);
+        unknown_class.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        let loaded = load_parse_device(unknown_class);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Info,
+            &games::invalid_device_type_message(UNKNOWN_DEVICE_CLASS)
+        ));
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::invalid_device_subtype_message(keys::TYPE_WHEEL)
+        ));
+        let mut unknown_subtype = DeviceEntry::new();
+        unknown_subtype.set_str(keys::KEY_DEVICE, keys::CLASS_USB);
+        unknown_subtype.set_str(keys::KEY_TYPE, UNKNOWN_DEVICE_SUBTYPE);
+        let loaded = load_parse_device(unknown_subtype);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::invalid_device_subtype_message(UNKNOWN_DEVICE_SUBTYPE)
+        ));
+        let mut unknown_hardware = DeviceEntry::new();
+        unknown_hardware.set_str(keys::KEY_DEVICE, keys::CLASS_USB);
+        unknown_hardware.set_str(keys::KEY_TYPE, keys::TYPE_WHEEL);
+        unknown_hardware.set_str(keys::KEY_SUBTYPE, UNKNOWN_DEVICE_HARDWARE);
+        let loaded = load_parse_device(unknown_hardware);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::invalid_device_subsubtype_message(UNKNOWN_DEVICE_HARDWARE)
+        ));
+        let mut sound = DeviceEntry::new();
+        sound.set_str(keys::KEY_DEVICE, keys::CLASS_SOUND);
+        sound.set_str(keys::KEY_TYPE, UNKNOWN_DEVICE_SUBTYPE);
+        let loaded = load_parse_device(sound);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::invalid_device_subtype_message(UNKNOWN_DEVICE_SUBTYPE)
+        ));
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::invalid_device_type_message(keys::CLASS_SOUND)
+        ));
+    }
+
+    fn load_parse_device(device: DeviceEntry) -> ProfileLoad {
+        let config = CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        };
+        open_profile_probed(&config, 0, false, PLAY_USES_PULSES, |_vendor, _product| {
+            false
+        })
     }
 
     fn loaded_tick_counts() {
@@ -7429,6 +7660,12 @@ mod tests {
 
     fn notice_has(notices: &[InitNotice], message: &str) -> bool {
         notices.iter().any(|notice| notice.message == message)
+    }
+
+    fn notice_has_level(notices: &[InitNotice], level: Level, message: &str) -> bool {
+        notices
+            .iter()
+            .any(|notice| notice.level == level && notice.message == message)
     }
 
     fn notice_absent(notices: &[InitNotice], message: &str) -> bool {
