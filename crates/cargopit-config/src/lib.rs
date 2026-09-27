@@ -61,6 +61,49 @@ mod tests {
             names::lookup(names::MODULATIONS, "AMPLIFY"),
             Some(names::MODULATION_AMPLIFY)
         );
+        const FREQ: i64 = 40;
+        const FREQ_EQUAL: i64 = 40;
+        const FREQ_MAX: i64 = 80;
+        const FREQ_UNSET: i64 = 0;
+        const INVALID_MODULATION: &str = "bogus";
+        let frequency = names::name_for(names::MODULATIONS, names::MODULATION_FREQUENCY)
+            .expect("frequency name");
+        let amplify =
+            names::name_for(names::MODULATIONS, names::MODULATION_AMPLIFY).expect("amplify name");
+        let amplify_alias = "Amplify";
+        assert_eq!(
+            names::parse_modulation(None, FREQ_UNSET, FREQ_UNSET),
+            names::ModulationParse::Missing
+        );
+        assert_eq!(
+            names::parse_modulation(Some(INVALID_MODULATION), FREQ_UNSET, FREQ_UNSET),
+            names::ModulationParse::Invalid(INVALID_MODULATION)
+        );
+        assert_eq!(
+            names::parse_modulation(Some(frequency), FREQ, FREQ_UNSET),
+            names::ModulationParse::FrequencyNeedsMax
+        );
+        assert_eq!(
+            names::parse_modulation(Some(frequency), FREQ, FREQ_EQUAL),
+            names::ModulationParse::Found(names::MODULATION_FREQUENCY)
+        );
+        assert_eq!(
+            names::parse_modulation(Some(frequency), FREQ, FREQ_MAX),
+            names::ModulationParse::Found(names::MODULATION_FREQUENCY)
+        );
+        assert_eq!(
+            names::parse_modulation(Some(amplify_alias), FREQ_UNSET, FREQ_UNSET),
+            names::ModulationParse::Found(names::MODULATION_AMPLIFY)
+        );
+        assert_eq!(
+            names::modulation_value(Some(frequency), FREQ, FREQ_UNSET),
+            names::MODULATION_NONE
+        );
+        assert_eq!(
+            names::modulation_value(Some(frequency), FREQ, FREQ_MAX),
+            names::MODULATION_FREQUENCY
+        );
+        assert_eq!(names::modulation_label(names::MODULATION_AMPLIFY), amplify);
     }
 
     #[test]

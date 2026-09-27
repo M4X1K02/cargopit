@@ -647,6 +647,20 @@ pub fn haptic_motor_message(motor: i64) -> String {
     format!("haptic motorposition: {motor}")
 }
 
+pub const MSG_ANALYSING_HAPTIC: &str = "analysing haptic effect settings";
+pub const MSG_READING_HAPTIC: &str = "reading configured haptic effect settings";
+pub const MSG_READING_SOUND: &str = "reading configured sound device settings";
+pub const MSG_MODULATION_MISSING: &str = "Effect modulation not found, set to none";
+pub const MSG_MODULATION_FREQ_FALLBACK: &str = "Falling back to no frequency modulation since frequencyMax is either not set or set below target frequency";
+
+pub fn invalid_modulation_message(name: &str) -> String {
+    format!("{name} is not a valid modulation type, falling back to no effect modulation")
+}
+
+pub fn modulation_found_message(name: &str) -> String {
+    format!("Effect modulation found, set to {name}")
+}
+
 const WHEELSLIP_FROM_SIM: &str = "wheelslip values from sim are";
 const WHEELSLIP_CALCULATED: &str = "wheelslip values are";
 
@@ -1702,6 +1716,31 @@ mod tests {
         assert_eq!(haptic_frequency_message(50), "haptic base frequency: 50");
         assert_eq!(haptic_amplitude_message(100), "haptic base amplitude: 100");
         assert_eq!(haptic_motor_message(1), "haptic motorposition: 1");
+        assert_eq!(MSG_ANALYSING_HAPTIC, "analysing haptic effect settings");
+        assert_eq!(
+            MSG_READING_HAPTIC,
+            "reading configured haptic effect settings"
+        );
+        assert_eq!(
+            MSG_READING_SOUND,
+            "reading configured sound device settings"
+        );
+        assert_eq!(
+            MSG_MODULATION_MISSING,
+            "Effect modulation not found, set to none"
+        );
+        assert_eq!(
+            MSG_MODULATION_FREQ_FALLBACK,
+            "Falling back to no frequency modulation since frequencyMax is either not set or set below target frequency"
+        );
+        assert_eq!(
+            invalid_modulation_message("bogus"),
+            "bogus is not a valid modulation type, falling back to no effect modulation"
+        );
+        assert_eq!(
+            modulation_found_message("Frequency"),
+            "Effect modulation found, set to Frequency"
+        );
         const WHEEL_FL: f64 = 0.4;
         const WHEEL_FR: f64 = 0.0;
         const WHEEL_RL: f64 = -0.2;

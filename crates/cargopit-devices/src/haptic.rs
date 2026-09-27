@@ -91,6 +91,17 @@ pub enum Modulation {
     Amplify = 2,
 }
 
+impl Modulation {
+    pub fn from_id(id: i32) -> Option<Self> {
+        match id {
+            value if value == Self::None as i32 => Some(Self::None),
+            value if value == Self::Frequency as i32 => Some(Self::Frequency),
+            value if value == Self::Amplify as i32 => Some(Self::Amplify),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct HapticSettings {
     pub effect: VibrationEffect,
@@ -610,6 +621,27 @@ mod tests {
 
     const DT: f64 = 1.0 / FILTER_REFERENCE_HZ;
     const THRESHOLD: f64 = 0.1;
+
+    #[test]
+    fn modulation_from_id_matches_c_enum() {
+        const UNKNOWN_AFTER_AMPLIFY: i32 = 1;
+        assert_eq!(
+            Modulation::from_id(Modulation::None as i32),
+            Some(Modulation::None)
+        );
+        assert_eq!(
+            Modulation::from_id(Modulation::Frequency as i32),
+            Some(Modulation::Frequency)
+        );
+        assert_eq!(
+            Modulation::from_id(Modulation::Amplify as i32),
+            Some(Modulation::Amplify)
+        );
+        assert_eq!(
+            Modulation::from_id(Modulation::Amplify as i32 + UNKNOWN_AFTER_AMPLIFY),
+            None
+        );
+    }
 
     fn moving() -> Telemetry {
         let mut sim = Telemetry::new();

@@ -6,7 +6,7 @@ use cargopit_config::config::DeviceEntry;
 use cargopit_config::keys;
 use cargopit_config::names;
 
-use cargopit_devices::haptic::{HapticSettings, TyreId, VibrationEffect};
+use cargopit_devices::haptic::{HapticSettings, Modulation, TyreId, VibrationEffect};
 use cargopit_devices::sound::{ShakerVoice, SharedShaker};
 use cargopit_devices::transport::ShakerRequest;
 
@@ -45,6 +45,7 @@ struct SoundSettings {
     duration: f64,
     frequency: i64,
     frequency_max: i64,
+    modulation: i32,
     threshold: f64,
     amplitude: i64,
     motor: i64,
@@ -146,17 +147,24 @@ fn vibration_phrase(effect: i32) -> Option<&'static str> {
 impl SoundSettings {
     fn read(entry: &DeviceEntry, effect: i32, path: &str) -> Self {
         let channels = configured_channels(entry);
+        let frequency = entry
+            .get_i64(keys::KEY_FREQUENCY)
+            .unwrap_or(FREQUENCY_DEFAULT);
+        let frequency_max = entry
+            .get_i64(keys::KEY_FREQUENCY_MAX)
+            .unwrap_or(FREQUENCY_MAX_DEFAULT);
         Self {
             effect,
             tyre: configured_tyre(entry, effect),
             path: path.to_string(),
             duration: configured_duration(entry, effect),
-            frequency: entry
-                .get_i64(keys::KEY_FREQUENCY)
-                .unwrap_or(FREQUENCY_DEFAULT),
-            frequency_max: entry
-                .get_i64(keys::KEY_FREQUENCY_MAX)
-                .unwrap_or(FREQUENCY_MAX_DEFAULT),
+            frequency,
+            frequency_max,
+            modulation: names::modulation_value(
+                entry.get_str(keys::KEY_MODULATION),
+                frequency,
+                frequency_max,
+            ),
             threshold: entry
                 .get_f64(keys::KEY_THRESHOLD)
                 .unwrap_or(THRESHOLD_DEFAULT),
@@ -234,6 +242,7 @@ impl SoundSettings {
             tyre: TyreId::from_id(self.tyre),
             frequency: u32_from_i64(self.frequency),
             frequency_max: u32_from_i64(self.frequency_max),
+            modulation: Modulation::from_id(self.modulation).unwrap_or(Modulation::None),
             amplitude: u32_from_i64(self.amplitude),
             duration: self.duration,
             threshold: self.threshold,
