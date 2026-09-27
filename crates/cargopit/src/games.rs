@@ -602,6 +602,20 @@ pub fn serial_baud_message(baud: u32) -> String {
     format!("Setting port to {baud} 8N1, no flow control")
 }
 
+pub fn serial_device_id_message(id: i32) -> String {
+    format!("serial device id {id}")
+}
+
+pub fn serial_port_state_message(name: &str, open: i32, openfail: i32) -> String {
+    format!("port name: {name}, open {open}, openfail {openfail}")
+}
+
+pub const MSG_SET_EVENT_ON_PORT: &str = "set event on port";
+
+pub fn serial_io_result_message(result: i32) -> String {
+    format!("serial io result is {result}")
+}
+
 pub fn moza_opened_message(path: &str) -> String {
     format!("Moza R9 wheel opened on {path}")
 }
@@ -1703,6 +1717,23 @@ mod tests {
                 cargopit_config::keys::BAUD_DEFAULT,
             )),
             "Setting port to 115200 8N1, no flow control"
+        );
+        const SAMPLE_SERIAL_ID: i32 = 0;
+        const SAMPLE_SERIAL_OPEN: i32 = 1;
+        const SAMPLE_SERIAL_OPENFAIL: i32 = 0;
+        const SAMPLE_SERIAL_IO: i32 = 1;
+        assert_eq!(
+            serial_device_id_message(SAMPLE_SERIAL_ID),
+            "serial device id 0"
+        );
+        assert_eq!(
+            serial_port_state_message("/dev/ttyACM0", SAMPLE_SERIAL_OPEN, SAMPLE_SERIAL_OPENFAIL),
+            "port name: /dev/ttyACM0, open 1, openfail 0"
+        );
+        assert_eq!(MSG_SET_EVENT_ON_PORT, "set event on port");
+        assert_eq!(
+            serial_io_result_message(SAMPLE_SERIAL_IO),
+            "serial io result is 1"
         );
         assert_eq!(
             MSG_SERIAL_SETUP_OK,
