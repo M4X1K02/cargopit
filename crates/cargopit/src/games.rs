@@ -27,6 +27,11 @@ pub const MSG_RESTART_CHECK: &str = "restarting checking for data...";
 pub const MSG_RELOAD: &str = "reload requested, releasing devices to load the saved profile";
 pub const MSG_CONTROL_PATH_TOO_LONG: &str =
     "control socket path is too long; control socket disabled";
+pub const MSG_STDIN_NOT_TTY: &str = "stdin is not a tty; skip quit-key poll";
+pub const MSG_STDIN_SETTINGS: &str = "could not read stdin terminal settings";
+pub const MSG_STDIN_RAW: &str = "could not set stdin to raw mode";
+pub const MSG_STDIN_POLL: &str = "could not poll stdin; continuing without quit key";
+pub const MSG_STDIN_POLL_START: &str = "could not start stdin poll; continuing without quit key";
 pub const MSG_APPLYING_SETTINGS: &str = "applying settings";
 pub const MSG_SETTINGS_APPLIED: &str = "settings applied";
 pub const MSG_CHECKING_DIAMETERS: &str = "checking for diameters config";
@@ -1060,6 +1065,17 @@ mod tests {
         assert_eq!(
             control_listening_message(CONTROL_PATH),
             "control socket listening on /run/user/1000/cargopit.sock"
+        );
+        assert_eq!(MSG_STDIN_NOT_TTY, "stdin is not a tty; skip quit-key poll");
+        assert_eq!(MSG_STDIN_SETTINGS, "could not read stdin terminal settings");
+        assert_eq!(MSG_STDIN_RAW, "could not set stdin to raw mode");
+        assert_eq!(
+            MSG_STDIN_POLL,
+            "could not poll stdin; continuing without quit key"
+        );
+        assert_eq!(
+            MSG_STDIN_POLL_START,
+            "could not start stdin poll; continuing without quit key"
         );
         assert_eq!(
             signal_stop_message(libc::SIGINT),

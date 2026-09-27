@@ -2,7 +2,6 @@
 
 use std::env;
 use std::io::{self, Read, Write};
-use std::os::fd::AsRawFd;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
@@ -16,6 +15,7 @@ use cargopit::games::{self, PlayAction, PlayPhase, SeenSim};
 use cargopit::log::{self, Level};
 use cargopit::scheduler::{self, TimerKind};
 use cargopit::simd::{self, EnsureStatus};
+use cargopit::stdin_quit;
 use cargopit::tach;
 use cargopit::testmode;
 use cargopit::tyres::{self, TyreSimFlags};
@@ -47,20 +47,6 @@ fn install_stop_signals() {
     }
 }
 
-fn read_quit_key() -> Option<u8> {
-    let stdin = io::stdin();
-    let flags = unsafe { libc::fcntl(stdin.as_raw_fd(), libc::F_GETFL) };
-    if flags >= 0 {
-        unsafe {
-            libc::fcntl(stdin.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK);
-        }
-    }
-    let mut byte = [0u8; 1];
-    match stdin.lock().read(&mut byte) {
-        Ok(1) => Some(byte[0]),
-        _ => None,
-    }
-}
 use std::net::UdpSocket;
 
 fn main() -> ExitCode {
@@ -161,11 +147,13 @@ fn run_discovery(parsed: &cli::Invocation, pulse: &mut Option<PulseSession>) -> 
     let mut socket: Option<UdpSocket> = None;
     install_stop_signals();
     let clock = SystemClock::new();
+    let _stdin = open_stdin_quit(parsed);
     let control_path = control::socket_path(
         std::env::var(control::RUNTIME_DIR_ENV).ok().as_deref(),
         control::current_uid(),
     );
     let control = open_control(parsed, &control_path);
+    let quit_poll = _stdin.is_some();
     let mut devices = DeviceLoop {
         loaded: LoadedDevices::empty(),
         scheduler: scheduler::Scheduler::new(),
@@ -192,6 +180,7 @@ fn run_discovery(parsed: &cli::Invocation, pulse: &mut Option<PulseSession>) -> 
                 clock: &clock,
                 devices: &mut devices,
                 control: control.as_ref(),
+                quit_poll,
                 pulse,
             },
             play,
@@ -212,6 +201,7 @@ struct PlayParts<'a> {
     clock: &'a SystemClock,
     devices: &'a mut DeviceLoop,
     control: Option<&'a std::os::unix::net::UnixListener>,
+    quit_poll: bool,
     pulse: &'a mut Option<PulseSession>,
 }
 
@@ -237,7 +227,7 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     };
     parts.devices.tyres.note(observed.flags);
     let play = note_sim(play, seen.sim_exe);
-    let play = apply_quit(play, parsed, parts.devices.loaded.len());
+    let play = apply_quit(play, parsed, parts.devices.loaded.len(), parts.quit_poll);
     let now_ns = parts.clock.monotonic_ns();
     if play.phase == PlayPhase::Exiting {
         release_configured(parts.devices, parts.pulse.as_mut(), parsed, now_ns);
@@ -299,11 +289,21 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     }
 }
 
-fn apply_quit(play: PlayLoop, parsed: &cli::Invocation, device_count: usize) -> PlayLoop {
+fn apply_quit(
+    play: PlayLoop,
+    parsed: &cli::Invocation,
+    device_count: usize,
+    quit_poll: bool,
+) -> PlayLoop {
     let mapping = play.phase == PlayPhase::Mapping;
     let signum = STOP_SIGNAL.swap(STOP_SIGNAL_NONE, Ordering::Relaxed);
     let release_devices = mapping && device_count > 0 && !play.releasing;
-    match games::quit_action(read_quit_key(), signum != STOP_SIGNAL_NONE, mapping) {
+    let key = if quit_poll {
+        stdin_quit::read_key()
+    } else {
+        None
+    };
+    match games::quit_action(key, signum != STOP_SIGNAL_NONE, mapping) {
         games::QuitAction::Continue => play,
         games::QuitAction::Exit => {
             announce_exit(parsed, signum, release_devices);
@@ -997,6 +997,28 @@ fn print_test_script(
     });
     for line in script.lines {
         slog(parsed, Level::Info, &line);
+    }
+}
+
+fn open_stdin_quit(parsed: &cli::Invocation) -> Option<stdin_quit::StdinQuit> {
+    match stdin_quit::start() {
+        stdin_quit::StdinQuitStart::NotTty => {
+            slog(parsed, Level::Debug, games::MSG_STDIN_NOT_TTY);
+            None
+        }
+        stdin_quit::StdinQuitStart::Ready(stdin) => Some(stdin),
+        stdin_quit::StdinQuitStart::ReadSettingsFailed => {
+            slog(parsed, Level::Warn, games::MSG_STDIN_SETTINGS);
+            None
+        }
+        stdin_quit::StdinQuitStart::RawModeFailed => {
+            slog(parsed, Level::Warn, games::MSG_STDIN_RAW);
+            None
+        }
+        stdin_quit::StdinQuitStart::PollFailed => {
+            slog(parsed, Level::Warn, games::MSG_STDIN_POLL);
+            None
+        }
     }
 }
 
