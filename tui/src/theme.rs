@@ -13,6 +13,7 @@ pub const COLOR_MUTED: Color = Color::Rgb(132, 126, 116);
 pub const COLOR_OK: Color = COLOR_ACCENT;
 pub const COLOR_ERR: Color = COLOR_TEXT;
 pub const COLOR_WARN: Color = COLOR_MUTED;
+pub const COLOR_LOG: Color = Color::Rgb(110, 178, 190);
 pub const COLOR_SELECTED_FG: Color = Color::Rgb(28, 26, 24);
 pub const COLOR_SELECTED_BG: Color = COLOR_ACCENT;
 pub const COLOR_BAR_BG: Color = Color::Rgb(38, 36, 34);
@@ -70,6 +71,12 @@ pub fn style_ok() -> Style {
 
 pub fn style_warn() -> Style {
     Style::default().fg(COLOR_WARN).add_modifier(Modifier::BOLD)
+}
+
+pub fn style_log() -> Style {
+    Style::default()
+        .fg(COLOR_LOG)
+        .add_modifier(Modifier::ITALIC)
 }
 
 pub fn style_muted() -> Style {
