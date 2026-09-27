@@ -420,6 +420,7 @@ impl RealPulse {
             .map_err(|_| TransportError::Unavailable)?;
         mainloop.start().map_err(|_| TransportError::Unavailable)?;
         if !wait_ready(&mut mainloop, &context) {
+            shutdown_pulse(&mut mainloop, Some(&mut context));
             return Err(TransportError::Unavailable);
         }
         Ok(Self { mainloop, context })
@@ -463,6 +464,10 @@ impl RealPulse {
                 None,
             )
             .map_err(|_| TransportError::Unavailable)?;
+        if !wait_for_stream(&mut self.mainloop, &mut stream as *mut _) {
+            release_stream(stream);
+            return Err(TransportError::Unavailable);
+        }
         let bytes = vec![0u8; PULSE_SMOKE_FRAMES * usize::from(PULSE_CHANNELS) * 2];
         stream
             .write_copy(&bytes, 0, libpulse_binding::stream::SeekMode::Relative)
@@ -472,7 +477,14 @@ impl RealPulse {
                 .introspect()
                 .set_sink_input_mute(index, true, None);
         }
+        release_stream(stream);
         Ok(())
+    }
+}
+
+impl Drop for RealPulse {
+    fn drop(&mut self) {
+        shutdown_pulse(&mut self.mainloop, Some(&mut self.context));
     }
 }
 
@@ -616,11 +628,22 @@ impl Drop for PulseSession {
             self.context.take();
             return;
         };
-        mainloop.lock();
-        drop(self.context.take());
-        mainloop.unlock();
+        shutdown_pulse(mainloop, self.context.as_mut());
+        self.context.take();
         self.mainloop.take();
     }
+}
+
+fn shutdown_pulse(
+    mainloop: &mut libpulse_binding::mainloop::threaded::Mainloop,
+    context: Option<&mut libpulse_binding::context::Context>,
+) {
+    if let Some(context) = context {
+        mainloop.lock();
+        context.disconnect();
+        mainloop.unlock();
+    }
+    mainloop.stop();
 }
 
 fn connect_shaker_locked(

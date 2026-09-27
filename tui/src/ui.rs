@@ -1501,14 +1501,34 @@ mod tests {
         panic!("no slider widget on a {label} row:\n{dump}");
     }
 
+    const TEST_CONFIG_DIR: &str = "config";
+    const TEST_CACHE_DIR: &str = "cache";
+    const TEST_STATE_DIR: &str = "state";
+    const TEST_RUNTIME_DIR: &str = "runtime";
+
+    fn restore_env(key: &str, previous: Option<String>) {
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+
     fn with_app<F: FnOnce(&mut App)>(f: F) {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var(consts::ENV_XDG_CONFIG_HOME, dir.path().join("config"));
-        std::env::set_var(consts::ENV_XDG_CACHE_HOME, dir.path().join("cache"));
-        std::env::set_var(consts::ENV_XDG_STATE_HOME, dir.path().join("state"));
+        let runtime = dir.path().join(TEST_RUNTIME_DIR);
+        std::fs::create_dir_all(&runtime).unwrap();
+        let previous_runtime = std::env::var(consts::ENV_XDG_RUNTIME_DIR).ok();
+        std::env::set_var(
+            consts::ENV_XDG_CONFIG_HOME,
+            dir.path().join(TEST_CONFIG_DIR),
+        );
+        std::env::set_var(consts::ENV_XDG_CACHE_HOME, dir.path().join(TEST_CACHE_DIR));
+        std::env::set_var(consts::ENV_XDG_STATE_HOME, dir.path().join(TEST_STATE_DIR));
+        std::env::set_var(consts::ENV_XDG_RUNTIME_DIR, &runtime);
         let mut app = App::new().unwrap();
         f(&mut app);
+        restore_env(consts::ENV_XDG_RUNTIME_DIR, previous_runtime);
     }
 
     const SIMD_SCROLL_TAIL: &str = "ZzzScrollTail";
