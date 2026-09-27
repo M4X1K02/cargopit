@@ -163,7 +163,7 @@ PACMANCONF_EOF
     # commands — installing the package is just the simplest reliable way
     # to get every lib32-* dependency it needs without hand-picking each
     # one).
-    sudo pacman -Syu --needed --noconfirm base-devel git cmake rust mingw-w64-gcc wine lib32-glibc libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 procps-ng
+    sudo pacman -Syu --needed --noconfirm base-devel git cmake rust clang mingw-w64-gcc wine lib32-glibc hidapi lua54 libpulse pkgconf libserialport procps-ng
 
     # Install yay (AUR helper) if not present
     if ! command -v yay &>/dev/null; then
@@ -197,27 +197,15 @@ PACMANCONF_EOF
         git -C "$CARGOPIT_SRC" pull --ff-only || true
         git -C "$CARGOPIT_SRC" submodule update --init --recursive
     fi
-    cmake -S "$CARGOPIT_SRC" -B "$CARGOPIT_SRC/build"
+    cmake -S "$CARGOPIT_SRC" -B "$CARGOPIT_SRC/build" -DCMAKE_BUILD_TYPE=Release
     cmake --build "$CARGOPIT_SRC/build" -j"$(nproc)"
     if [ ! -x "$CARGOPIT_SRC/build/cargopit" ]; then
         echo "cargopit binary was not produced" >&2
         exit 1
     fi
-    cargo build --release -p cargopit --manifest-path "$CARGOPIT_SRC/Cargo.toml"
-    if [ ! -x "$CARGOPIT_SRC/target/release/cargopit" ]; then
-        echo "Rust cargopit binary was not produced" >&2
-        exit 1
-    fi
-    sudo install -Dm755 "$CARGOPIT_SRC/target/release/cargopit" /usr/local/bin/cargopit
-    if [ -x "$CARGOPIT_SRC/build/cargopit-legacy" ]; then
-        sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit-legacy" /usr/local/bin/cargopit-legacy
-    else
-        sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit" /usr/local/bin/cargopit-legacy
-    fi
-    if [ -x "$CARGOPIT_SRC/build/tui/release/cargopit-tui" ]; then
-        sudo install -Dm755 "$CARGOPIT_SRC/build/tui/release/cargopit-tui" /usr/local/bin/cargopit-tui
-    elif [ -x "$CARGOPIT_SRC/build/tui/debug/cargopit-tui" ]; then
-        sudo install -Dm755 "$CARGOPIT_SRC/build/tui/debug/cargopit-tui" /usr/local/bin/cargopit-tui
+    sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit" /usr/local/bin/cargopit
+    if [ -x "$CARGOPIT_SRC/build/cargopit-tui" ]; then
+        sudo install -Dm755 "$CARGOPIT_SRC/build/cargopit-tui" /usr/local/bin/cargopit-tui
     else
         echo "cargopit-tui binary was not produced (install rust/cargo)" >&2
         exit 1

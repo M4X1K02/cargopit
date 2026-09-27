@@ -155,6 +155,39 @@ fn compile_mappers(root: &Path, include: &Path, proc: &ProcLibs) {
     }
 }
 
+const MAP_CHECK_SRC: &str = "csrc/map_ac_dr2_check.c";
+const MAP_CHECK_BIN: &str = "map_ac_dr2_check";
+const MAPPERS_LIB: &str = "libsimapi_mappers.a";
+
+fn compile_map_check(root: &Path, include: &Path, proc: &ProcLibs, out_dir: &Path) {
+    println!("cargo:rerun-if-changed={MAP_CHECK_SRC}");
+    let bin = out_dir.join(MAP_CHECK_BIN);
+    let mut cmd = cc::Build::new()
+        .include(include)
+        .include(root.join("include"))
+        .include(root.join("simmap"))
+        .get_compiler()
+        .to_command();
+    cmd.arg("-I").arg(include);
+    cmd.arg("-I").arg(root.join("include"));
+    cmd.arg("-I").arg(root.join("simmap"));
+    for flag in &proc.include_flags {
+        cmd.arg(flag);
+    }
+    cmd.arg(MAP_CHECK_SRC);
+    cmd.arg(out_dir.join(MAPPERS_LIB));
+    cmd.arg("-o").arg(&bin);
+    cmd.arg("-lm");
+    for flag in &proc.link_libs {
+        cmd.arg(flag);
+    }
+    let status = cmd.status().expect("compile map check");
+    if !status.success() {
+        panic!("map_ac_dr2_check failed to compile");
+    }
+    println!("cargo:rustc-env=CARGOPIT_MAP_CHECK={}", bin.display());
+}
+
 fn generate_bindings(include: &Path, root: &Path, out_dir: &Path) {
     println!("cargo:rerun-if-changed=csrc/wrapper.h");
     let builder = bindgen::Builder::default()
@@ -186,5 +219,6 @@ fn main() {
     emit_layout(&include, &out_dir);
     let proc = proc_libs();
     compile_mappers(&root, &include, &proc);
+    compile_map_check(&root, &include, &proc, &out_dir);
     generate_bindings(&include, &root, &out_dir);
 }

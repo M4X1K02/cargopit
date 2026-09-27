@@ -5,4 +5,4 @@ Priority: optional
 Architecture: amd64
 Maintainer: M4X1K02 <maxik.secure@tutanota.com>
 Description: Racing Simulator Device Manager
-Depends: libpulse0,libconfig11,libargtable2-0,liblua5.4-0,libuv1t64,libserialport0,libxml2-16,libxdg-basedir1,libhidapi-hidraw0
+Depends: libpulse0,liblua5.4-0,libserialport0,libhidapi-hidraw0,libproc2-0

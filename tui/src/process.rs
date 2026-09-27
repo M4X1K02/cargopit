@@ -63,9 +63,24 @@ pub fn find_binary(name: &str) -> Option<PathBuf> {
         .find(|path| is_executable(path))
 }
 
-fn managed_binaries(name: &str) -> [PathBuf; 3] {
-    [
-        paths::source_root().join(consts::BUILD_DIRNAME).join(name),
+fn managed_binaries(name: &str) -> Vec<PathBuf> {
+    let root = paths::source_root();
+    vec![
+        root.join(consts::BUILD_DIRNAME).join(name),
+        root.join(consts::TARGET_DIRNAME)
+            .join(consts::PROFILE_RELEASE)
+            .join(name),
+        root.join(consts::TARGET_DIRNAME)
+            .join(consts::PROFILE_DEBUG)
+            .join(name),
+        root.join(consts::BUILD_DIRNAME)
+            .join(consts::CARGO_DIRNAME)
+            .join(consts::PROFILE_RELEASE)
+            .join(name),
+        root.join(consts::BUILD_DIRNAME)
+            .join(consts::CARGO_DIRNAME)
+            .join(consts::PROFILE_DEBUG)
+            .join(name),
         paths::local_bin_dir().join(name),
         paths::data_home()
             .join(consts::CONFIG_DIR_NAME)
@@ -112,8 +127,7 @@ pub fn check_processes_from(listing: &str) -> ProcessStatus {
     let mut status = ProcessStatus::default();
     let self_pid = std::process::id();
     status.simd_running = service_running(listing, consts::BINARY_SIMD, self_pid);
-    status.cargopit_running = service_running(listing, consts::BINARY_CARGOPIT, self_pid)
-        || service_running(listing, consts::BINARY_CARGOPIT_LEGACY, self_pid);
+    status.cargopit_running = service_running(listing, consts::BINARY_CARGOPIT, self_pid);
     status.cleaned_pid_files = cleanup_stale_pid_files(&status);
     status
 }
@@ -687,9 +701,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_play_counts_as_cargopit_running() {
-        let listing = "PID COMMAND ARGS\n7 cargopit-legacy /opt/bin/cargopit-legacy play\n";
-        assert!(check_processes_from(listing).cargopit_running);
+    fn cargo_release_binary_is_managed() {
+        let source_build = paths::source_root()
+            .join(consts::TARGET_DIRNAME)
+            .join(consts::PROFILE_RELEASE)
+            .join(consts::BINARY_CARGOPIT);
+        assert!(is_managed_binary(&source_build, consts::BINARY_CARGOPIT));
     }
 
     #[test]

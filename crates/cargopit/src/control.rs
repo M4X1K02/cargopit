@@ -5,13 +5,13 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 
-pub const SOCKET_NAME: &str = "cargopit.sock";
+pub const SOCKET_NAME: &str = cargopit_config::keys::CONTROL_SOCKET_NAME;
 const SOCKET_MODE: u32 = 0o600;
 pub const RUNTIME_DIR_ENV: &str = "XDG_RUNTIME_DIR";
 pub const PATH_MAX: usize = 108;
-pub const CMD_STATUS: &str = "status";
-pub const CMD_RELOAD: &str = "reload";
-pub const CMD_STOP: &str = "stop";
+pub const CMD_STATUS: &str = cargopit_config::keys::CONTROL_CMD_STATUS;
+pub const CMD_RELOAD: &str = cargopit_config::keys::CONTROL_CMD_RELOAD;
+pub const CMD_STOP: &str = cargopit_config::keys::CONTROL_CMD_STOP;
 pub const REPLY_OK: &str = "{\"ok\":true}";
 pub const REPLY_UNKNOWN: &str = "{\"ok\":false,\"error\":\"unknown command\"}";
 pub const REPLY_TOO_LONG: &str = "{\"ok\":false,\"error\":\"command too long\"}";
@@ -40,7 +40,11 @@ unsafe extern "C" {
 pub fn socket_path(runtime_dir: Option<&str>, uid: u32) -> String {
     match runtime_dir {
         Some(dir) if !dir.is_empty() => format!("{dir}/{SOCKET_NAME}"),
-        _ => format!("/tmp/cargopit-{uid}.sock"),
+        _ => format!(
+            "{}{uid}{}",
+            cargopit_config::keys::CONTROL_SOCKET_FALLBACK_PREFIX,
+            cargopit_config::keys::CONTROL_SOCKET_FALLBACK_SUFFIX
+        ),
     }
 }
 

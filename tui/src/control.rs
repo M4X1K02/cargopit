@@ -1,6 +1,5 @@
-//! Client for the control socket of a running `cargopit play`
-//! (protocol in src/cargopit/gameloop/control.h): one command line per
-//! connection, one JSON line back.
+//! Client for the control socket of a running `cargopit play`:
+//! one command line per connection, one JSON line back.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::MetadataExt;
@@ -97,36 +96,19 @@ mod tests {
     use std::os::unix::net::UnixListener;
     use std::thread;
 
-    const CONTROL_H: &str = include_str!("../../src/cargopit/gameloop/control.h");
-
-    fn c_define(name: &str) -> String {
-        CONTROL_H
-            .lines()
-            .find_map(|line| {
-                line.trim()
-                    .strip_prefix("#define ")?
-                    .strip_prefix(name)?
-                    .trim()
-                    .strip_prefix('"')?
-                    .strip_suffix('"')
-                    .map(str::to_string)
-            })
-            .unwrap_or_else(|| panic!("{name} missing from control.h"))
-    }
-
     #[test]
-    fn protocol_matches_c_daemon() {
-        assert_eq!(c_define("CONTROL_SOCKET_NAME"), consts::CONTROL_SOCKET_NAME);
-        assert_eq!(c_define("CONTROL_CMD_STATUS"), consts::CONTROL_CMD_STATUS);
-        assert_eq!(c_define("CONTROL_CMD_RELOAD"), consts::CONTROL_CMD_RELOAD);
-        assert_eq!(c_define("CONTROL_CMD_STOP"), consts::CONTROL_CMD_STOP);
+    fn protocol_constants_match_host() {
+        assert_eq!(consts::CONTROL_SOCKET_NAME, "cargopit.sock");
+        assert_eq!(consts::CONTROL_CMD_STATUS, "status");
+        assert_eq!(consts::CONTROL_CMD_RELOAD, "reload");
+        assert_eq!(consts::CONTROL_CMD_STOP, "stop");
         assert_eq!(
-            c_define("CONTROL_SOCKET_FALLBACK"),
             format!(
                 "{}%u{}",
                 consts::CONTROL_SOCKET_FALLBACK_PREFIX,
                 consts::CONTROL_SOCKET_FALLBACK_SUFFIX
-            )
+            ),
+            "/tmp/cargopit-%u.sock"
         );
     }
 

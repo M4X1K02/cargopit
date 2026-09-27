@@ -1,6 +1,6 @@
 [package]
 name = "parity"
-description = "Scenario source and golden comparison for the C/Rust parity harness"
+description = "Scenario source and golden comparison for device parity tests"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

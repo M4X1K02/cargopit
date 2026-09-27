@@ -1,4 +1,4 @@
-//! Haptic intensity math from `hapticeffect.c`. USB and audio encoders stay in later phases.
+//! Haptic intensity math.
 
 use crate::clock::Clock;
 use crate::telemetry::{Telemetry, PROXIMITY_CARS};

@@ -10,17 +10,16 @@ license=('GPL3')
 depends=(
         hidapi
 	libserialport
-	libxml2
-	argtable
-	libconfig
 	libpulse
-	libxdg-basedir
-	libuv
+	lua54
+	procps-ng
 )
 makedepends=(
   git
   cmake
   rust
+  clang
+  pkgconf
 )
 source=(
   cargopit::git+https://github.com/M4X1K02/cargopit
@@ -38,19 +37,10 @@ package() {
   cd "$srcdir/$_reponame" || exit 1
   git submodule sync --recursive
   git submodule update --init --recursive
-  mkdir -p build
-  cd build
-  cmake -DUSE_PULSEAUDIO=yes ..
-  make
-  cd ..
-  cargo build --release -p cargopit --manifest-path Cargo.toml
+  cmake -B build -DCMAKE_BUILD_TYPE=Release
+  cmake --build build
 
   mkdir -p "${pkgdir}/usr/bin/"
-  cp "$srcdir/$_reponame"/target/release/$_reponame "${pkgdir}/usr/bin/$_reponame"
-  cp "$srcdir/$_reponame"/build/cargopit-legacy "${pkgdir}/usr/bin/cargopit-legacy"
-  if [ -x "$srcdir/$_reponame"/build/tui/release/cargopit-tui ]; then
-    cp "$srcdir/$_reponame"/build/tui/release/cargopit-tui "${pkgdir}/usr/bin/cargopit-tui"
-  elif [ -x "$srcdir/$_reponame"/build/tui/debug/cargopit-tui ]; then
-    cp "$srcdir/$_reponame"/build/tui/debug/cargopit-tui "${pkgdir}/usr/bin/cargopit-tui"
-  fi
+  cp "$srcdir/$_reponame"/build/cargopit "${pkgdir}/usr/bin/$_reponame"
+  cp "$srcdir/$_reponame"/build/cargopit-tui "${pkgdir}/usr/bin/cargopit-tui"
 }

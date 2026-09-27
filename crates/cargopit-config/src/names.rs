@@ -337,6 +337,10 @@ pub fn modulation_label(value: i32) -> &'static str {
     name_for(MODULATIONS, MODULATION_NONE).expect("modulation none name")
 }
 
+pub fn names(table: &[NameEntry]) -> Vec<&'static str> {
+    table.iter().map(|entry| entry.name).collect()
+}
+
 pub fn lookup(table: &[NameEntry], name: &str) -> Option<i32> {
     if name.is_empty() {
         return None;

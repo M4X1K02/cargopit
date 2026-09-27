@@ -7,7 +7,7 @@ BIN_DIR="${HOME}/.local/bin"
 PLAY_TIMEOUT_SEC=12
 MISSING_TIMEOUT_SEC=6
 SIMD_REQUIRED_MSG="simd is required but is not installed"
-# Keep in sync with simd_find_binary() in src/cargopit/helper/ensure_simd.c
+# Keep in sync with simd binary lookup in crates/cargopit/src/simd.rs
 SIMD_PATH_USR_LOCAL="/usr/local/bin/simd"
 SIMD_PATH_USR_BIN="/usr/bin/simd"
 

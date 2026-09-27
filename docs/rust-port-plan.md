@@ -1,5 +1,11 @@
 # Cargopit Rust port plan
 
+**Status (2026-09-27):** Cutover is complete. The host is the Rust `cargopit`
+binary. The C host, slog, CMake C targets, and the C capture harness are
+removed. Device goldens and `crates/parity` remain. simapi mappers, simd, and
+Arduino firmware stay C. Known C quirks that were preserved on purpose are in
+`docs/rust-port-known-quirks.md`.
+
 ## Goal and boundary
 
 Port the host application in `src/cargopit/` to Rust without losing device or

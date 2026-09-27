@@ -1,4 +1,4 @@
-//! Shared device record. Concrete USB, serial, and sound encoders stay in later phases.
+//! Shared device record.
 
 pub const MS_PER_SECOND: u64 = 1000;
 pub const DEFAULT_DEVICE_FPS: u32 = 60;

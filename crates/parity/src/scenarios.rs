@@ -1,5 +1,5 @@
 //! Single source of telemetry streams for C capture and the later Rust runner.
-//! Numeric values match the C tester fixtures in `src/cargopit/gameloop/tester.c`.
+//! Numeric values match the original tester fixtures.
 
 use simapi_sys::{
     SimDataBuf, BOOL_SIZE, CAR_NAME_BYTES, F64_SIZE, GEAR_CHAR_BYTES, OFF_ABS, OFF_BRAKE,

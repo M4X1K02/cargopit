@@ -1,77 +1,48 @@
-//! Every config name the TUI can write must be one cargopit's C parser accepts.
-//! The C side lists them once, in src/cargopit/helper/devicenames.h.
+//! Every config name the TUI can write must be one the shared parser accepts.
 
-use std::collections::HashMap;
-
+use cargopit_config::names::{self, NameEntry};
 use cargopit_tui::consts;
 
-const DEVICENAMES_H: &str = include_str!("../../src/cargopit/helper/devicenames.h");
-const TABLE_PREFIX: &str = "#define CARGOPIT_";
-const TABLE_SUFFIX: &str = "_NAMES(X)";
-const ENTRY_PREFIX: &str = "X(\"";
-const QUOTE: char = '"';
-
-/// Table name (e.g. `EFFECT`) -> lowercased names listed in that X-macro table.
-fn c_name_tables() -> HashMap<String, Vec<String>> {
-    let mut tables: HashMap<String, Vec<String>> = HashMap::new();
-    let mut current: Option<String> = None;
-    for line in DEVICENAMES_H.lines().map(str::trim) {
-        if let Some(rest) = line.strip_prefix(TABLE_PREFIX) {
-            current = rest
-                .split_once(TABLE_SUFFIX)
-                .map(|(name, _)| name.to_string());
-            continue;
-        }
-        let Some(table) = current.as_ref() else {
-            continue;
-        };
-        let Some(rest) = line.strip_prefix(ENTRY_PREFIX) else {
-            current = None;
-            continue;
-        };
-        if let Some((name, _)) = rest.split_once(QUOTE) {
-            tables
-                .entry(table.clone())
-                .or_default()
-                .push(name.to_lowercase());
-        }
-    }
-    tables
+fn accepted(table: &[NameEntry]) -> Vec<String> {
+    names::names(table)
+        .into_iter()
+        .map(|name| name.to_lowercase())
+        .collect()
 }
 
-fn assert_all_accepted(tables: &HashMap<String, Vec<String>>, table: &str, tui_names: &[&str]) {
-    let accepted = tables
-        .get(table)
-        .unwrap_or_else(|| panic!("devicenames.h has no CARGOPIT_{table}_NAMES table"));
+fn assert_all_accepted(table: &[NameEntry], table_name: &str, tui_names: &[&str]) {
+    let accepted = accepted(table);
     for name in tui_names {
         assert!(
             accepted.contains(&name.to_lowercase()),
-            "TUI writes {name:?} but CARGOPIT_{table}_NAMES in devicenames.h does not accept it"
+            "TUI writes {name:?} but {table_name} does not accept it"
         );
     }
 }
 
 #[test]
-fn tui_device_names_are_accepted_by_c_parser() {
-    let tables = c_name_tables();
+fn tui_device_names_are_accepted_by_parser() {
     assert_all_accepted(
-        &tables,
-        "DEVICE_CLASS",
+        names::DEVICE_CLASSES,
+        "DEVICE_CLASSES",
         &[consts::CLASS_USB, consts::CLASS_SOUND, consts::CLASS_SERIAL],
     );
-    assert_all_accepted(&tables, "USB_TYPE", consts::USB_TYPES);
-    assert_all_accepted(&tables, "SERIAL_TYPE", consts::SERIAL_TYPES);
-    assert_all_accepted(&tables, "SOUND_TYPE", consts::SOUND_TYPES);
-    assert_all_accepted(&tables, "HARDWARE", consts::USB_HARDWARE_SUBTYPES);
-    assert_all_accepted(&tables, "HARDWARE", consts::TACHOMETER_SUBTYPES);
-    assert_all_accepted(&tables, "HARDWARE", consts::SERIAL_WHEEL_SUBTYPES);
+    assert_all_accepted(names::USB_TYPES, "USB_TYPES", consts::USB_TYPES);
+    assert_all_accepted(names::SERIAL_TYPES, "SERIAL_TYPES", consts::SERIAL_TYPES);
+    assert_all_accepted(names::SOUND_TYPES, "SOUND_TYPES", consts::SOUND_TYPES);
+    assert_all_accepted(names::HARDWARE, "HARDWARE", consts::USB_HARDWARE_SUBTYPES);
+    assert_all_accepted(names::HARDWARE, "HARDWARE", consts::TACHOMETER_SUBTYPES);
+    assert_all_accepted(names::HARDWARE, "HARDWARE", consts::SERIAL_WHEEL_SUBTYPES);
 }
 
 #[test]
-fn tui_effect_names_are_accepted_by_c_parser() {
-    let tables = c_name_tables();
-    assert_all_accepted(&tables, "EFFECT", consts::EFFECTS);
-    assert_all_accepted(&tables, "TYRE", consts::TYRES);
-    assert_all_accepted(&tables, "MODULATION", consts::MODULATIONS);
-    assert_all_accepted(&tables, "MODULATION", &[consts::MODULATION_FREQUENCY_ALT]);
+fn tui_effect_names_are_accepted_by_parser() {
+    assert_all_accepted(names::EFFECTS, "EFFECTS", consts::EFFECTS);
+    assert_all_accepted(names::TYRES, "TYRES", consts::TYRES);
+    assert_all_accepted(names::MODULATIONS, "MODULATIONS", consts::MODULATIONS);
+    assert_all_accepted(
+        names::MODULATIONS,
+        "MODULATIONS",
+        &[consts::MODULATION_FREQUENCY_ALT],
+    );
 }

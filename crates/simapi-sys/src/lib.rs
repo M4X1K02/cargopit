@@ -89,6 +89,15 @@ mod tests {
         bytes[0] = 1;
         assert!(!session.publish_bytes(&bytes));
     }
+
+    #[test]
+    fn ac_and_dirt_rally_2_mapping() {
+        let bin = env!("CARGOPIT_MAP_CHECK");
+        let status = std::process::Command::new(bin)
+            .status()
+            .expect("run mapping check");
+        assert!(status.success(), "{bin}");
+    }
 }
 
 pub const WHEEL_COUNT: usize = 4;

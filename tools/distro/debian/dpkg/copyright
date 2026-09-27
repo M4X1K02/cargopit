@@ -20,13 +20,6 @@ Comment:
  ratatui and crossterm (MIT) via Cargo; those crate licences travel with
  the binary but are not copied into this tree.
 
-Files: src/cargopit/slog/slog.?
-Copyright: 2015-2020 Sun Dro (f4tb0y@protonmail.com)
-License: MIT
-Comment:
- The MIT notice in slog.h is the in-tree grant. An earlier packaging
- file also named Sandro Kalatozishvili (s.kalatoz@gmail.com), 2015-2025.
-
 Files: src/cargopit/simulatorapi/simapi/*
 Copyright: 2022 Paul Jones
 License: LGPL-3

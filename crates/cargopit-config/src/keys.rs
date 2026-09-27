@@ -22,7 +22,17 @@ pub const PATH_SEPARATOR: &str = ":";
 
 pub const LOCAL_BIN_DIRNAME: &str = ".local/bin";
 pub const BUILD_DIRNAME: &str = "build";
+pub const TARGET_DIRNAME: &str = "target";
+pub const CARGO_DIRNAME: &str = "cargo";
+pub const PROFILE_RELEASE: &str = "release";
+pub const PROFILE_DEBUG: &str = "debug";
 pub const CONF_DIRNAME: &str = "conf";
+pub const CONTROL_SOCKET_NAME: &str = "cargopit.sock";
+pub const CONTROL_SOCKET_FALLBACK_PREFIX: &str = "/tmp/cargopit-";
+pub const CONTROL_SOCKET_FALLBACK_SUFFIX: &str = ".sock";
+pub const CONTROL_CMD_STATUS: &str = "status";
+pub const CONTROL_CMD_RELOAD: &str = "reload";
+pub const CONTROL_CMD_STOP: &str = "stop";
 pub const SHARE_DIRNAME: &str = "share";
 pub const USR_PREFIX: &str = "/usr";
 

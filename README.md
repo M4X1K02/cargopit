@@ -12,7 +12,7 @@ The program remains GNU GPL v3 or later; see [License](#license).
 
 Linux device manager for driving and flight simulators. It reads live telemetry through the [simapi](https://github.com/spacefreak18/simapi) shared-memory API and drives USB HID, serial/Arduino, and PulseAudio (PipeWire) devices.
 
-The whole project is being ported to Rust so the device manager is memory safe. AI generates the code, so the port has no extra cost. `./install.sh --from-source` installs the Rust host as `cargopit` and keeps the C host as `cargopit-legacy` until every current device and game path matches. The simapi mapper, the simd daemon, and the Arduino sketches stay C. Cargopit talks to them from Rust.
+The device manager is written in Rust. `./install.sh --from-source` installs the host as `cargopit`. The simapi mapper, the simd daemon, and the Arduino sketches stay C. Cargopit talks to them from Rust.
 
 Usage docs for sims, bridges, and hardware: [spacefreak18.github.io/simapi](https://spacefreak18.github.io/simapi/). Device setup after the binaries exist: [HOW-TO-USE.md](HOW-TO-USE.md).
 
@@ -70,7 +70,6 @@ Run the script in a terminal so prompts work. Options include `--skip-bridges`, 
 When it finishes you have:
 
 - `cargopit`, `start-cargopit`, `test-cargopit`, `start-simd`, and `cargopit-tui` in `~/.local/bin`
-- `cargopit-legacy` when the C host was built
 - configs in `~/.config/simd/` and `~/.config/cargopit/`
 - an optional user unit `~/.config/systemd/user/simd.service`
 
@@ -78,7 +77,7 @@ Add `~/.local/bin` to `PATH` if the installer says it is missing. Compiler and l
 
 **Packages.** Pushing a version tag publishes builds to [Releases](https://github.com/M4X1K02/cargopit/releases):
 
-- `.deb` for Ubuntu, Debian testing, and Debian stable. Each package depends on `libconfig11`.
+- `.deb` for Ubuntu, Debian testing, and Debian stable.
 - RPMs for Fedora 43 and Fedora 44. Nobara uses the Fedora RPM.
 - an x86_64 AppImage
 - a Flatpak bundle
@@ -208,10 +207,9 @@ Then:
 ```bash
 cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-cargo build --release -p cargopit
 ```
 
-Useful CMake options: `ENABLE_TESTS`, `BUILD_SHARED`, `BUILD_TUI` (default ON; needs cargo), and `ENABLE_STATIC_ANALYSIS`. The CMake build produces the C host (`cargopit-legacy` once `install.sh` renames it). The Rust host is the cargo package `cargopit`.
+Useful CMake options: `ENABLE_TESTS` and `BUILD_TUI` (default ON; needs cargo). CMake builds the Rust host (`cargopit`) and TUI through cargo.
 
 ### Dependencies
 
@@ -220,24 +218,21 @@ Vendored/static copies are listed so their licenses stay visible. PulseAudio is 
 - libserialport — Arduino / serial devices
 - hidapi (hidraw) — USB HID
 - libpulse — bass shakers and USB shaker streams
-- libuv — event loop (C host)
-- libxml2 — Revburner XML
-- argtable2, libconfig, xdg-basedir, lua, libproc2 (or libprocps)
-- rustc / cargo — Rust host and `cargopit-tui` (rustc 1.88+)
+- lua, libproc2 (or libprocps)
+- rustc / cargo — host and `cargopit-tui` (rustc 1.88+)
 - [simapi](https://github.com/spacefreak18/simapi) (submodule)
-- [slog](https://github.com/kala13x/slog) (static, in-tree, C host)
 - [simshmbridge](https://github.com/spacefreak18/simshmbridge) — optional; shared-memory titles such as Assetto Corsa and Project CARS–related sims
 
 **Arch**
 
 ```bash
-pacman -S --needed git cmake base-devel curl libuv argtable libserialport libconfig hidapi lua54 libpulse pkgconf libxdg-basedir libxml2 yder procps-ng rust clang
+pacman -S --needed git cmake base-devel curl hidapi lua54 libpulse pkgconf libserialport rust clang procps-ng
 ```
 
 **Fedora / Nobara**
 
 ```bash
-dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel pulseaudio-libs-devel procps-ng-devel cargo clang-devel libudev-devel
+dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl hidapi-devel lua-devel pulseaudio-libs-devel libserialport-devel procps-ng-devel cargo clang-devel libudev-devel
 ```
 
 `yder-devel` (needed to build simd) is often missing from Fedora repos. `install.sh` builds yder from source when the package is absent. Extra packages: [https://repo.spacefreak18.xyz/Packages/Fedora/43/](https://repo.spacefreak18.xyz/Packages/Fedora/43/)
@@ -245,7 +240,7 @@ dnf install git cmake gcc gcc-c++ make pkgconf-pkg-config curl libuv-devel argta
 **Debian / Ubuntu / Mint**
 
 ```bash
-apt install build-essential git cmake pkg-config cargo rustc libuv1-dev libargtable2-dev libserialport-dev libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev libpulse-dev libproc2-dev libclang-dev libudev-dev
+apt install build-essential git cmake pkg-config cargo rustc libserialport-dev libhidapi-dev liblua5.4-dev libpulse-dev libproc2-dev libclang-dev libudev-dev
 ```
 
 Use `liblua5.3-dev` if 5.4 is not in the repo, and `libprocps-dev` if `libproc2-dev` is absent. `libyder-dev` is similarly optional; the installer can build yder.
@@ -255,7 +250,7 @@ Ubuntu 24.04's default `cargo` / `rustc` packages are 1.75 and cannot build the 
 **openSUSE**
 
 ```bash
-zypper install git cmake gcc gcc-c++ make pkg-config cargo rust libuv-devel argtable-devel libserialport-devel libconfig-devel hidapi-devel lua-devel libxdg-basedir-devel libxml2-devel libpulse-devel procps-devel clang-devel libudev-devel
+zypper install git cmake gcc gcc-c++ make pkg-config cargo rust hidapi-devel lua-devel libpulse-devel libserialport-devel procps-devel clang-devel libudev-devel
 ```
 
 
@@ -267,14 +262,13 @@ Automated suite (same as PR CI in `.github/workflows/pr-build.yaml`):
 ```bash
 cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-ctest --test-dir build --output-on-failure --timeout 30
+ctest --test-dir build --output-on-failure --timeout 300
 ```
 
-Rust host and `cargopit-tui`:
+Or run the workspace tests directly:
 
 ```bash
 cargo test --workspace
-cargo test --manifest-path tui/Cargo.toml
 ```
 
 Hardware check (config must list only connected devices):
@@ -293,7 +287,6 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 | Component                 | License          | Where                                                                            |
 | ------------------------- | ---------------- | -------------------------------------------------------------------------------- |
 | cargopit (this fork)      | GPL-3.0-or-later | `LICENSE.rst`                                                                    |
-| slog                      | MIT              | `src/cargopit/slog/slog.h`                                                       |
 | simapi (submodule)        | LGPL-3.0         | [https://github.com/Spacefreak18/simapi](https://github.com/Spacefreak18/simapi) |
 | Lua 5.4                   | MIT              | `packaging/licenses/lua-5.4-LICENSE.txt`                                         |
 | ratatui / crossterm (TUI) | MIT              | Cargo crates linked into `cargopit-tui`                                          |

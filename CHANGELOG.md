@@ -16,6 +16,9 @@
 
 ### Changed
 
+- The device manager is the Rust host. The C host (`cargopit-legacy`) is gone.
+  simapi mappers, simd, and Arduino sketches stay C.
+
 - The built-in seat equalization is gone from cargopit. It was one rig's
   measurement compiled into every build. Generate a preset from your own
   sweep, or use another processor, to correct your seat.
