@@ -657,6 +657,10 @@ pub fn invalid_modulation_message(name: &str) -> String {
     format!("{name} is not a valid modulation type, falling back to no effect modulation")
 }
 
+pub fn invalid_effect_message(name: &str) -> String {
+    format!("effect {name} is not a valid effect")
+}
+
 pub fn modulation_found_message(name: &str) -> String {
     format!("Effect modulation found, set to {name}")
 }
@@ -1750,6 +1754,10 @@ mod tests {
         assert_eq!(
             invalid_modulation_message("bogus"),
             "bogus is not a valid modulation type, falling back to no effect modulation"
+        );
+        assert_eq!(
+            invalid_effect_message("bogus"),
+            "effect bogus is not a valid effect"
         );
         assert_eq!(
             modulation_found_message("Frequency"),

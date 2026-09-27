@@ -1582,15 +1582,24 @@ fn haptic_settings_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
     if !uses_haptic_settings(entry) {
         return Vec::new();
     }
-    let mut notices = vec![
-        notice(Level::Trace, games::MSG_ANALYSING_HAPTIC),
-        notice(Level::Info, games::MSG_READING_HAPTIC),
-    ];
+    let mut notices = vec![notice(Level::Trace, games::MSG_ANALYSING_HAPTIC)];
+    notices.extend(effect_notices(entry));
+    notices.push(notice(Level::Info, games::MSG_READING_HAPTIC));
     notices.extend(modulation_notices(entry));
     if lookup_device_class(entry.get_str(keys::KEY_DEVICE)) == Some(names::DEVICE_SOUND) {
         notices.push(notice(Level::Info, games::MSG_READING_SOUND));
     }
     notices
+}
+
+fn effect_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    let Some(name) = entry.get_str(keys::KEY_EFFECT) else {
+        return Vec::new();
+    };
+    if names::lookup(names::EFFECTS, name).is_some() {
+        return Vec::new();
+    }
+    vec![notice(Level::Warn, games::invalid_effect_message(name))]
 }
 
 fn uses_haptic_settings(entry: &DeviceEntry) -> bool {
@@ -4844,6 +4853,63 @@ mod tests {
         assert!(notice_absent(
             &loaded.setup_notices,
             games::MSG_ANALYSING_HAPTIC
+        ));
+    }
+
+    #[test]
+    fn setup_notices_log_c_invalid_effect() {
+        const INVALID_EFFECT: &str = "bogus";
+        const EFFECT_ALIAS_SLIP: &str = "Slip";
+        let missing = load_parse_device(named_device(keys::CLASS_USB, keys::TYPE_WHEEL));
+        assert!(notice_absent(
+            &missing.setup_notices,
+            &games::invalid_effect_message(INVALID_EFFECT)
+        ));
+
+        let mut valid = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        let name =
+            names::name_for(names::EFFECTS, names::EFFECT_TYRE_SLIP).expect("tyre slip name");
+        valid.set_str(keys::KEY_EFFECT, name);
+        let loaded = load_parse_device(valid);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::invalid_effect_message(name)
+        ));
+
+        let mut alias = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        alias.set_str(keys::KEY_EFFECT, EFFECT_ALIAS_SLIP);
+        let loaded = load_parse_device(alias);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::invalid_effect_message(EFFECT_ALIAS_SLIP)
+        ));
+
+        let mut invalid = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        invalid.set_str(keys::KEY_EFFECT, INVALID_EFFECT);
+        let loaded = load_parse_device(invalid);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::invalid_effect_message(INVALID_EFFECT)
+        ));
+        assert!(notice_before(
+            &loaded.setup_notices,
+            games::MSG_ANALYSING_HAPTIC,
+            &games::invalid_effect_message(INVALID_EFFECT)
+        ));
+        assert!(notice_before(
+            &loaded.setup_notices,
+            &games::invalid_effect_message(INVALID_EFFECT),
+            games::MSG_READING_HAPTIC
+        ));
+
+        let mut sound = named_device(keys::CLASS_SOUND, "");
+        sound.set_str(keys::KEY_EFFECT, INVALID_EFFECT);
+        let loaded = load_parse_device(sound);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::invalid_effect_message(INVALID_EFFECT)
         ));
     }
 
