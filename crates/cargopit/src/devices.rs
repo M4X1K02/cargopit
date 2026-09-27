@@ -32,7 +32,7 @@ use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
 use cargopit_devices::clock::{SystemClock, VirtualClock};
 use cargopit_devices::haptic::{HapticEffect, HapticSettings, TyreId, VibrationEffect};
-use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedMode};
+use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedLevel, LuaLedLog, LuaLedMode};
 use cargopit_devices::serial::{self, MozaKsWheel, MozaNewWheel};
 use cargopit_devices::sound::{self, SharedShaker};
 use cargopit_devices::telemetry::Telemetry;
@@ -363,10 +363,10 @@ impl LoadedDevices {
 
     fn write_c12_lua(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
         let painted = self.script_colors(index, frame, usb::C12_LED_TOTAL);
-        if let Some(detail) = painted.failure {
-            eprintln!("{}", games::lua_call_failed_message(&detail));
+        if let Some(detail) = painted.failure.as_deref() {
+            eprintln!("{}", games::lua_call_failed_message(detail));
         }
-        let mut notices = Vec::new();
+        let mut notices = lua_led_notices(&painted);
         for report in usb::c12_led_reports(&painted.leds) {
             notices.push(notice(Level::Trace, games::c12_led_message(&report)));
             self.write_index(index, &report, &mut notices);
@@ -483,10 +483,12 @@ impl LoadedDevices {
             return Vec::new();
         }
         let painted = self.script_colors(index, frame, usb::GT_NEO_LEDS);
-        if let Some(detail) = painted.failure {
-            eprintln!("{}", games::lua_call_failed_message(&detail));
+        if let Some(detail) = painted.failure.as_deref() {
+            eprintln!("{}", games::lua_call_failed_message(detail));
         }
-        self.send_gt_features(index, &painted.leds)
+        let mut notices = lua_led_notices(&painted);
+        notices.extend(self.send_gt_features(index, &painted.leds));
+        notices
     }
 
     fn send_gt_features(&mut self, index: usize, colors: &[u8]) -> Vec<InitNotice> {
@@ -534,6 +536,7 @@ impl LoadedDevices {
             leds: tick.leds,
             message: tick.message,
             failure: failure.map(|err| lua_detail(&err)),
+            slog: tick.slog,
         }
     }
 
@@ -758,10 +761,13 @@ impl LoadedDevices {
         if let Some(port) = self.serials.get_mut(index) {
             let _ = write_serial_frame(port, &packet);
         }
-        vec![
-            notice(Level::Trace, games::arduino_copy_message(copied)),
-            notice(Level::Trace, games::simled_custom_wrote_message(copied)),
-        ]
+        let mut notices = lua_led_notices(&painted);
+        notices.push(notice(Level::Trace, games::arduino_copy_message(copied)));
+        notices.push(notice(
+            Level::Trace,
+            games::simled_custom_wrote_message(copied),
+        ));
+        notices
     }
 
     fn write_arduino_custom(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
@@ -772,10 +778,12 @@ impl LoadedDevices {
         if let Some(detail) = painted.failure.as_deref() {
             eprintln!("{}", games::lua_call_failed_message(detail));
         }
+        let mut notices = lua_led_notices(&painted);
         let Some(message) = painted.message else {
-            return Vec::new();
+            return notices;
         };
-        write_arduino_message(self.serials.get_mut(index), &message)
+        notices.extend(write_arduino_message(self.serials.get_mut(index), &message));
+        notices
     }
 
     fn haptic_tick(
@@ -1027,6 +1035,7 @@ struct LuaPaint {
     leds: Vec<u8>,
     message: Option<String>,
     failure: Option<String>,
+    slog: Vec<LuaLedLog>,
 }
 
 impl LuaPaint {
@@ -1035,6 +1044,7 @@ impl LuaPaint {
             leds: Vec::new(),
             message: None,
             failure: None,
+            slog: Vec::new(),
         }
     }
 }
@@ -4253,6 +4263,21 @@ fn inactive_tach() -> TachMap {
 
 fn telemetry_i32(value: u32) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+fn lua_led_notices(painted: &LuaPaint) -> Vec<InitNotice> {
+    painted
+        .slog
+        .iter()
+        .map(|log| notice(lua_log_level(log.level), log.message.clone()))
+        .collect()
+}
+
+fn lua_log_level(level: LuaLedLevel) -> Level {
+    match level {
+        LuaLedLevel::Trace => Level::Trace,
+        LuaLedLevel::Debug => Level::Debug,
+    }
 }
 
 fn notice(level: Level, message: impl Into<String>) -> InitNotice {
