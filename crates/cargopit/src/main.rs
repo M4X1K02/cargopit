@@ -219,17 +219,23 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
     let force_udp = parsed.force_udp;
     let fps = parsed.fps;
     let mut observed = observe(parts.session, force_udp, false);
-    if play.phase == PlayPhase::Searching && games::simd_map_is_stale(observed.seen.map_api, false)
-    {
-        let advancing = parts
-            .session
-            .daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
-        if games::simd_map_is_stale(observed.seen.map_api, advancing) {
-            observed = observe(parts.session, force_udp, true);
+    let seen = if play.phase == PlayPhase::Searching {
+        slog_requested_bind(parsed, parts.socket);
+        if games::simd_map_is_stale(observed.seen.map_api, false) {
+            let advancing = parts
+                .session
+                .daemon_advancing(Duration::from_micros(games::DAEMON_PROBE_US));
+            if games::simd_map_is_stale(observed.seen.map_api, advancing) {
+                slog(parsed, Level::Debug, games::MSG_SIMD_STALE_DIRECT);
+                observed = observe(parts.session, force_udp, true);
+                slog_requested_bind(parsed, parts.socket);
+            }
         }
-    }
+        apply_acr_bridge(parts.socket, parsed, observed.seen)
+    } else {
+        observed.seen
+    };
     parts.devices.tyres.note(observed.flags);
-    let seen = bridge_if_needed(observed.seen);
     let play = note_sim(play, seen.sim_exe);
     let play = apply_quit(play, parsed, parts.devices.loaded.len());
     let now_ns = parts.clock.monotonic_ns();
@@ -256,20 +262,20 @@ fn poll_once(parts: &mut PlayParts<'_>, play: PlayLoop, parsed: &cli::Invocation
         PlayPhase::Searching => match games::search_tick(seen, force_udp, play.user_stopped) {
             PlayAction::StartMapping { use_udp } => {
                 parts.devices.pending = true;
-                begin_mapping(parts.session, parts.snapshot, parts.socket, seen, use_udp)
+                begin_mapping(
+                    parts.session,
+                    parts.snapshot,
+                    parts.socket,
+                    parsed,
+                    fps,
+                    seen,
+                    use_udp,
+                )
             }
             PlayAction::Wait | PlayAction::Release => searching(play),
         },
         PlayPhase::Mapping => {
-            let next = map_or_release(
-                parts.session,
-                parts.snapshot,
-                parts.socket,
-                parts.clock,
-                play,
-                seen,
-                fps,
-            );
+            let next = map_or_release(parts, parsed, play, seen, fps);
             if next.phase != PlayPhase::Mapping {
                 announce_release(parsed);
                 release_configured(
@@ -443,6 +449,8 @@ fn begin_mapping(
     session: &mut GameSession,
     snapshot: &mut games::FrameSnapshot,
     socket: &mut Option<UdpSocket>,
+    parsed: &cli::Invocation,
+    fps: i32,
     seen: SeenSim,
     use_udp: bool,
 ) -> PlayLoop {
@@ -450,11 +458,16 @@ fn begin_mapping(
         session.open_publish_map();
     }
     if use_udp {
+        slog(parsed, Level::Trace, games::MSG_UDP_RECV_START);
         session.map_live(seen.map_api, true);
         snapshot.publish(session.frame_bytes());
         if socket.is_none() {
-            *socket = udp::bind_requested();
+            let result = udp::ensure_socket(socket);
+            slog_bind(parsed, result);
         }
+        slog(parsed, Level::Trace, games::MSG_UDP_RECV_STARTED);
+    } else {
+        slog_pairs(parsed, games::mapping_start_notices(false, fps));
     }
     PlayLoop {
         phase: PlayPhase::Mapping,
@@ -473,40 +486,81 @@ fn begin_mapping(
 }
 
 fn map_or_release(
-    session: &mut GameSession,
-    snapshot: &mut games::FrameSnapshot,
-    socket: &mut Option<UdpSocket>,
-    clock: &impl Clock,
+    parts: &mut PlayParts<'_>,
+    parsed: &cli::Invocation,
     play: PlayLoop,
     seen: SeenSim,
     fps: i32,
 ) -> PlayLoop {
     if games::mapping_tick(seen) == PlayAction::Release || games::mapping_should_stop(seen) {
-        let _ = session.clear(false);
+        let _ = parts.session.clear(false);
         return searching(play);
     }
     if play.use_udp {
-        recv_udp(session, snapshot, socket, clock, play.map_api);
+        recv_udp(
+            parts.session,
+            parts.snapshot,
+            parts.socket,
+            parts.clock,
+            parsed,
+            play.map_api,
+        );
         return PlayLoop {
             wait_ms: games::CHECK_INTERVAL_MS,
             ..play
         };
     }
-    session.map_live(play.map_api, false);
-    snapshot.publish(session.frame_bytes());
+    parts.session.map_live(play.map_api, false);
+    parts.snapshot.publish(parts.session.frame_bytes());
     PlayLoop {
         wait_ms: games::map_interval_ms(fps),
         ..play
     }
 }
 
-fn bridge_if_needed(seen: SeenSim) -> SeenSim {
+fn slog_requested_bind(parsed: &cli::Invocation, socket: &mut Option<UdpSocket>) {
+    if udp::requested_port() == 0 {
+        return;
+    }
+    slog_bind(parsed, udp::ensure_socket(socket));
+}
+
+fn slog_bind(parsed: &cli::Invocation, result: i32) {
+    slog(
+        parsed,
+        Level::Info,
+        &games::udp_bind_message(i32::from(udp::requested_port()), result),
+    );
+}
+
+fn slog_pairs(parsed: &cli::Invocation, notices: Vec<(Level, String)>) {
+    for (level, message) in notices {
+        slog(parsed, level, &message);
+    }
+}
+
+fn apply_acr_bridge(
+    socket: &mut Option<UdpSocket>,
+    parsed: &cli::Invocation,
+    seen: SeenSim,
+) -> SeenSim {
     let physics = std::fs::read(acr::PHYSICS_SHM_PATH).ok();
-    if games::use_acr_bridge(
+    let outcome = games::acr_bridge_outcome(
         seen.sim_exe,
         games::TelemetrySource::Auto,
         physics.as_deref(),
-    ) {
+    );
+    let bind_result = match outcome {
+        games::AcrBridgeOutcome::Bridged { .. } => udp::start(i32::from(acr::UDP_PORT), socket),
+        _ => games::UDP_BIND_OK,
+    };
+    if matches!(outcome, games::AcrBridgeOutcome::Bridged { .. }) {
+        slog_bind(parsed, bind_result);
+    }
+    slog_pairs(parsed, games::acr_bridge_notices(outcome, bind_result));
+    if matches!(outcome, games::AcrBridgeOutcome::Bridged { .. })
+        && bind_result == games::UDP_BIND_OK
+    {
         return games::bridged_acr(seen);
     }
     seen
@@ -744,6 +798,7 @@ fn recv_udp(
     snapshot: &mut games::FrameSnapshot,
     socket: &Option<UdpSocket>,
     clock: &impl Clock,
+    parsed: &cli::Invocation,
     map_api: i32,
 ) {
     let Some(socket) = socket else {
@@ -752,6 +807,7 @@ fn recv_udp(
     let Some(mut packet) = udp::recv_packet(socket) else {
         return;
     };
+    slog(parsed, Level::Trace, games::MSG_UDP_DATA_RECEIVED);
     if udp::ingest(session, &mut packet, map_api, clock) {
         snapshot.publish(session.frame_bytes());
     }
