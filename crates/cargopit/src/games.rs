@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::acr;
+use crate::log::Level;
 
 pub const DAEMON_PROBE_US: u64 = 50_000;
 pub const DR2_GAME_PORT: u16 = 20779;
@@ -79,6 +80,17 @@ pub enum TelemetrySource {
 
 pub const UDP_BIND_ADDRESS: &str = "0.0.0.0";
 pub const UDP_RECV_BYTES: usize = 65536;
+pub const UDP_BIND_OK: i32 = 0;
+pub const UDP_BIND_FAILED: i32 = -1;
+pub const MSG_UDP_DATA_RECEIVED: &str = "udp data received";
+pub const MSG_UDP_RECV_START: &str = "starting udp receive loop";
+pub const MSG_UDP_RECV_STARTED: &str = "udp receive loop started";
+pub const MSG_SIMD_STALE_DIRECT: &str =
+    "SIMAPI.DAT is not advancing; mapping the simulator directly";
+pub const MSG_ACR_SHM_EMPTY: &str =
+    "Assetto Corsa Rally telemetry=shm but /dev/shm/acpmf_physics is empty";
+pub const MSG_ACR_SHM_WINE: &str =
+    "Proton keeps Local\\acpmf_physics inside Wine; acr_shm_udp must mirror it";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PacketRoute {
@@ -866,13 +878,91 @@ impl Default for FrameSnapshot {
 }
 
 pub fn use_acr_bridge(simexe: u64, source: TelemetrySource, physics: Option<&[u8]>) -> bool {
+    matches!(
+        acr_bridge_outcome(simexe, source, physics),
+        AcrBridgeOutcome::Bridged { .. }
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcrBridgeOutcome {
+    None,
+    Bridged { source: TelemetrySource },
+    ShmEmptyHint,
+}
+
+pub fn acr_bridge_outcome(
+    simexe: u64,
+    source: TelemetrySource,
+    physics: Option<&[u8]>,
+) -> AcrBridgeOutcome {
     if simexe != acr::SIMEXE_ACR {
-        return false;
+        return AcrBridgeOutcome::None;
     }
     if source == TelemetrySource::Shm {
-        return false;
+        if acr::physics_shm_is_blank(physics) {
+            return AcrBridgeOutcome::ShmEmptyHint;
+        }
+        return AcrBridgeOutcome::None;
     }
-    source == TelemetrySource::Udp || acr::physics_shm_is_blank(physics)
+    if source != TelemetrySource::Udp && !acr::physics_shm_is_blank(physics) {
+        return AcrBridgeOutcome::None;
+    }
+    AcrBridgeOutcome::Bridged { source }
+}
+
+pub fn udp_bind_message(port: i32, result: i32) -> String {
+    format!("udp bind port {port} result {result}")
+}
+
+pub fn acr_bind_failed_message(port: i32) -> String {
+    format!("could not bind Assetto Corsa Rally UDP port {port}")
+}
+
+pub fn acr_telemetry_udp_message(port: i32) -> String {
+    format!("Assetto Corsa Rally telemetry=udp; binding Proton UDP on {port}")
+}
+
+pub fn acr_shm_blank_udp_message(port: i32) -> String {
+    format!("Assetto Corsa Rally Linux SHM is blank; using Proton UDP on {port}")
+}
+
+pub fn mapping_fps_message(fps: i32, interval_ms: u64) -> String {
+    format!("starting telemetry mapping at {fps} fps ({interval_ms} ms ticks)")
+}
+
+pub fn acr_bridge_notices(outcome: AcrBridgeOutcome, bind_result: i32) -> Vec<(Level, String)> {
+    match outcome {
+        AcrBridgeOutcome::None => Vec::new(),
+        AcrBridgeOutcome::ShmEmptyHint => vec![
+            (Level::Info, MSG_ACR_SHM_EMPTY.to_string()),
+            (Level::Info, MSG_ACR_SHM_WINE.to_string()),
+        ],
+        AcrBridgeOutcome::Bridged { source } => acr_bridged_notices(source, bind_result),
+    }
+}
+
+fn acr_bridged_notices(source: TelemetrySource, bind_result: i32) -> Vec<(Level, String)> {
+    let port = i32::from(acr::UDP_PORT);
+    if bind_result != UDP_BIND_OK {
+        return vec![(Level::Error, acr_bind_failed_message(port))];
+    }
+    let reason = if source == TelemetrySource::Udp {
+        acr_telemetry_udp_message(port)
+    } else {
+        acr_shm_blank_udp_message(port)
+    };
+    vec![(Level::Info, reason)]
+}
+
+pub fn mapping_start_notices(use_udp: bool, fps: i32) -> Vec<(Level, String)> {
+    if use_udp {
+        return vec![
+            (Level::Trace, MSG_UDP_RECV_START.to_string()),
+            (Level::Trace, MSG_UDP_RECV_STARTED.to_string()),
+        ];
+    }
+    vec![(Level::Debug, mapping_fps_message(fps, map_interval_ms(fps)))]
 }
 
 #[cfg(test)]
@@ -888,6 +978,20 @@ mod tests {
         assert_eq!(route_udp(&acr), PacketRoute::Acr);
         assert_eq!(UDP_BIND_ADDRESS, "0.0.0.0");
         assert_eq!(UDP_RECV_BYTES, 65536);
+        assert_eq!(MSG_UDP_DATA_RECEIVED, "udp data received");
+        assert_eq!(MSG_UDP_RECV_START, "starting udp receive loop");
+        assert_eq!(MSG_UDP_RECV_STARTED, "udp receive loop started");
+        const SAMPLE_BIND_PORT: i32 = 20777;
+        const SAMPLE_FPS: i32 = 60;
+        const SAMPLE_INTERVAL_MS: u64 = 17;
+        assert_eq!(
+            udp_bind_message(SAMPLE_BIND_PORT, UDP_BIND_OK),
+            "udp bind port 20777 result 0"
+        );
+        assert_eq!(
+            mapping_fps_message(SAMPLE_FPS, SAMPLE_INTERVAL_MS),
+            "starting telemetry mapping at 60 fps (17 ms ticks)"
+        );
     }
 
     #[test]
@@ -1615,6 +1719,90 @@ mod tests {
             TelemetrySource::Udp,
             Some(&[9])
         ));
+        const ACR_PORT: i32 = 20999;
+        const SAMPLE_FPS: i32 = 60;
+        assert_eq!(ACR_PORT, i32::from(acr::UDP_PORT));
+        assert_eq!(
+            acr_telemetry_udp_message(ACR_PORT),
+            "Assetto Corsa Rally telemetry=udp; binding Proton UDP on 20999"
+        );
+        assert_eq!(
+            acr_shm_blank_udp_message(ACR_PORT),
+            "Assetto Corsa Rally Linux SHM is blank; using Proton UDP on 20999"
+        );
+        assert_eq!(
+            acr_bind_failed_message(ACR_PORT),
+            "could not bind Assetto Corsa Rally UDP port 20999"
+        );
+        assert_eq!(
+            MSG_SIMD_STALE_DIRECT,
+            "SIMAPI.DAT is not advancing; mapping the simulator directly"
+        );
+        assert_eq!(
+            MSG_ACR_SHM_EMPTY,
+            "Assetto Corsa Rally telemetry=shm but /dev/shm/acpmf_physics is empty"
+        );
+        assert_eq!(
+            MSG_ACR_SHM_WINE,
+            "Proton keeps Local\\acpmf_physics inside Wine; acr_shm_udp must mirror it"
+        );
+        let udp_notices = acr_bridge_notices(
+            AcrBridgeOutcome::Bridged {
+                source: TelemetrySource::Udp,
+            },
+            UDP_BIND_OK,
+        );
+        assert_eq!(
+            udp_notices,
+            vec![(Level::Info, acr_telemetry_udp_message(ACR_PORT))]
+        );
+        let blank_notices = acr_bridge_notices(
+            AcrBridgeOutcome::Bridged {
+                source: TelemetrySource::Auto,
+            },
+            UDP_BIND_OK,
+        );
+        assert_eq!(
+            blank_notices,
+            vec![(Level::Info, acr_shm_blank_udp_message(ACR_PORT))]
+        );
+        let failed = acr_bridge_notices(
+            AcrBridgeOutcome::Bridged {
+                source: TelemetrySource::Auto,
+            },
+            UDP_BIND_FAILED,
+        );
+        assert_eq!(
+            failed,
+            vec![(Level::Error, acr_bind_failed_message(ACR_PORT))]
+        );
+        assert_eq!(
+            acr_bridge_outcome(acr::SIMEXE_ACR, TelemetrySource::Shm, None),
+            AcrBridgeOutcome::ShmEmptyHint
+        );
+        let shm_hint = acr_bridge_notices(AcrBridgeOutcome::ShmEmptyHint, UDP_BIND_OK);
+        assert_eq!(
+            shm_hint,
+            vec![
+                (Level::Info, MSG_ACR_SHM_EMPTY.to_string()),
+                (Level::Info, MSG_ACR_SHM_WINE.to_string()),
+            ]
+        );
+        let mapping_udp = mapping_start_notices(true, SAMPLE_FPS);
+        assert_eq!(
+            mapping_udp,
+            vec![
+                (Level::Trace, MSG_UDP_RECV_START.to_string()),
+                (Level::Trace, MSG_UDP_RECV_STARTED.to_string()),
+            ]
+        );
+        assert_eq!(
+            mapping_start_notices(false, SAMPLE_FPS),
+            vec![(
+                Level::Debug,
+                mapping_fps_message(SAMPLE_FPS, map_interval_ms(SAMPLE_FPS))
+            )]
+        );
     }
 
     fn live(map_api: i32, uses_udp: bool) -> SeenSim {

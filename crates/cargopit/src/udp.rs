@@ -17,11 +17,11 @@ pub fn requested_port() -> u16 {
 }
 
 pub fn remember_port(port: i32) -> i32 {
-    if port < 0 || port > u16::MAX as i32 {
-        return -1;
+    if port < 0 || port > i32::from(u16::MAX) {
+        return games::UDP_BIND_FAILED;
     }
     REQUESTED_PORT.store(games::bind_port(port as u16), Ordering::Relaxed);
-    0
+    games::UDP_BIND_OK
 }
 
 /// # Safety
@@ -39,6 +39,34 @@ pub fn bind_requested() -> Option<UdpSocket> {
     let socket = UdpSocket::bind((games::UDP_BIND_ADDRESS, port)).ok()?;
     socket.set_nonblocking(true).ok()?;
     Some(socket)
+}
+
+pub fn start(port: i32, socket: &mut Option<UdpSocket>) -> i32 {
+    let remembered = remember_port(port);
+    if remembered != games::UDP_BIND_OK {
+        return remembered;
+    }
+    ensure_socket(socket)
+}
+
+pub fn ensure_socket(socket: &mut Option<UdpSocket>) -> i32 {
+    let port = requested_port();
+    if port == 0 {
+        return games::UDP_BIND_FAILED;
+    }
+    if socket_port(socket.as_ref()) == Some(port) {
+        return games::UDP_BIND_OK;
+    }
+    *socket = bind_requested();
+    if socket.is_some() {
+        games::UDP_BIND_OK
+    } else {
+        games::UDP_BIND_FAILED
+    }
+}
+
+fn socket_port(socket: Option<&UdpSocket>) -> Option<u16> {
+    socket?.local_addr().ok().map(|addr| addr.port())
 }
 
 pub fn recv_packet(socket: &UdpSocket) -> Option<Vec<u8>> {
@@ -86,8 +114,12 @@ mod tests {
 
     #[test]
     fn dr2_port_is_remembered_on_the_native_bind_port() {
-        assert_eq!(remember_port(crate::games::DR2_GAME_PORT as i32), 0);
+        assert_eq!(
+            remember_port(crate::games::DR2_GAME_PORT as i32),
+            games::UDP_BIND_OK
+        );
         assert_eq!(requested_port(), crate::games::DR2_BIND_PORT);
-        assert_eq!(remember_port(-1), -1);
+        assert_eq!(remember_port(-1), games::UDP_BIND_FAILED);
+        assert_eq!(games::UDP_BIND_OK, 0);
     }
 }
