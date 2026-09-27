@@ -370,15 +370,35 @@ static void load_devices_if_pending(loop_data* f)
         ms->configcheck = 0;
     }
 
+    if (f->numdevices <= 0)
+    {
+        slogi("initialized 0 devices");
+        free(ds);
+        return;
+    }
+
     f->simdevices = malloc(f->numdevices * sizeof(SimDevice));
-    int initdevices = devinit(f->simdevices, &f->siminfo, configureddevices, ds, ms);
-    slogi("initialized %i devices", initdevices);
+    if (f->simdevices == NULL)
+    {
+        sloge("could not allocate simdevices");
+        f->numdevices = 0;
+    }
+    else
+    {
+        int initdevices = devinit(f->simdevices, &f->siminfo, f->numdevices, ds, ms);
+        slogi("initialized %i devices", initdevices);
+    }
 
     for( int i = 0; i < configureddevices; i++)
     {
         settingsfree(ds[i]);
     }
     free(ds);
+
+    if (f->simdevices == NULL)
+    {
+        return;
+    }
 
     f->started_tyre_calc = false;
     start_device_runners(f);
