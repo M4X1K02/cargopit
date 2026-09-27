@@ -539,19 +539,19 @@ fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, simulator_a
                 .scheduler
                 .add_device(index, fps.unwrap_or(0) as i32);
         }
-        arm_tyre_check(parts.devices);
+        arm_tyre_check(parts.devices, parsed);
     }
     let due = parts.devices.scheduler.poll(parts.clock.monotonic_ms());
     for event in due {
         match event.kind {
             TimerKind::Device => drive_device(parts, parsed, event.device_index),
-            TimerKind::TyreDiameter => run_tyre_check(parts),
+            TimerKind::TyreDiameter => run_tyre_check(parts, parsed),
             TimerKind::Discovery | TimerKind::Mapping => {}
         }
     }
 }
 
-fn arm_tyre_check(devices: &mut DeviceLoop) {
+fn arm_tyre_check(devices: &mut DeviceLoop, parsed: &cli::Invocation) {
     let path = cargopit_config::paths::diameters_path();
     devices.tyres.config_checked = false;
     devices.tyres.active = false;
@@ -565,11 +565,12 @@ fn arm_tyre_check(devices: &mut DeviceLoop) {
     if !devices.loaded.needs_tyre_diameter() || !tyres::sim_needs_tyre_diameter(&need) {
         return;
     }
+    slog(parsed, Level::Info, games::MSG_TYRE_TIMER_START);
     devices.scheduler.add_tyre_check();
     devices.tyres.active = true;
 }
 
-fn run_tyre_check(parts: &mut PlayParts<'_>) {
+fn run_tyre_check(parts: &mut PlayParts<'_>, parsed: &cli::Invocation) {
     if !parts.devices.tyres.active {
         return;
     }
@@ -588,12 +589,20 @@ fn run_tyre_check(parts: &mut PlayParts<'_>) {
         },
     );
     parts.devices.tyres.config_checked = result.config_checked;
+    log_notices(parsed, tyre_notices(result.notices));
     if result.updated {
         publish_tyres(parts.session, parts.snapshot, &sim);
     }
     if result.stop_timer {
         parts.devices.tyres.active = false;
     }
+}
+
+fn tyre_notices(notices: Vec<(Level, String)>) -> Vec<InitNotice> {
+    notices
+        .into_iter()
+        .map(|(level, message)| InitNotice { level, message })
+        .collect()
 }
 
 fn publish_tyres(session: &mut GameSession, snapshot: &mut games::FrameSnapshot, sim: &Telemetry) {
