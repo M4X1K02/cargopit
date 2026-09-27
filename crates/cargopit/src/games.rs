@@ -25,6 +25,8 @@ pub const MSG_RELEASE_LOOP: &str = "release loop";
 pub const MSG_RELEASING_DEVICES: &str = "releasing devices, please wait";
 pub const MSG_RESTART_CHECK: &str = "restarting checking for data...";
 pub const MSG_RELOAD: &str = "reload requested, releasing devices to load the saved profile";
+pub const MSG_CONTROL_PATH_TOO_LONG: &str =
+    "control socket path is too long; control socket disabled";
 pub const MSG_APPLYING_SETTINGS: &str = "applying settings";
 pub const MSG_SETTINGS_APPLIED: &str = "settings applied";
 pub const MSG_CHECKING_DIAMETERS: &str = "checking for diameters config";
@@ -214,6 +216,18 @@ pub enum ProfileLoadFault {
 
 pub fn signal_stop_message(signum: i32) -> String {
     format!("signal {signum} received, stopping")
+}
+
+pub fn control_owned_message(path: &str) -> String {
+    format!("another cargopit session owns {path}; control socket disabled")
+}
+
+pub fn control_listen_failed_message(path: &str) -> String {
+    format!("could not listen on {path}; control socket disabled")
+}
+
+pub fn control_listening_message(path: &str) -> String {
+    format!("control socket listening on {path}")
 }
 
 pub fn loading_profile_message(path: &str, config_index: i32) -> String {
@@ -1029,6 +1043,23 @@ mod tests {
         assert_eq!(
             MSG_RELOAD,
             "reload requested, releasing devices to load the saved profile"
+        );
+        const CONTROL_PATH: &str = "/run/user/1000/cargopit.sock";
+        assert_eq!(
+            MSG_CONTROL_PATH_TOO_LONG,
+            "control socket path is too long; control socket disabled"
+        );
+        assert_eq!(
+            control_owned_message(CONTROL_PATH),
+            "another cargopit session owns /run/user/1000/cargopit.sock; control socket disabled"
+        );
+        assert_eq!(
+            control_listen_failed_message(CONTROL_PATH),
+            "could not listen on /run/user/1000/cargopit.sock; control socket disabled"
+        );
+        assert_eq!(
+            control_listening_message(CONTROL_PATH),
+            "control socket listening on /run/user/1000/cargopit.sock"
         );
         assert_eq!(
             signal_stop_message(libc::SIGINT),

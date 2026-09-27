@@ -165,7 +165,7 @@ fn run_discovery(parsed: &cli::Invocation, pulse: &mut Option<PulseSession>) -> 
         std::env::var(control::RUNTIME_DIR_ENV).ok().as_deref(),
         control::current_uid(),
     );
-    let control = control::bind_listener(&control_path).ok();
+    let control = open_control(parsed, &control_path);
     let mut devices = DeviceLoop {
         loaded: LoadedDevices::empty(),
         scheduler: scheduler::Scheduler::new(),
@@ -997,6 +997,31 @@ fn print_test_script(
     });
     for line in script.lines {
         slog(parsed, Level::Info, &line);
+    }
+}
+
+fn open_control(parsed: &cli::Invocation, path: &str) -> Option<std::os::unix::net::UnixListener> {
+    match control::start(path) {
+        control::ControlStart::Ready(listener) => {
+            slog(parsed, Level::Info, &games::control_listening_message(path));
+            Some(listener)
+        }
+        control::ControlStart::PathTooLong => {
+            slog(parsed, Level::Warn, games::MSG_CONTROL_PATH_TOO_LONG);
+            None
+        }
+        control::ControlStart::OwnedByAnother => {
+            slog(parsed, Level::Warn, &games::control_owned_message(path));
+            None
+        }
+        control::ControlStart::ListenFailed => {
+            slog(
+                parsed,
+                Level::Warn,
+                &games::control_listen_failed_message(path),
+            );
+            None
+        }
     }
 }
 
