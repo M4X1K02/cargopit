@@ -72,6 +72,7 @@ pub const MSG_PULSE_CONNECTED: &str = "successfully connected pulseaudio...";
 pub const MSG_PULSE_CONNECT_FAILED: &str = "pulseaudio connect failed";
 pub const MSG_PULSE_CONTEXT_FREED: &str = "freed pulseaudio context";
 pub const MSG_PARSING_CONFIG: &str = "Parsing config file";
+pub const MSG_UI_CONFIG_CHECK: &str = "ui config check";
 pub const MSG_SKIP_AUDIO: &str =
     "skipping configured sound device due to disable_audio being specified...";
 pub const SIMULATOR_API_NONE: i32 = 0;
@@ -325,6 +326,10 @@ pub fn pulse_context_failed_message(state: i32) -> String {
 
 pub fn loading_confignum_message(confignum: i32, devices: i32) -> String {
     format!("loading confignum {confignum}, with {devices} devices.")
+}
+
+pub fn selected_config_num_message(confignum: i32) -> String {
+    format!("selected num {confignum}")
 }
 
 pub fn initializing_simdevices_message(simulator_api: i32) -> String {
@@ -1422,6 +1427,12 @@ mod tests {
         assert_eq!(
             loading_confignum_message(0, 2),
             "loading confignum 0, with 2 devices."
+        );
+        const SAMPLE_CONFIGNUM: i32 = 0;
+        assert_eq!(MSG_UI_CONFIG_CHECK, "ui config check");
+        assert_eq!(
+            selected_config_num_message(SAMPLE_CONFIGNUM),
+            "selected num 0"
         );
         assert_eq!(MSG_PARSING_CONFIG, "Parsing config file");
         assert_eq!(
