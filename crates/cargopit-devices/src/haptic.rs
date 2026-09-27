@@ -166,6 +166,24 @@ pub struct HapticEffect {
     filter: FilterState,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum HapticTrace {
+    SlipFromSim([f64; WHEEL_COUNT]),
+    SlipCalculated([f64; WHEEL_COUNT]),
+    Velocities { x: f64, y: f64, z: f64 },
+    Slip(f64),
+    Lock(f64),
+    Abs(f64),
+    Suspension(f64),
+    Unknown(i32),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct HapticPlay {
+    pub value: f64,
+    pub traces: Vec<HapticTrace>,
+}
+
 impl HapticEffect {
     pub fn new(settings: &HapticSettings) -> Self {
         Self {
@@ -224,29 +242,52 @@ impl HapticEffect {
     }
 
     pub fn play(&mut self, sim: &Telemetry, dt_seconds: f64) -> f64 {
+        self.play_traced(sim, dt_seconds).value
+    }
+
+    pub fn play_traced(&mut self, sim: &Telemetry, dt_seconds: f64) -> HapticPlay {
         let dt = clamp_dt(dt_seconds);
-        let slip = wheel_slip(sim, self.effect);
+        let mut traces = Vec::new();
+        let slip = wheel_slip(sim, self.effect, &mut traces);
         if self.effect != VibrationEffect::Suspension && !car_is_moving(sim) {
-            return 0.0;
+            return HapticPlay { value: 0.0, traces };
         }
-        match self.effect {
-            VibrationEffect::TyreSlip => slip_play(sim, &slip, self.tyre, self.threshold),
-            VibrationEffect::TyreLock => lock_play(sim, &slip, self.tyre, self.threshold),
+        let value = match self.effect {
+            VibrationEffect::TyreSlip => {
+                slip_play_logged(sim, &slip, self.tyre, self.threshold, &mut traces)
+            }
+            VibrationEffect::TyreLock => {
+                lock_play_logged(sim, &slip, self.tyre, self.threshold, &mut traces)
+            }
             VibrationEffect::AbsBrakes => {
-                self.filter
-                    .abs_play(sim, &slip, self.tyre, self.threshold, dt)
+                let play = self
+                    .filter
+                    .abs_play(sim, &slip, self.tyre, self.threshold, dt);
+                traces.push(HapticTrace::Abs(play));
+                play
             }
             VibrationEffect::Suspension => {
-                self.filter
-                    .suspension_play(sim, self.tyre, self.threshold, dt)
+                let play = self
+                    .filter
+                    .suspension_play(sim, self.tyre, self.threshold, dt);
+                traces.push(HapticTrace::Suspension(play));
+                play
             }
-            VibrationEffect::EngineRpm | VibrationEffect::GearShift => 0.0,
-        }
+            VibrationEffect::EngineRpm | VibrationEffect::GearShift => {
+                traces.push(HapticTrace::Unknown(self.effect as i32));
+                0.0
+            }
+        };
+        HapticPlay { value, traces }
     }
 
     pub fn play_with_clock(&mut self, sim: &Telemetry, clock: &impl Clock) -> f64 {
+        self.play_with_clock_traced(sim, clock).value
+    }
+
+    pub fn play_with_clock_traced(&mut self, sim: &Telemetry, clock: &impl Clock) -> HapticPlay {
         let dt = self.filter.seconds_since_last(clock);
-        self.play(sim, dt)
+        self.play_traced(sim, dt)
     }
 }
 
@@ -285,6 +326,36 @@ fn lock_play(sim: &Telemetry, slip: &[f64; WHEEL_COUNT], tyre: TyreId, threshold
         return 0.0;
     }
     sum_slip_beyond(slip, tyre, threshold, SLIP_LOCKUP)
+}
+
+fn slip_play_logged(
+    sim: &Telemetry,
+    slip: &[f64; WHEEL_COUNT],
+    tyre: TyreId,
+    threshold: f64,
+    traces: &mut Vec<HapticTrace>,
+) -> f64 {
+    if sim.gas() <= THROTTLE_APPLIED_FRAC {
+        return 0.0;
+    }
+    let play = slip_play(sim, slip, tyre, threshold);
+    traces.push(HapticTrace::Slip(play));
+    play
+}
+
+fn lock_play_logged(
+    sim: &Telemetry,
+    slip: &[f64; WHEEL_COUNT],
+    tyre: TyreId,
+    threshold: f64,
+    traces: &mut Vec<HapticTrace>,
+) -> f64 {
+    if sim.brake() <= BRAKE_APPLIED_FRAC {
+        return 0.0;
+    }
+    let play = lock_play(sim, slip, tyre, threshold);
+    traces.push(HapticTrace::Lock(play));
+    play
 }
 
 fn tyre_selected(selected: TyreId, wheel: usize) -> bool {
@@ -370,21 +441,30 @@ fn effect_uses_slip(effect: VibrationEffect) -> bool {
     )
 }
 
-fn wheel_slip(sim: &Telemetry, effect: VibrationEffect) -> [f64; WHEEL_COUNT] {
+fn wheel_slip(
+    sim: &Telemetry,
+    effect: VibrationEffect,
+    traces: &mut Vec<HapticTrace>,
+) -> [f64; WHEEL_COUNT] {
     let mut slip = [0.0; WHEEL_COUNT];
     if sim_provides_slip(sim) {
         for (index, slot) in slip.iter_mut().enumerate() {
             *slot = sim.tyre_slip(index);
         }
+        traces.push(HapticTrace::SlipFromSim(slip));
         return slip;
     }
     if effect_uses_slip(effect) {
-        calculate_wheel_slip(sim, &mut slip);
+        calculate_wheel_slip(sim, &mut slip, traces);
     }
     slip
 }
 
-fn calculate_wheel_slip(sim: &Telemetry, slip: &mut [f64; WHEEL_COUNT]) {
+fn calculate_wheel_slip(
+    sim: &Telemetry,
+    slip: &mut [f64; WHEEL_COUNT],
+    traces: &mut Vec<HapticTrace>,
+) {
     let speed_ms = KM_H_TO_M_S * f64::from(sim.velocity());
     if !has_tyre_diameter(sim) || speed_ms <= MIN_SPEED_M_S {
         return;
@@ -392,6 +472,12 @@ fn calculate_wheel_slip(sim: &Telemetry, slip: &mut [f64; WHEEL_COUNT]) {
     for (index, slot) in slip.iter_mut().enumerate() {
         *slot = (speed_ms - sim.tyre_diameter(index) * sim.tyre_rps(index) / 2.0) / speed_ms;
     }
+    traces.push(HapticTrace::SlipCalculated(*slip));
+    traces.push(HapticTrace::Velocities {
+        x: sim.x_velocity(),
+        y: sim.y_velocity(),
+        z: sim.z_velocity(),
+    });
 }
 
 impl FilterState {
@@ -618,5 +704,96 @@ mod tests {
         let dt = effect.filter.seconds_since_last(&clock);
         let tick_s = 16.0 / (crate::device::MS_PER_SECOND as f64);
         assert!((dt - tick_s).abs() < 1e-9);
+    }
+
+    #[test]
+    fn play_traced_logs_sim_slip_then_slip_is() {
+        const SPIN: f64 = -0.4;
+        const GAS: f64 = 0.2;
+        let mut sim = moving();
+        sim.set_gas(GAS);
+        sim.set_tyre_slip(0, SPIN);
+        let mut effect = slip_effect(VibrationEffect::TyreSlip, TyreId::Fronts);
+        let played = effect.play_traced(&sim, DT);
+        let mut expected_slip = [0.0; WHEEL_COUNT];
+        expected_slip[0] = SPIN;
+        assert_eq!(played.traces[0], HapticTrace::SlipFromSim(expected_slip));
+        assert_eq!(played.traces.last(), Some(&HapticTrace::Slip(played.value)));
+        assert!(played.value > 0.0);
+    }
+
+    #[test]
+    fn play_traced_skips_slip_is_when_the_car_is_stopped() {
+        const SPIN: f64 = -0.4;
+        let mut sim = Telemetry::new();
+        sim.set_tyre_slip(0, SPIN);
+        let mut effect = slip_effect(VibrationEffect::TyreSlip, TyreId::AllFour);
+        let played = effect.play_traced(&sim, DT);
+        assert!(played
+            .traces
+            .iter()
+            .any(|trace| matches!(trace, HapticTrace::SlipFromSim(_))));
+        assert!(!played
+            .traces
+            .iter()
+            .any(|trace| matches!(trace, HapticTrace::Slip(_))));
+        assert_eq!(played.value, 0.0);
+    }
+
+    #[test]
+    fn play_traced_logs_unknown_for_engine_when_moving() {
+        let sim = moving();
+        let mut effect = slip_effect(VibrationEffect::EngineRpm, TyreId::AllFour);
+        let played = effect.play_traced(&sim, DT);
+        assert_eq!(
+            played.traces.last(),
+            Some(&HapticTrace::Unknown(VibrationEffect::EngineRpm as i32))
+        );
+        assert_eq!(played.value, 0.0);
+    }
+
+    #[test]
+    fn play_traced_skips_unknown_when_engine_is_stopped() {
+        let sim = Telemetry::new();
+        let mut effect = slip_effect(VibrationEffect::EngineRpm, TyreId::AllFour);
+        let played = effect.play_traced(&sim, DT);
+        assert!(played.traces.is_empty());
+    }
+
+    #[test]
+    fn play_traced_skips_calculated_slip_when_tyre_diameter_is_missing() {
+        let sim = moving();
+        let mut effect = slip_effect(VibrationEffect::TyreLock, TyreId::AllFour);
+        let played = effect.play_traced(&sim, DT);
+        assert!(played.traces.is_empty());
+        assert_eq!(played.value, 0.0);
+    }
+
+    #[test]
+    fn play_traced_logs_calculated_slip_and_velocities() {
+        const DIAMETER: f64 = 0.62;
+        const RPS: f64 = 10.0;
+        const BRAKE: f64 = 0.2;
+        let mut sim = moving();
+        sim.set_brake(BRAKE);
+        for index in 0..WHEEL_COUNT {
+            sim.set_tyre_diameter(index, DIAMETER);
+            sim.set_tyre_rps(index, RPS);
+        }
+        let mut effect = slip_effect(VibrationEffect::TyreLock, TyreId::AllFour);
+        let played = effect.play_traced(&sim, DT);
+        let speed_ms = KM_H_TO_M_S * f64::from(sim.velocity());
+        let wheel = (speed_ms - DIAMETER * RPS / 2.0) / speed_ms;
+        let expected = [wheel; WHEEL_COUNT];
+        assert_eq!(played.traces[0], HapticTrace::SlipCalculated(expected));
+        assert_eq!(
+            played.traces[1],
+            HapticTrace::Velocities {
+                x: sim.x_velocity(),
+                y: sim.y_velocity(),
+                z: sim.z_velocity(),
+            }
+        );
+        assert_eq!(played.traces.last(), Some(&HapticTrace::Lock(played.value)));
     }
 }

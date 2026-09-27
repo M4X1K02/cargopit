@@ -12,6 +12,9 @@ pub mod usb;
 
 pub use clock::{Clock, SystemClock, VirtualClock};
 pub use device::{tick_interval_ms, DeviceKind, SimDevice, DEFAULT_DEVICE_FPS, MS_PER_SECOND};
-pub use haptic::{measure_tyre_diameter, HapticEffect, HapticSettings, TyreId, VibrationEffect};
+pub use haptic::{
+    measure_tyre_diameter, HapticEffect, HapticPlay, HapticSettings, HapticTrace, TyreId,
+    VibrationEffect,
+};
 pub use lua_host::{LuaHost, LuaLedLevel, LuaLedLog, LuaLedMode};
 pub use transport::{FakeHid, FakePulse, FakeSerial, FakeSysfs, TransportError};
