@@ -9,6 +9,7 @@ pub mod log;
 pub mod scheduler;
 pub mod simd;
 pub mod sound_host;
+pub mod stdin_quit;
 pub mod tach;
 pub mod testmode;
 pub mod tyres;
