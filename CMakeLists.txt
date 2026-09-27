@@ -18,300 +18,98 @@ if(NOT CARGOPIT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
         "Cargopit version must use MAJOR.MINOR.PATCH: '${CARGOPIT_VERSION}'")
 endif()
 
-
-#set(CMAKE_BUILD_TYPE Debug)
-
-option(BUILD_SHARED "Build cargopit shared library" OFF)
 option(ENABLE_TESTS "Build test suite" OFF)
 option(BUILD_TUI "Build cargopit-tui (ratatui)" ON)
-option(ENABLE_STATIC_ANALYSIS "Enable GCC static analysis and C safety warnings" OFF)
-option(STATIC_ANALYSIS_AS_ERRORS "Treat static analysis diagnostics as errors" OFF)
-
-# Keep the historical spelling working for existing build instructions.
-if(analyze)
-    message(DEPRECATION "The analyze option is deprecated; use ENABLE_STATIC_ANALYSIS=ON")
-    set(ENABLE_STATIC_ANALYSIS ON)
-endif()
-
 
 project(cargopit VERSION "${CARGOPIT_VERSION}")
 
-set(CARGOPIT_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
-configure_file(
-    "${CMAKE_CURRENT_LIST_DIR}/src/cargopit/helper/version.h.in"
-    "${CARGOPIT_GENERATED_INCLUDE_DIR}/version.h"
-    @ONLY)
-include_directories("${CARGOPIT_GENERATED_INCLUDE_DIR}")
-
-set(CMAKE_EXE_LINKER_FLAGS "-Wl,--no-as-needed -ldl")
-set(LIBUSB_INCLUDE_DIR /usr/include/libusb-1.0)
-set(LIBXML_INCLUDE_DIR /usr/include/libxml2)
-
-FIND_PACKAGE(Lua)
-set(INCLUDE_DIRS ${LUA_INCLUDE_DIR})
-include_directories(${LUA_INCLUDE_DIR})
-if(Lua_FOUND AND NOT TARGET Lua::Lua)
-  add_library(Lua::Lua INTERFACE IMPORTED)
-  set_target_properties(
-    Lua::Lua
-    PROPERTIES
-      INTERFACE_INCLUDE_DIRECTORIES "${LUA_INCLUDE_DIR}"
-      INTERFACE_LINK_LIBRARIES "${LUA_LIBRARIES}"
-  )
-
+find_program(CARGO_EXECUTABLE cargo)
+if(NOT CARGO_EXECUTABLE)
+    message(FATAL_ERROR "cargo is required. Install rustc/cargo or rustup.")
 endif()
-message("Lua ${Lua_VERSION} found")
-if (Lua_VERSION VERSION_GREATER_EQUAL "5.5.0")
-    add_compile_definitions(USE_LUA_55)
+
+set(CARGO_TARGET_DIR "${CMAKE_BINARY_DIR}/cargo")
+set(CARGOPIT_STAGED "${CMAKE_BINARY_DIR}/cargopit")
+set(CARGOPIT_TUI_STAGED "${CMAKE_BINARY_DIR}/cargopit-tui")
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CARGO_PROFILE_DIR debug)
+    set(CARGO_RELEASE_ARG)
 else()
-    remove_definitions(USE_LUA_55)
+    set(CARGO_PROFILE_DIR release)
+    set(CARGO_RELEASE_ARG --release)
 endif()
 
-#FIND_PATH(LIBUSB_INCLUDE_DIR libusb.h
-#	HINTS $ENV{LIBUSB_ROOT}
-#	PATHS ${PC_LIBUSB_INCLUDEDIR} ${PC_LIBUSB_INCLUDE_DIRS}
-#	PATH_SUFFIXES include)
-#
-#FIND_LIBRARY(LIBUSB_LIBRARY NAMES usb-1.0
-#	HINTS $ENV{LIBUSB_ROOT}
-#	PATHS ${PC_LIBUSB_LIBDIR} ${PC_LIBUSB_LIBRARY_DIRS}
-#	PATH_SUFFIXES lib)
-#
-set(HIDAPI_WITH_LIBUSB FALSE) # surely will be used only on Linux
-set(BUILD_SHARED_LIBS TRUE) # HIDAPI as static library on all platforms
+set(CARGOPIT_BIN "${CARGO_TARGET_DIR}/${CARGO_PROFILE_DIR}/cargopit")
+set(CARGOPIT_TUI_BIN "${CARGO_TARGET_DIR}/${CARGO_PROFILE_DIR}/cargopit-tui")
 
-if(BUILD_SHARED)
-    add_library(cargopit SHARED src/cargopit/cargopit.c)
-else()
-    add_library(cargopit STATIC src/cargopit/cargopit.c)
-endif()
-add_executable(cargopit-cli src/cargopit/cargopit.c)
-set_target_properties(cargopit-cli PROPERTIES OUTPUT_NAME cargopit)
-
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBPROCPS libprocps)
-pkg_check_modules(LIBPROC2 libproc2)
-
-if (LIBPROC2_FOUND)
-    set(PROC_LIBS ${LIBPROC2_LIBRARIES})
-    # Some distro packagings (e.g. the freedesktop Flatpak SDK) ship a
-    # libproc2.pc with `Version: UNKNOWN` rather than a real version
-    # string. VERSION_GREATER_EQUAL against that always evaluates false,
-    # silently falling through to the old (pre-4.0.5) PIDS_VAL API and
-    # failing to compile against an actually-current libproc2 whose real
-    # header has already moved to the new 3-argument macro. Only take the
-    # old-API branch when the version string is genuinely parseable and
-    # actually old.
-    if (LIBPROC2_VERSION MATCHES "^[0-9]" AND LIBPROC2_VERSION VERSION_LESS "4.0.5")
-        add_compile_definitions(USE_OLD_PID_VAL=1)
-    endif()
-elseif (LIBPROCPS_FOUND)
-    set(PROC_LIBS ${LIBPROCPS_LIBRARIES})
-    add_compile_definitions(USE_OLD_PID_VAL=1)
-else()
-    message(FATAL_ERROR "Either libprocps or libproc2 is required")
+set(CARGO_BUILD_CMD
+    ${CARGO_EXECUTABLE} build ${CARGO_RELEASE_ARG}
+    --manifest-path "${CMAKE_SOURCE_DIR}/Cargo.toml"
+    --target-dir "${CARGO_TARGET_DIR}"
+    -p cargopit)
+set(CARGO_OUTPUTS "${CARGOPIT_BIN}")
+if(BUILD_TUI)
+    list(APPEND CARGO_BUILD_CMD -p cargopit-tui)
+    list(APPEND CARGO_OUTPUTS "${CARGOPIT_TUI_BIN}")
 endif()
 
-#if(USE_PULSEAUDIO)
-#else()
-#endif()
+file(GLOB_RECURSE CARGOPIT_RUST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/crates/*.rs"
+    "${CMAKE_SOURCE_DIR}/crates/*.toml"
+    "${CMAKE_SOURCE_DIR}/tui/*.rs"
+    "${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simapi/*.c"
+    "${CMAKE_SOURCE_DIR}/src/cargopit/simulatorapi/simapi/simapi/*.h")
 
-message("Using pulseaudio backend...")
-add_compile_definitions(USE_PULSEAUDIO=true)
+add_custom_command(
+    OUTPUT ${CARGO_OUTPUTS}
+    COMMAND ${CARGO_BUILD_CMD}
+    DEPENDS
+        ${CARGOPIT_RUST_SOURCES}
+        "${CMAKE_SOURCE_DIR}/Cargo.toml"
+        "${CMAKE_SOURCE_DIR}/Cargo.lock"
+        "${CMAKE_SOURCE_DIR}/version.txt"
+        "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
+        "${CMAKE_SOURCE_DIR}/tui/build.rs"
+        "${CMAKE_SOURCE_DIR}/crates/simapi-sys/build.rs"
+        "${CMAKE_SOURCE_DIR}/crates/cargopit/Cargo.toml"
+        "${CMAKE_SOURCE_DIR}/crates/cargopit-config/Cargo.toml"
+        "${CMAKE_SOURCE_DIR}/crates/cargopit-devices/Cargo.toml"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Building cargopit with cargo"
+    VERBATIM)
 
-add_subdirectory(src/cargopit/gameloop)
-add_subdirectory(src/cargopit/simulatorapi)
-add_subdirectory(src/cargopit/helper)
-add_subdirectory(src/cargopit/devices)
-add_subdirectory(src/cargopit/slog)
+add_custom_command(
+    OUTPUT "${CARGOPIT_STAGED}"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CARGOPIT_BIN}" "${CARGOPIT_STAGED}"
+    DEPENDS "${CARGOPIT_BIN}"
+    COMMENT "Staging cargopit"
+    VERBATIM)
 
-target_link_libraries(cargopit m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
-target_include_directories(cargopit PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
-target_link_libraries(cargopit-cli m hidapi-hidraw pulse serialport xml2 argtable2 config gameloop helper devices slog simulatorapi uv xdg-basedir Lua::Lua)
-target_include_directories(cargopit-cli PUBLIC config ${LIBXML_INCLUDE_DIR} ${LUA_INCLUDE_DIR})
-
-
-
-
-# used for enabling additional compiler options if supported
-include(CheckCCompilerFlag)
-
-function(enable_c_compiler_flag_if_supported flag)
-    message(STATUS "[cargopit] Checking if compiler supports warning flag '${flag}'")
-    check_c_compiler_flag("${flag}" flag_supported)
-    if(flag_supported)
-        message(STATUS "[cargopit] Enabling warning flag '${flag}'")
-        target_compile_options(cargopit INTERFACE "${flag}")
-    endif()
-    unset(flag_supported CACHE)
-endfunction()
-
-# enable a large amount of extra warnings, regardless of build mode
-if (MSVC) # MSVC supports different warning options to GCC/Clang
-    enable_c_compiler_flag_if_supported("/W3")  # set warning level 3
-    # if tests are enabled, enable converting all warnings to errors too
-    if (ENABLE_TESTS)
-        # add_compile_options(/WX)
-        enable_c_compiler_flag_if_supported("/WX")
-    endif()
-else() # GCC/Clang warning option
-    # NOTE: GCC and Clang support most of the same options, but neither supports all
-    # of the others'. By only enabling them if supported, we get graceful failure
-    # when trying to enable unsupported flags
-    # e.g. at the time of writing, GCC does not support -Wdocumentation
-    #
-    # enable all warnings about 'questionable constructs'
-
-    enable_c_compiler_flag_if_supported("-Wall")
-    # issue 'pedantic' warnings for strict ISO compliance
-    enable_c_compiler_flag_if_supported("-pedantic")
-    # enable 'extra' strict warnings
-    enable_c_compiler_flag_if_supported("-Wextra")
-    # enable sign conversion warnings
-    enable_c_compiler_flag_if_supported("-Wsign-conversion")
-    # enable warnings about mistakes in Doxygen documentation
-    enable_c_compiler_flag_if_supported("-Wdocumentation")
-    # if tests are enabled, enable converting all warnings to errors too
-    if (ENABLE_TESTS)
-        enable_c_compiler_flag_if_supported("-Werror")
-        # exclude the following kinds of warnings from being converted into errors
-        # unknown-pragma is useful to have as a warning but not as an error, if you have
-        # pragmas which are for the consumption of one compiler only
-        enable_c_compiler_flag_if_supported("-Wno-error=unknown-pragmas")
-        # unused variable and function warnings are helpful but we don't need them as errors
-        enable_c_compiler_flag_if_supported("-Wno-error=unused-function")
-        enable_c_compiler_flag_if_supported("-Wno-error=unused-variable")
-        enable_c_compiler_flag_if_supported("-Wno-error=unused-parameter")
-        enable_c_compiler_flag_if_supported("-Wno-error=unused-private-field")
-        enable_c_compiler_flag_if_supported("-Wno-error=unused-but-set-variable")
-    endif()
+set(CARGOPIT_STAGE_TARGETS "${CARGOPIT_STAGED}")
+if(BUILD_TUI)
+    add_custom_command(
+        OUTPUT "${CARGOPIT_TUI_STAGED}"
+        COMMAND ${CMAKE_COMMAND} -E copy "${CARGOPIT_TUI_BIN}" "${CARGOPIT_TUI_STAGED}"
+        DEPENDS "${CARGOPIT_TUI_BIN}"
+        COMMENT "Staging cargopit-tui"
+        VERBATIM)
+    list(APPEND CARGOPIT_STAGE_TARGETS "${CARGOPIT_TUI_STAGED}")
 endif()
 
-# library
-# unit tests --only enable if requested AND we're not building as a sub-project
+add_custom_target(cargopit-host ALL DEPENDS ${CARGOPIT_STAGE_TARGETS})
+
+install(PROGRAMS "${CARGOPIT_STAGED}" DESTINATION bin)
+if(BUILD_TUI)
+    install(PROGRAMS "${CARGOPIT_TUI_STAGED}" DESTINATION bin)
+endif()
+install(FILES tools/cargopit.desktop DESTINATION share/applications)
+install(FILES tools/cargopit.svg
+    DESTINATION share/icons/hicolor/scalable/apps)
+install(DIRECTORY conf/ DESTINATION share/cargopit/conf)
+
 if(ENABLE_TESTS AND NOT CARGOPIT_SUBPROJECT)
     message(STATUS "[cargopit] Unit Tests Enabled")
     enable_testing()
     add_subdirectory(tests)
 endif()
-
-if(ENABLE_STATIC_ANALYSIS)
-    if(MSVC)
-        message(FATAL_ERROR "ENABLE_STATIC_ANALYSIS requires GCC")
-    endif()
-
-    check_c_compiler_flag("-fanalyzer" CARGOPIT_HAS_FANALYZER)
-    if(NOT CARGOPIT_HAS_FANALYZER)
-        message(FATAL_ERROR "ENABLE_STATIC_ANALYSIS requires GCC with -fanalyzer support")
-    endif()
-
-    set(CARGOPIT_STATIC_ANALYSIS_FLAGS
-        -fanalyzer
-        -Wall
-        -Wextra
-        -Wpedantic
-        -Wformat=2
-        -Wformat-overflow=2
-        -Wformat-truncation=2
-        -Warray-bounds=2
-        -Wstringop-overflow=4
-        -Wnull-dereference
-        -Wshadow
-        -Wconversion
-        -Wsign-conversion
-        -Wstrict-prototypes
-        -Wmissing-prototypes
-        -Wold-style-definition
-        -Wvla
-        -Wswitch-enum
-        -Walloca
-        -Wduplicated-cond
-        -Wduplicated-branches
-        -Wlogical-op)
-
-    if(STATIC_ANALYSIS_AS_ERRORS)
-        list(APPEND CARGOPIT_STATIC_ANALYSIS_FLAGS -Werror)
-        # Submodule headers use compiler-specific pragmas. Those stay visible
-        # and are excluded from the CI scan; they must not fail this build.
-        list(APPEND CARGOPIT_STATIC_ANALYSIS_FLAGS -Wno-error=unknown-pragmas)
-    endif()
-
-    # The simulatorapi target is a pinned external submodule. Analyze the
-    # project-owned C targets without making third-party diagnostics block this
-    # repository's first-pass checks.
-    set(CARGOPIT_STATIC_ANALYSIS_TARGETS
-        cargopit
-        cargopit-cli
-        gameloop
-        helper
-        devices
-        slog)
-    if(ENABLE_TESTS AND NOT CARGOPIT_SUBPROJECT)
-        list(APPEND CARGOPIT_STATIC_ANALYSIS_TARGETS
-            confighelper_test
-            ensure_simd_test
-            simd_telemetry_test
-            tester_simdata_test
-            acr_udp_test)
-    endif()
-
-    foreach(analysis_target IN LISTS CARGOPIT_STATIC_ANALYSIS_TARGETS)
-        if(TARGET "${analysis_target}")
-            target_compile_options("${analysis_target}" PRIVATE
-                ${CARGOPIT_STATIC_ANALYSIS_FLAGS})
-        endif()
-    endforeach()
-endif()
-
-if(BUILD_TUI)
-    find_program(CARGO_EXECUTABLE cargo)
-    if(NOT CARGO_EXECUTABLE)
-        message(FATAL_ERROR "cargo is required when BUILD_TUI is ON. Install rustc/cargo or pass -DBUILD_TUI=OFF")
-    endif()
-    set(TUI_TARGET_DIR "${CMAKE_BINARY_DIR}/tui")
-    set(CARGO_COMMAND ${CARGO_EXECUTABLE} build)
-    if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        set(TUI_BIN "${TUI_TARGET_DIR}/debug/cargopit-tui")
-    else()
-        list(APPEND CARGO_COMMAND --release)
-        set(TUI_BIN "${TUI_TARGET_DIR}/release/cargopit-tui")
-    endif()
-    list(APPEND CARGO_COMMAND
-        --manifest-path "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
-        --target-dir "${TUI_TARGET_DIR}")
-    file(GLOB_RECURSE TUI_RUST_SOURCES CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/tui/src/*.rs"
-        "${CMAKE_SOURCE_DIR}/crates/simapi-sys/src/*.rs"
-        "${CMAKE_SOURCE_DIR}/crates/simapi-sys/csrc/*"
-        "${CMAKE_SOURCE_DIR}/crates/cargopit-config/src/*.rs")
-    add_custom_command(
-        OUTPUT "${TUI_BIN}"
-        COMMAND ${CARGO_COMMAND}
-        DEPENDS
-            ${TUI_RUST_SOURCES}
-            "${CMAKE_SOURCE_DIR}/tui/Cargo.toml"
-            "${CMAKE_SOURCE_DIR}/tui/build.rs"
-            "${CMAKE_SOURCE_DIR}/Cargo.toml"
-            "${CMAKE_SOURCE_DIR}/Cargo.lock"
-            "${CMAKE_SOURCE_DIR}/version.txt"
-            "${CMAKE_SOURCE_DIR}/crates/simapi-sys/Cargo.toml"
-            "${CMAKE_SOURCE_DIR}/crates/simapi-sys/build.rs"
-            "${CMAKE_SOURCE_DIR}/crates/cargopit-config/Cargo.toml"
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/tui"
-        COMMENT "Building cargopit-tui with cargo"
-        VERBATIM)
-    add_custom_target(cargopit-tui ALL DEPENDS "${TUI_BIN}")
-    install(PROGRAMS "${TUI_BIN}" DESTINATION bin)
-endif()
-
-set(CARGOPIT_LEGACY_NAME cargopit-legacy)
-add_custom_command(TARGET cargopit-cli POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:cargopit-cli>
-            $<TARGET_FILE_DIR:cargopit-cli>/${CARGOPIT_LEGACY_NAME}
-    COMMENT "Install name for the C host during the shadow release")
-install(TARGETS cargopit-cli RUNTIME DESTINATION bin)
-install(PROGRAMS $<TARGET_FILE_DIR:cargopit-cli>/${CARGOPIT_LEGACY_NAME} DESTINATION bin)
-install(FILES tools/cargopit.desktop DESTINATION share/applications)
-install(FILES tools/cargopit.svg
-    DESTINATION share/icons/hicolor/scalable/apps)
-install(DIRECTORY conf/ DESTINATION share/cargopit/conf)

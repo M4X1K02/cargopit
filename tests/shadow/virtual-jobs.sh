@@ -54,8 +54,4 @@ if ! printf '%s\n' "$out" | grep -Fq "$TEST_STEP_PREFIX"; then
     exit 1
 fi
 
-if [ -x "$ROOT/build/cargopit-legacy" ]; then
-    bash tests/version_reporting.sh "$ROOT/build/cargopit-legacy" "$(tr -d '[:space:]' < version.txt)"
-fi
-
 echo "PASS shadow virtual jobs"

@@ -4,13 +4,13 @@
 # Idempotent: safe to run repeatedly and against a cached/partially prepared
 # tree. It installs system build dependencies, initialises the required
 # submodules, ensures a current Rust toolchain, then configures and builds the
-# C CLI, the Rust TUI, and the automated test suite. Mirrors
+# Rust host, the TUI, and the automated test suite. Mirrors
 # .github/workflows/pr-build.yaml so local builds match CI.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# --- System build dependencies (C CLI + test suite) -------------------------
+# --- System build dependencies ---------------------------------------------
 # Same package list as the pr-build.yaml CI leg. apt-get install is a no-op
 # for packages that are already present, so this stays idempotent.
 SUDO=""
@@ -22,14 +22,13 @@ export DEBIAN_FRONTEND=noninteractive
 $SUDO apt-get update
 $SUDO apt-get install -y --no-install-recommends \
     cmake pkg-config build-essential \
-    libuv1-dev libargtable2-dev libserialport-dev libconfig-dev \
-    libhidapi-dev liblua5.4-dev libxdg-basedir-dev libxml2-dev \
+    libserialport-dev libhidapi-dev liblua5.4-dev \
     libpulse-dev libproc2-dev libclang-dev libudev-dev
 
 # --- Submodules -------------------------------------------------------------
 # simapi (shared-memory headers/mappers) is required to configure and build;
-# an empty submodule fails CMake with a missing CMakeLists.txt error. The Rust
-# TUI links simapi-sys, which bindgen-compiles those headers.
+# an empty submodule fails simapi-sys with missing headers. The host and TUI
+# link simapi-sys, which bindgen-compiles those headers.
 git submodule update --init --recursive
 
 # --- Rust toolchain (for the cargopit-tui build) ----------------------------
@@ -44,7 +43,7 @@ export PATH="$CARGO_HOME/bin:$PATH"
 rustup toolchain install stable --profile minimal
 rustup default stable
 
-# --- Configure + build (C CLI + tests + Rust TUI) ---------------------------
+# --- Configure + build (Rust host + tests + TUI) ---------------------------
 # gcc/g++ are pinned explicitly: the base image's default cc/c++ resolve to
 # clang, which selects a gcc-14 toolchain whose libstdc++ dev files are not
 # installed and then fails to link with "cannot find -lstdc++". The project's
@@ -52,4 +51,3 @@ rustup default stable
 cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
 cmake --build build --config Debug -j"$(nproc)"
-cargo build --release -p cargopit --manifest-path Cargo.toml

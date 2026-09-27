@@ -58,13 +58,17 @@ jobs:
         apt-get install -y --no-install-recommends \
           ca-certificates curl git \
           build-essential cmake pkg-config \
-          libuv1-dev libargtable2-dev libserialport-dev \
-          libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev libclang-dev cargo rustc
+          libserialport-dev libhidapi-dev liblua5.4-dev \
+          libpulse-dev libproc2-dev libclang-dev libudev-dev
 
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    - name: Install Rust toolchain
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
     # $GITHUB_WORKSPACE, not ${{ github.workspace }}: in a container job the
     # expression still renders the *host* path (/home/runner/work/...) while
@@ -83,7 +87,6 @@ jobs:
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
-        -DCMAKE_CXX_COMPILER=g++
         -DCMAKE_C_COMPILER=gcc
         -DCMAKE_BUILD_TYPE=Release
         -S "$GITHUB_WORKSPACE"
@@ -117,11 +120,7 @@ jobs:
         sed -i "s/^Version:.*/Version: ${{ steps.pkgver.outputs.version }}/" ./PKG_SOURCE/DEBIAN/control
         cp ./tools/distro/debian/dpkg/copyright ./PKG_SOURCE/DEBIAN/copyright
         cp ./build/cargopit ./PKG_SOURCE/usr/bin/cargopit
-        if [ -x ./build/tui/release/cargopit-tui ]; then
-          cp ./build/tui/release/cargopit-tui ./PKG_SOURCE/usr/bin/cargopit-tui
-        elif [ -x ./build/tui/debug/cargopit-tui ]; then
-          cp ./build/tui/debug/cargopit-tui ./PKG_SOURCE/usr/bin/cargopit-tui
-        fi
+        cp ./build/cargopit-tui ./PKG_SOURCE/usr/bin/cargopit-tui
         cp ./tools/cargopit.desktop ./PKG_SOURCE/usr/share/applications/cargopit.desktop
         dpkg-deb --build PKG_SOURCE "${{ steps.pkgver.outputs.package_file }}"
         echo "--- control as packaged ---"
@@ -188,9 +187,8 @@ jobs:
         for attempt in 1 2 3; do
           dnf install -y --setopt=install_weak_deps=False \
             rpm-build cmake gcc gcc-c++ make git curl \
-            pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel \
-            libserialport-devel lua-devel libuv-devel libxdg-basedir-devel \
-            libxml2-devel procps-ng-devel libudev-devel cargo && exit 0
+            pulseaudio-libs-devel hidapi-devel libserialport-devel lua-devel \
+            procps-ng-devel libudev-devel clang-devel cargo && exit 0
           echo "dnf install failed (attempt $attempt), retrying in 15s..."
           sleep 15
         done
@@ -203,6 +201,11 @@ jobs:
     - uses: actions/checkout@v4
       with:
         submodules: recursive
+
+    - name: Install Rust toolchain
+      run: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
     - name: create rpmbuild dirs
       run: mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
@@ -290,16 +293,16 @@ jobs:
       with:
         submodules: recursive
 
-    # desktop-file-utils, file, patchelf, wget are for linuxdeploy, not the
-    # C build.
+    - uses: dtolnay/rust-toolchain@stable
+
+    # desktop-file-utils, file, patchelf, wget are for linuxdeploy.
     - name: Install build dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           build-essential cmake pkg-config \
-          libuv1-dev libargtable2-dev libserialport-dev \
-          libconfig-dev libhidapi-dev liblua5.4-dev libxdg-basedir-dev \
-          libxml2-dev libpulse-dev libproc2-dev libclang-dev cargo rustc \
+          libserialport-dev libhidapi-dev liblua5.4-dev \
+          libpulse-dev libproc2-dev libclang-dev libudev-dev \
           desktop-file-utils file patchelf wget
 
     - name: Determine package version
@@ -310,14 +313,10 @@ jobs:
         echo "version=$v" >> "$GITHUB_OUTPUT"
         echo "package_file=cargopit-${v}-x86_64.AppImage" >> "$GITHUB_OUTPUT"
 
-    # -std=gnu2x for the C23 enum syntax above: GCC 13 implements it but
-    # still defaults to gnu17, unlike GCC 15+ (which the container-based
-    # deb/rpm legs get, and which accept it without the flag). gnu2x rather
-    # than c2x so GNU extensions stay on -- simapi also relies on asprintf.
+    # simapi C23 enums need GCC 13+, which ubuntu-24.04 provides.
     - name: Build
       run: |
-        cmake -B build -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_C_FLAGS=-std=gnu2x -S .
+        cmake -B build -DCMAKE_BUILD_TYPE=Release -S .
         cmake --build build --config Release
 
     # Uses the install() rules rather than hand-copying binaries the way the

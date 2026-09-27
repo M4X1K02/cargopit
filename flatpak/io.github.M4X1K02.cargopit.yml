@@ -18,9 +18,9 @@ finish-args:
   # not always well-behaved; needs real hardware testing, not just a
   # successful build.
   - --device=all
-  # cargopit builds its paths from $HOME directly (e.g.
-  # "%s/.config/cargopit/diameters.config" in cargopit.c), not from
-  # XDG_CONFIG_HOME, so it reads and writes the host's real directories.
+  # cargopit builds its paths from $HOME (XDG-style defaults in
+  # crates/cargopit-config), not only from XDG_CONFIG_HOME, so it reads and
+  # writes the host's real directories.
   # Without these grants a real launch failed with
   #   Failed to read config file '/home/david/.config/cargopit/cargopit.config'
   #   slog_open_file: Failed to open file: /home/david/.cache/cargopit/...log
@@ -44,71 +44,6 @@ finish-args:
   - --device=shm
 
 modules:
-  - name: libconfig
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DBUILD_TESTS=OFF
-      # libconfig 1.7.3's CMakeLists.txt predates CMake 3.5's minimum
-      # version policy; confirmed via a failed local build.
-      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-    post-install:
-      - sh -c 'f=$(ls -1 COPYING COPYING.txt COPYING.LIB LICENSE LICENSE.txt LICENSE.md LICENCE licence.txt 2>/dev/null | head -1); if [ -n "$f" ]; then install -Dm644 "$f" /app/share/licenses/libconfig/$(basename "$f"); else echo "WARNING: no licence file found for libconfig"; fi'
-    sources:
-      - type: archive
-        url: https://github.com/hyperrealm/libconfig/archive/refs/tags/v1.7.3.tar.gz
-        sha256: 68757e37c567fd026330c8a8449aa5f9cac08a642f213f2687186b903bd7e94e
-
-  - name: argtable2
-    buildsystem: cmake-ninja
-    config-opts:
-      # Same CMake-minimum-version issue as libconfig -- this one's
-      # CMakeLists.txt is even older (2011).
-      - -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-      # 2011-era code missing <ctype.h>/<strings.h> includes for
-      # isspace/toupper/bzero; GCC 14+ made implicit-function-declaration a
-      # hard error by default where it used to just warn. Confirmed via a
-      # failed local build.
-      - -DCMAKE_C_FLAGS=-Wno-error=implicit-function-declaration
-      # add_library(argtable2 ...) has no explicit STATIC/SHARED, so it
-      # defaults to CMake's global BUILD_SHARED_LIBS (off by default -> a
-      # static .a). cargopit's own target_link_libraries() lists argtable2
-      # before helper (which needs its symbols, e.g. arg_end/arg_parse in
-      # parameters.c) -- fine for a shared library (all symbols always
-      # available regardless of link-line position, which is what real
-      # distro packages of this ship), but a static archive only pulls
-      # symbols already needed by things linked *before* it, so helper's
-      # later reference to argtable2's symbols never resolves. Confirmed
-      # via a failed local build ("undefined reference to arg_end" etc.
-      # from helper's parameters.c, even though libargtable2.a genuinely
-      # contained those symbols). Building shared instead matches how this
-      # dependency normally ships and avoids the link-order sensitivity
-      # entirely, rather than reordering every target_link_libraries() call
-      # in CMakeLists.txt.
-      - -DBUILD_SHARED_LIBS=ON
-    # This CMake port has no install() rules at all (confirmed: no
-    # CMakeLists.txt in the tree calls install()), so the default
-    # cmake-ninja `ninja install` step silently does nothing -- cargopit's
-    # own build then fails on a missing argtable2.h. build-commands here
-    # replace the default install step: `ninja` still does the real
-    # compile, then copy the header and whatever library form actually got
-    # built (glob rather than a fixed versioned filename, since the exact
-    # .so version suffix isn't predictable without a build).
-    build-commands:
-      - ninja
-      - install -Dm644 src/argtable2.h /app/include/argtable2.h
-      - |
-        for f in src/libargtable2.so* src/libargtable2.a; do
-          if [ -e "$f" ]; then cp -P "$f" /app/lib/; fi
-        done
-        true
-    post-install:
-      - sh -c 'f=$(ls -1 COPYING COPYING.txt COPYING.LIB LICENSE LICENSE.txt LICENSE.md LICENCE licence.txt 2>/dev/null | head -1); if [ -n "$f" ]; then install -Dm644 "$f" /app/share/licenses/argtable2/$(basename "$f"); else echo "WARNING: no licence file found for argtable2"; fi'
-    sources:
-      - type: archive
-        url: https://sourceforge.net/projects/argtable/files/argtable/argtable-2.13/argtable2-13.tar.gz/download
-        sha256: 8f77e8a7ced5301af6e22f47302fdbc3b1ff41f2b83c43c77ae5ca041771ddbf
-        dest-filename: argtable2-13.tar.gz
-
   - name: lua5.4
     # Lua's own Makefile, not CMake/autotools. `posix` (not `linux`) avoids
     # a readline dependency only needed for the interactive REPL binary,
@@ -135,17 +70,6 @@ modules:
         url: https://github.com/sigrokproject/libserialport/archive/refs/tags/libserialport-0.1.2.tar.gz
         sha256: cbb1192a09ff31d34e7efdb17a2f50d9d1974461c0b81c29bb449515d78d8950
 
-  - name: libxdg-basedir
-    buildsystem: autotools
-    build-commands:
-      - ./autogen.sh
-    post-install:
-      - sh -c 'f=$(ls -1 COPYING COPYING.txt COPYING.LIB LICENSE LICENSE.txt LICENSE.md LICENCE licence.txt 2>/dev/null | head -1); if [ -n "$f" ]; then install -Dm644 "$f" /app/share/licenses/libxdg-basedir/$(basename "$f"); else echo "WARNING: no licence file found for libxdg-basedir"; fi'
-    sources:
-      - type: archive
-        url: https://github.com/devnev/libxdg-basedir/archive/refs/tags/libxdg-basedir-1.2.3.tar.gz
-        sha256: ff30c60161f7043df4dcc6e7cdea8e064e382aa06c73dcc3d1885c7d2c77451d
-
   - name: hidapi
     buildsystem: cmake-ninja
     config-opts:
@@ -163,33 +87,12 @@ modules:
         url: https://github.com/libusb/hidapi/archive/refs/tags/hidapi-0.14.0.tar.gz
         sha256: a5714234abe6e1f53647dd8cba7d69f65f71c558b7896ed218864ffcf405bcbd
 
-  - name: libuv
-    buildsystem: cmake-ninja
-    config-opts:
-      - -DBUILD_TESTING=OFF
-    post-install:
-      - sh -c 'f=$(ls -1 COPYING COPYING.txt COPYING.LIB LICENSE LICENSE.txt LICENSE.md LICENCE licence.txt 2>/dev/null | head -1); if [ -n "$f" ]; then install -Dm644 "$f" /app/share/licenses/libuv/$(basename "$f"); else echo "WARNING: no licence file found for libuv"; fi'
-    sources:
-      - type: archive
-        url: https://github.com/libuv/libuv/archive/refs/tags/v1.49.2.tar.gz
-        sha256: 388ffcf3370d4cf7c4b3a3205504eea06c4be5f9e80d2ab32d19f8235accc1cf
-
   - name: cargopit
     buildsystem: cmake-ninja
     config-opts:
       - -DCMAKE_BUILD_TYPE=Release
-    # CMakeLists.txt links most of the dependencies built as separate
-    # flatpak modules above (hidapi-hidraw, serialport, argtable2, config,
-    # uv, xdg-basedir) by bare library name with no explicit -L, relying on
-    # the linker's default search path -- fine on a real system where these
-    # install to /usr/lib, but /app/lib isn't in that default path.
-    # -DCMAKE_EXE_LINKER_FLAGS=-L/app/lib didn't work: CMake appends
-    # EXE_LINKER_FLAGS at the *end* of the link command, after the -l
-    # flags that need it, and ld resolves -l against -L directories seen
-    # so far, left to right -- confirmed via a failed local build showing
-    # the exact same missing-library set with that flag present but
-    # useless. LIBRARY_PATH is a GCC driver environment variable, applied
-    # to its search regardless of where in the command line things land.
+    # hidapi-hidraw and serialport install to /app/lib. LIBRARY_PATH keeps
+    # those visible to the Rust link regardless of flag order.
     build-options:
       append-path: /usr/lib/sdk/rust-stable/bin
       build-args:
@@ -237,10 +140,9 @@ modules:
       # dependency's origin.
       - install -Dm644 LICENSE.rst /app/share/licenses/cargopit/LICENSE.rst
       # The Debian copyright file is upstream's own account of what is in this
-      # source tree and under what terms -- slog (MIT), simapi
-      # (LGPL) -- which a bundle has to carry because it distributes all of
-      # them, unlike a .deb whose dependencies are separate packages. Shipped
-      # verbatim rather than restated.
+      # source tree and under what terms -- simapi (LGPL) -- which a bundle has
+      # to carry because it distributes it, unlike a .deb whose dependencies
+      # are separate packages. Shipped verbatim rather than restated.
       - install -Dm644 tools/distro/debian/dpkg/copyright /app/share/licenses/cargopit/copyright
       # lua ships no licence file in its tarball -- Lua's MIT text
       # lives in doc/readme.html -- so a checked-in copy is installed from
@@ -250,13 +152,8 @@ modules:
     # Confirmed via a failed local build that flatpak-builder's cmake-ninja
     # buildsystem runs the automatic build+install step regardless of
     # whether build-commands are also given -- these run in *addition*,
-    # not instead. So the fix for simlighttest (a stray, always-on scratch
-    # test executable that failed to link -lserialport, a pre-existing
-    # CMakeLists.txt bug unrelated to Flatpak) had to be commenting it out
-    # at the source, not overriding the build here. With that gone, the
-    # automatic build+install (using this repo's own new install() rules)
-    # already installs cargopit correctly; these build-commands
-    # only need to add the extra files CMake doesn't know about.
+    # not instead. The automatic build+install already installs cargopit;
+    # these build-commands only add the extra files CMake doesn't know about.
     build-commands:
       - install -Dm644 io.github.M4X1K02.cargopit.desktop /app/share/applications/io.github.M4X1K02.cargopit.desktop
       - install -Dm644 io.github.M4X1K02.cargopit.metainfo.xml /app/share/metainfo/io.github.M4X1K02.cargopit.metainfo.xml

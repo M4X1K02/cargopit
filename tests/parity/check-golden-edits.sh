@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Golden bytes must come from regen-goldens.sh. A hand edit fails this check
-# unless the commit message contains REGENERATE GOLDENS and a fresh C capture
-# matches the files.
+# unless the commit message contains REGENERATE GOLDENS.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

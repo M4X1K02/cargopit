@@ -12,7 +12,7 @@ Prefer the method for your distro in the [README](README.md#how-to-install). A p
 
 To compile by hand instead:
 
-* build [cargopit](https://github.com/M4X1K02/cargopit) — `git submodule update --init --recursive`, then `./install.sh --from-source` (Rust host as `cargopit`, C host as `cargopit-legacy`)
+* build [cargopit](https://github.com/M4X1K02/cargopit) — `git submodule update --init --recursive`, then `./install.sh --from-source`
 * build [simd](https://github.com/Spacefreak18/simapi/tree/master/simd) (needs simapi installed first, including `simdata.h`)
 * get [simshmbridge](https://github.com/spacefreak18/simshmbridge) compatibility EXEs ([releases](https://github.com/spacefreak18/simshmbridge/releases)) unless you only use UDP titles
 

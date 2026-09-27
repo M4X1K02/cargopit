@@ -1,4 +1,4 @@
-#dnf install pulseaudio-libs-devel argtable-devel libconfig-devel hidapi-devel libserialport-devel lua-devel libuv-devel libxdg-basedir-devel libxml2-devel procps-ng-devel libudev-devel
+#dnf install pulseaudio-libs-devel hidapi-devel libserialport-devel lua-devel procps-ng-devel libudev-devel clang-devel
 Summary: A device manager for racing sims
 Name: cargopit
 Version: 0.4.0
@@ -10,8 +10,8 @@ URL: https://github.com/M4X1K02/cargopit
 Distribution: Fedora Linux
 Vendor: M4X1K02
 Packager: M4X1K02 <maxik.secure@tutanota.com>
-Requires: pulseaudio-libs argtable libconfig hidapi libserialport libuv libxdg-basedir lua-libs libxml2 procps-ng
-BuildRequires: cmake gcc gcc-c++ make git cargo rust
+Requires: pulseaudio-libs hidapi libserialport lua-libs procps-ng
+BuildRequires: cmake gcc gcc-c++ make git cargo rust clang-devel hidapi-devel libserialport-devel lua-devel pulseaudio-libs-devel procps-ng-devel libudev-devel pkgconf-pkg-config
 
 %description
 A device manager for Racing sims
@@ -35,21 +35,14 @@ cp -r $RPM_SOURCE_DIR/cargopit $RPM_BUILD_DIR/
 
 %build
 cd $RPM_BUILD_DIR/cargopit
-cmake -B build
-cd build
-make
-cd ..
-cargo build --release -p cargopit --manifest-path Cargo.toml
+export PATH="$HOME/.cargo/bin:$PATH"
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 
 %install
 mkdir -p $RPM_BUILD_ROOT/usr/bin
-cp $RPM_BUILD_DIR/cargopit/target/release/cargopit $RPM_BUILD_ROOT/usr/bin/cargopit
-cp $RPM_BUILD_DIR/cargopit/build/cargopit-legacy $RPM_BUILD_ROOT/usr/bin/cargopit-legacy
-if [ -x $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui ]; then
-    cp $RPM_BUILD_DIR/cargopit/build/tui/release/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
-elif [ -x $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui ]; then
-    cp $RPM_BUILD_DIR/cargopit/build/tui/debug/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
-fi
+cp $RPM_BUILD_DIR/cargopit/build/cargopit $RPM_BUILD_ROOT/usr/bin/cargopit
+cp $RPM_BUILD_DIR/cargopit/build/cargopit-tui $RPM_BUILD_ROOT/usr/bin/cargopit-tui
 install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.desktop \
     $RPM_BUILD_ROOT/usr/share/applications/cargopit.desktop
 install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.svg \
@@ -57,7 +50,6 @@ install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.svg \
 
 %files
 /usr/bin/cargopit
-/usr/bin/cargopit-legacy
 /usr/bin/cargopit-tui
 /usr/share/applications/cargopit.desktop
 /usr/share/icons/hicolor/scalable/apps/cargopit.svg
