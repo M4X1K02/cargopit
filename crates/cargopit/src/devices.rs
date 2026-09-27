@@ -82,6 +82,10 @@ const CSL_PROBE_OPEN_FAILED: i32 = 3;
 const SERIAL_DEVICE_CAPACITY: usize = 20;
 const SERIAL_REF_NONE: u32 = 0;
 const SERIAL_REF_ONE: u32 = 1;
+const SERIAL_SLOT_UNSET: i32 = -1;
+const SERIAL_PORT_OPEN: i32 = 1;
+const SERIAL_OPENFAIL_FALSE: i32 = 0;
+const SERIAL_IO_FAILED: i32 = -1;
 
 pub struct LoadedDevices {
     devices: Vec<SimDevice>,
@@ -276,7 +280,7 @@ impl LoadedDevices {
         self.blank_c5(&mut notices);
         self.blank_moza(now_ns, &mut notices);
         self.blank_serial_haptic(&mut notices);
-        self.blank_simled();
+        self.blank_simled(&mut notices);
         self.close_ports(&mut notices);
         self.close_c12_lua(&mut notices);
         self.close_csl();
@@ -680,16 +684,14 @@ impl LoadedDevices {
             return Vec::new();
         };
         let lit = serial::shiftlights_byte(frame.rpms(), frame.maxrpm(), lights);
-        let notices = vec![
+        let mut notices = vec![
             notice(Level::Trace, games::shiftlights_lit_message(i32::from(lit))),
             notice(
                 Level::Trace,
                 games::arduino_copy_message(serial::SHIFT_PACKET_LEN),
             ),
         ];
-        if let Some(port) = self.serials.get_mut(index) {
-            let _ = write_serial_frame(port, &[lit]);
-        }
+        notices.extend(write_serial_optional(self.serials.get_mut(index), &[lit]));
         notices
     }
 
@@ -700,7 +702,7 @@ impl LoadedDevices {
         let report = serial::simwind_report(frame.velocity(), fanpower);
         let mph = i32::from(report[serial::SIMWIND_BYTE_SPEED]);
         let fan = i32::from(report[serial::SIMWIND_BYTE_FAN]);
-        let notices = vec![
+        let mut notices = vec![
             notice(Level::Trace, games::simwind_speed_message(mph)),
             notice(Level::Trace, games::simwind_fan_message(fan, fanpower)),
             notice(
@@ -708,9 +710,7 @@ impl LoadedDevices {
                 games::arduino_copy_message(serial::SIMWIND_PACKET_LEN),
             ),
         ];
-        if let Some(port) = self.serials.get_mut(index) {
-            let _ = write_serial_frame(port, &report);
-        }
+        notices.extend(write_serial_optional(self.serials.get_mut(index), &report));
         notices
     }
 
@@ -723,8 +723,11 @@ impl LoadedDevices {
         let Some(tick) = self.haptic_tick(index, frame, now_ns) else {
             return Vec::new();
         };
-        let notices = serial_haptic_tick_notices(&tick);
-        write_haptic_packet(self.serials.get_mut(index), &tick.step.packet);
+        let mut notices = serial_haptic_tick_notices(&tick);
+        notices.extend(write_haptic_packet(
+            self.serials.get_mut(index),
+            &tick.step.packet,
+        ));
         notices
     }
 
@@ -741,13 +744,14 @@ impl LoadedDevices {
         ) else {
             return Vec::new();
         };
-        let notices = vec![notice(
+        let mut notices = vec![notice(
             Level::Trace,
             games::shiftlights_lit_message(report.lit),
         )];
-        if let Some(port) = self.serials.get_mut(index) {
-            let _ = write_serial_frame(port, &report.bytes);
-        }
+        notices.extend(write_serial_optional(
+            self.serials.get_mut(index),
+            &report.bytes,
+        ));
         notices
     }
 
@@ -755,23 +759,20 @@ impl LoadedDevices {
         self.simled.get(index).and_then(Option::as_ref).copied()
     }
 
-    fn blank_simled(&mut self) {
+    fn blank_simled(&mut self, notices: &mut Vec<InitNotice>) {
         for index in simled_indexes(&self.simled) {
-            self.write_simled_blank(index);
+            notices.extend(self.write_simled_blank(index));
         }
     }
 
-    fn write_simled_blank(&mut self, index: usize) {
+    fn write_simled_blank(&mut self, index: usize) -> Vec<InitNotice> {
         let Some(settings) = self.simled_settings(index) else {
-            return;
+            return Vec::new();
         };
         let Some(packet) = serial::simled_blank(settings.total) else {
-            return;
+            return Vec::new();
         };
-        let Some(port) = self.serials.get_mut(index) else {
-            return;
-        };
-        let _ = write_serial_frame(port, &packet);
+        write_serial_optional(self.serials.get_mut(index), &packet)
     }
 
     fn write_simled_custom(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
@@ -804,11 +805,9 @@ impl LoadedDevices {
         }
         let packet = serial::simled_packet(count, &painted.leds);
         let copied = i32::try_from(packet.len()).unwrap_or(i32::MAX);
-        if let Some(port) = self.serials.get_mut(index) {
-            let _ = write_serial_frame(port, &packet);
-        }
         let mut notices = lua_led_notices(&painted);
         notices.push(notice(Level::Trace, games::arduino_copy_message(copied)));
+        notices.extend(write_serial_optional(self.serials.get_mut(index), &packet));
         notices.push(notice(
             Level::Trace,
             games::simled_custom_wrote_message(copied),
@@ -844,7 +843,10 @@ impl LoadedDevices {
 
     fn blank_serial_haptic(&mut self, notices: &mut Vec<InitNotice>) {
         for index in haptic_indexes(&self.serial_haptic) {
-            write_haptic_packet(self.serials.get_mut(index), &serial::haptic_stop_packet());
+            notices.extend(write_haptic_packet(
+                self.serials.get_mut(index),
+                &serial::haptic_stop_packet(),
+            ));
             notices.push(notice(Level::Info, games::MSG_SERIAL_HAPTIC_ZERO));
         }
     }
@@ -854,10 +856,7 @@ impl LoadedDevices {
             return Vec::new();
         }
         let report = serial::moza_r5_report(frame.rpms(), frame.maxrpm());
-        if let Some(port) = self.serials.get_mut(index) {
-            let _ = write_serial_frame(port, &report.bytes);
-        }
-        vec![
+        let mut notices = vec![
             notice(
                 Level::Debug,
                 games::moza_r5_copy_message(serial::MOZA_R5_PACKET_LEN),
@@ -866,7 +865,12 @@ impl LoadedDevices {
                 Level::Trace,
                 games::moza_r5_write_message(&report.bytes, report.rpm, report.maxrpm),
             ),
-        ]
+        ];
+        notices.extend(write_serial_optional(
+            self.serials.get_mut(index),
+            &report.bytes,
+        ));
+        notices
     }
 
     fn write_moza_ks(&mut self, index: usize, frame: &Telemetry) -> Vec<InitNotice> {
@@ -885,13 +889,14 @@ impl LoadedDevices {
         let Some(port) = self.serials.get_mut(index) else {
             return Vec::new();
         };
+        let mut notices = Vec::new();
         if let Some(colors) = step.flag_colors {
             for packet in colors {
-                let _ = write_serial_frame(port, &packet);
+                notices.extend(write_serial_frame(port, &packet).notices);
             }
         }
-        let _ = write_serial_frame(port, &step.mask);
-        vec![
+        notices.extend(write_serial_frame(port, &step.mask).notices);
+        notices.extend([
             notice(
                 Level::Debug,
                 games::moza_r5_copy_message(serial::MOZA_KS_MASK_LEN),
@@ -900,7 +905,8 @@ impl LoadedDevices {
                 Level::Trace,
                 games::moza_r5_write_message(&step.mask, step.rpm, step.maxrpm),
             ),
-        ]
+        ]);
+        notices
     }
 
     fn write_moza(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
@@ -912,7 +918,8 @@ impl LoadedDevices {
         };
         let mut notices = moza_step_notices(&step);
         let wrote = write_serial_frames(self.serials.get_mut(index), &step.frames);
-        if step.rpm_sent && !wrote {
+        notices.extend(wrote.notices);
+        if step.rpm_sent && !wrote.ok {
             disarm_wheel(&mut self.wheels, index);
             notices.push(notice(Level::Warn, games::MSG_MOZA_RPM_FAILED));
         }
@@ -1030,38 +1037,103 @@ fn sound_tick_message(step: &sound::SoundTick) -> String {
     }
 }
 
-fn write_serial_frames(port: Option<&mut SerialPort>, frames: &[Vec<u8>]) -> bool {
+fn write_serial_frames(port: Option<&mut SerialPort>, frames: &[Vec<u8>]) -> SerialIo {
     let Some(port) = port else {
-        return false;
+        return SerialIo::failed();
     };
     if frames.is_empty() {
-        return true;
+        return SerialIo::empty_ok();
     }
-    let mut last_ok = true;
+    let mut notices = Vec::new();
+    let mut ok = true;
     for frame in frames {
-        last_ok = write_serial_frame(port, frame);
+        let wrote = write_serial_frame(port, frame);
+        notices.extend(wrote.notices);
+        ok = wrote.ok;
     }
-    last_ok
+    SerialIo { ok, notices }
 }
 
 fn write_arduino_message(port: Option<&mut SerialPort>, message: &str) -> Vec<InitNotice> {
     let copied = i32::try_from(message.len()).unwrap_or(i32::MAX);
-    if let Some(port) = port {
-        let _ = write_serial_frame(port, message.as_bytes());
+    let mut notices = vec![notice(Level::Trace, games::arduino_copy_message(copied))];
+    notices.extend(write_serial_optional(port, message.as_bytes()));
+    notices.push(notice(
+        Level::Trace,
+        games::arduino_custom_wrote_message(message, copied),
+    ));
+    notices
+}
+
+struct SerialIo {
+    ok: bool,
+    notices: Vec<InitNotice>,
+}
+
+impl SerialIo {
+    fn empty_ok() -> Self {
+        Self {
+            ok: true,
+            notices: Vec::new(),
+        }
     }
+
+    fn failed() -> Self {
+        Self {
+            ok: false,
+            notices: Vec::new(),
+        }
+    }
+}
+
+fn write_serial_optional(port: Option<&mut SerialPort>, frame: &[u8]) -> Vec<InitNotice> {
+    let Some(port) = port else {
+        return Vec::new();
+    };
+    write_serial_frame(port, frame).notices
+}
+
+fn write_serial_frame(port: &mut SerialPort, frame: &[u8]) -> SerialIo {
+    let SerialPort::Shared(shared) = port else {
+        return SerialIo::failed();
+    };
+    let mut notices = serial_slot_notices(shared);
+    let ok = write_shared_bytes(shared, frame);
+    let result = serial_io_result(ok, frame.len());
+    notices.push(notice(
+        Level::Trace,
+        games::serial_io_result_message(result),
+    ));
+    SerialIo { ok, notices }
+}
+
+fn serial_slot_notices(shared: &SharedSerial) -> Vec<InitNotice> {
     vec![
-        notice(Level::Trace, games::arduino_copy_message(copied)),
         notice(
             Level::Trace,
-            games::arduino_custom_wrote_message(message, copied),
+            games::serial_device_id_message(shared.id.get()),
+        ),
+        notice(
+            Level::Trace,
+            games::serial_port_state_message(&shared.path, SERIAL_PORT_OPEN, SERIAL_OPENFAIL_FALSE),
         ),
     ]
 }
 
-fn write_serial_frame(port: &mut SerialPort, frame: &[u8]) -> bool {
+fn serial_wait_event_notices(port: &SerialPort) -> Vec<InitNotice> {
     let SerialPort::Shared(shared) = port else {
-        return false;
+        return Vec::new();
     };
+    vec![
+        notice(
+            Level::Trace,
+            games::serial_device_id_message(shared.id.get()),
+        ),
+        notice(Level::Debug, games::MSG_SET_EVENT_ON_PORT),
+    ]
+}
+
+fn write_shared_bytes(shared: &SharedSerial, frame: &[u8]) -> bool {
     match &shared.body {
         SharedBody::Live(port) => port.borrow_mut().write(frame).is_ok(),
         SharedBody::Captured { frames, .. } => {
@@ -1069,6 +1141,13 @@ fn write_serial_frame(port: &mut SerialPort, frame: &[u8]) -> bool {
             true
         }
     }
+}
+
+fn serial_io_result(ok: bool, size: usize) -> i32 {
+    if !ok {
+        return SERIAL_IO_FAILED;
+    }
+    i32::try_from(size).unwrap_or(i32::MAX)
 }
 
 pub fn profile_index(profile_count: usize, requested: i32) -> Option<usize> {
@@ -1414,6 +1493,7 @@ enum SharedBody {
 }
 
 struct SharedSerial {
+    id: Cell<i32>,
     path: String,
     baud: u32,
     refs: Cell<u32>,
@@ -1440,11 +1520,15 @@ impl SerialRegistry {
     }
 
     fn insert(&mut self, shared: Rc<SharedSerial>) -> bool {
-        let Some(slot) = self.slots.iter_mut().find(|slot| slot_is_free(slot)) else {
-            return false;
-        };
-        *slot = Some(shared);
-        true
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            if !slot_is_free(slot) {
+                continue;
+            }
+            shared.id.set(slot_id(index));
+            *slot = Some(shared);
+            return true;
+        }
+        false
     }
 }
 
@@ -1466,8 +1550,13 @@ fn shared_named(slot: &Option<Rc<SharedSerial>>, path: &str) -> Option<Rc<Shared
     None
 }
 
+fn slot_id(index: usize) -> i32 {
+    i32::try_from(index).unwrap_or(i32::MAX)
+}
+
 fn shared_live(path: &str, baud: u32, port: RealSerial) -> Rc<SharedSerial> {
     Rc::new(SharedSerial {
+        id: Cell::new(SERIAL_SLOT_UNSET),
         path: path.to_string(),
         baud,
         refs: Cell::new(SERIAL_REF_ONE),
@@ -1477,6 +1566,7 @@ fn shared_live(path: &str, baud: u32, port: RealSerial) -> Rc<SharedSerial> {
 
 fn shared_captured(path: &str, baud: u32, led_reply: Option<Vec<u8>>) -> Rc<SharedSerial> {
     Rc::new(SharedSerial {
+        id: Cell::new(SERIAL_SLOT_UNSET),
         path: path.to_string(),
         baud,
         refs: Cell::new(SERIAL_REF_ONE),
@@ -3570,11 +3660,8 @@ fn serial_haptic_tick_notices(tick: &SerialHapticTick) -> Vec<InitNotice> {
     notices
 }
 
-fn write_haptic_packet(port: Option<&mut SerialPort>, packet: &[u8]) {
-    let Some(port) = port else {
-        return;
-    };
-    let _ = write_serial_frame(port, packet);
+fn write_haptic_packet(port: Option<&mut SerialPort>, packet: &[u8]) -> Vec<InitNotice> {
+    write_serial_optional(port, packet)
 }
 
 fn haptic_indexes(haptics: &[Option<SerialHaptic>]) -> Vec<usize> {
@@ -3858,7 +3945,7 @@ fn query_captured_simled(port: &mut SerialPort) -> SimLedQuery {
     let mut notices = Vec::new();
     for _attempt in 0..serial::SIMLED_QUERY_ATTEMPTS {
         record_count_attempt(&mut notices);
-        let _ = write_serial_frame(port, &serial::simled_count_query());
+        send_simled_count_query(port, &mut notices);
         if let Some(done) = count_from_reply(&reply, &mut notices) {
             return done;
         }
@@ -3870,7 +3957,7 @@ fn query_live_simled(port: &mut SerialPort) -> SimLedQuery {
     let mut notices = Vec::new();
     for _attempt in 0..serial::SIMLED_QUERY_ATTEMPTS {
         record_count_attempt(&mut notices);
-        let _ = write_serial_frame(port, &serial::simled_count_query());
+        send_simled_count_query(port, &mut notices);
         if let Some(done) = live_count_step(port, &mut notices) {
             return done;
         }
@@ -3911,6 +3998,12 @@ fn count_from_reply(reply: &[u8], notices: &mut Vec<InitNotice>) -> Option<SimLe
 fn record_count_attempt(notices: &mut Vec<InitNotice>) {
     notices.push(notice(Level::Info, games::MSG_SIMLED_COUNT_ATTEMPT));
     notices.push(notice(Level::Debug, games::MSG_SIMLED_COUNT_SEND));
+}
+
+fn send_simled_count_query(port: &mut SerialPort, notices: &mut Vec<InitNotice>) {
+    notices.extend(serial_wait_event_notices(port));
+    notices.extend(write_serial_frame(port, &serial::simled_count_query()).notices);
+    notices.extend(serial_wait_event_notices(port));
 }
 
 fn captured_led_reply(port: &SerialPort) -> Vec<u8> {
@@ -4202,18 +4295,20 @@ fn consider_moza_ks(
 fn finish_moza_ks(
     entry: &DeviceEntry,
     id: i32,
-    notices: Vec<InitNotice>,
+    mut notices: Vec<InitNotice>,
     mut port: SerialPort,
 ) -> Considered {
-    if !write_ks_init(&mut port) {
+    if !write_ks_init(&mut port, &mut notices) {
         return reject_opened_serial(port, notices);
     }
     moza_ks_ready(entry, id, notices, port)
 }
 
-fn write_ks_init(port: &mut SerialPort) -> bool {
+fn write_ks_init(port: &mut SerialPort, notices: &mut Vec<InitNotice>) -> bool {
     for packet in serial::moza_ks_init_colors() {
-        if !write_serial_frame(port, &packet) {
+        let wrote = write_serial_frame(port, &packet);
+        notices.extend(wrote.notices);
+        if !wrote.ok {
             return false;
         }
     }
@@ -4419,7 +4514,8 @@ fn finish_moza(
     let mut wheel = MozaNewWheel::new();
     let step = wheel.prepare(now_ns);
     let wrote = write_serial_frames(Some(&mut port), &step.frames);
-    if wheel.armed() && wrote {
+    notices.extend(wrote.notices);
+    if wheel.armed() && wrote.ok {
         notices.push(notice(Level::Info, games::moza_opened_message(&path)));
     } else {
         wheel.disarm();
@@ -5686,6 +5782,21 @@ mod tests {
             &tick,
             &games::arduino_copy_message(serial::SHIFT_PACKET_LEN)
         ));
+        const FIRST_SERIAL_SLOT: i32 = 0;
+        let serial_id = games::serial_device_id_message(FIRST_SERIAL_SLOT);
+        let serial_state =
+            games::serial_port_state_message(PORT, SERIAL_PORT_OPEN, SERIAL_OPENFAIL_FALSE);
+        let serial_io = games::serial_io_result_message(serial::SHIFT_PACKET_LEN);
+        assert!(notice_has_level(&tick, Level::Trace, &serial_id));
+        assert!(notice_has_level(&tick, Level::Trace, &serial_state));
+        assert!(notice_has_level(&tick, Level::Trace, &serial_io));
+        assert!(notice_before(
+            &tick,
+            &games::arduino_copy_message(serial::SHIFT_PACKET_LEN),
+            &serial_id
+        ));
+        assert!(notice_before(&tick, &serial_id, &serial_state));
+        assert!(notice_before(&tick, &serial_state, &serial_io));
         let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
         let repeated = {
             let frames = devices.captured_serial(0).expect("captured");
@@ -6538,6 +6649,22 @@ mod tests {
             notice_count(&loaded.notices, games::MSG_SIMLED_COUNT_ATTEMPT),
             serial::SIMLED_QUERY_ATTEMPTS
         );
+        const WAIT_EVENTS_PER_QUERY: usize = 2;
+        assert_eq!(
+            notice_count(&loaded.notices, games::MSG_SET_EVENT_ON_PORT),
+            serial::SIMLED_QUERY_ATTEMPTS * WAIT_EVENTS_PER_QUERY
+        );
+        const FIRST_SERIAL_SLOT: i32 = 0;
+        assert!(notice_before(
+            &loaded.notices,
+            games::MSG_SIMLED_COUNT_SEND,
+            &games::serial_device_id_message(FIRST_SERIAL_SLOT)
+        ));
+        assert!(notice_before(
+            &loaded.notices,
+            &games::serial_device_id_message(FIRST_SERIAL_SLOT),
+            games::MSG_SET_EVENT_ON_PORT
+        ));
         assert!(notice_has(
             &loaded.notices,
             &games::simled_count_message(SIMLED_COUNT_UNSET)
