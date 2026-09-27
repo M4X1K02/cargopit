@@ -557,6 +557,28 @@ pub fn sound_noise_message(noise: i64) -> String {
     format!("noise is: {noise}")
 }
 
+pub fn engine_rumble_message(rpm: u32, firing: f64, tone: f64, throttle: f64, amp: u32) -> String {
+    format!(
+        "engine rumble rpm {rpm} firing {firing:.6} tone {tone:.6} throttle {throttle:.6} amp {amp}"
+    )
+}
+
+pub fn gear_frequency_message(frequency: f64) -> String {
+    format!("set gear frequency to {frequency:.6}")
+}
+
+pub fn continuous_tone_message(level: f64, frequency: f64, amp: u32) -> String {
+    format!("continuous tone level {level:.6} freq {frequency:.6} amp {amp}")
+}
+
+pub fn abs_vibration_message(level: f64, frequency: f64, amp: u32, pulse: f64) -> String {
+    format!("abs vibration level {level:.6} freq {frequency:.6} amp {amp} pulse {pulse:.6}")
+}
+
+pub fn suspension_vibration_message(level: f64, frequency: f64, amp: u32) -> String {
+    format!("suspension vibration level {level:.6} freq {frequency:.6} amp {amp}")
+}
+
 pub fn sound_node_message(name: &str) -> String {
     format!("sound stream node name is: {name}")
 }
@@ -1276,6 +1298,26 @@ mod tests {
         assert_eq!(sound_channel_mask_message(3), "channel mask is: 3");
         assert_eq!(sound_channels_message(2), "channels is: 2");
         assert_eq!(sound_noise_message(0), "noise is: 0");
+        assert_eq!(
+            engine_rumble_message(3000, 100.0, 40.0, 1.0, 100),
+            "engine rumble rpm 3000 firing 100.000000 tone 40.000000 throttle 1.000000 amp 100"
+        );
+        assert_eq!(
+            gear_frequency_message(50.0),
+            "set gear frequency to 50.000000"
+        );
+        assert_eq!(
+            continuous_tone_message(0.5, 50.0, 50),
+            "continuous tone level 0.500000 freq 50.000000 amp 50"
+        );
+        assert_eq!(
+            abs_vibration_message(0.25, 50.0, 25, 8.0),
+            "abs vibration level 0.250000 freq 50.000000 amp 25 pulse 8.000000"
+        );
+        assert_eq!(
+            suspension_vibration_message(0.25, 50.0, 25),
+            "suspension vibration level 0.250000 freq 50.000000 amp 25"
+        );
         assert_eq!(
             sound_node_message("cargopit.TyreLock.All"),
             "sound stream node name is: cargopit.TyreLock.All"

@@ -16,8 +16,8 @@
 //! count, loads its Lua file, and writes a script-painted packet on each tick. A custom Arduino
 //! loads its Lua file and writes the script Message on each tick. Serial devices that name the
 //! same port share one open, keep the baud from the first open, and close when the last device
-//! releases. A sound device logs the C init sequence, connects its Pulse playback stream, and
-//! renders haptic samples on each tick.
+//! releases. A sound device logs the C init sequence, connects its Pulse playback stream, writes
+//! the C tick slog lines, and renders haptic samples on each tick.
 
 use std::cell::{Cell, RefCell};
 use std::fs::OpenOptions;
@@ -34,7 +34,7 @@ use cargopit_devices::clock::{SystemClock, VirtualClock};
 use cargopit_devices::haptic::{HapticEffect, HapticSettings, TyreId, VibrationEffect};
 use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedMode};
 use cargopit_devices::serial::{self, MozaKsWheel, MozaNewWheel};
-use cargopit_devices::sound::SharedShaker;
+use cargopit_devices::sound::{self, SharedShaker};
 use cargopit_devices::telemetry::Telemetry;
 use cargopit_devices::transport::{PulseSession, RealHid, RealSerial, ShakerRequest, ShareWarning};
 use cargopit_devices::usb::{self, TachPulses};
@@ -251,7 +251,7 @@ impl LoadedDevices {
         notices.extend(self.write_csl(index, frame, now_ns));
         notices.extend(self.write_p1000(index, frame, now_ns));
         notices.extend(self.write_simnet(index, frame, now_ns));
-        self.update_sound(index, frame, now_ns);
+        notices.extend(self.write_sound(index, frame, now_ns));
         notices
     }
 
@@ -297,12 +297,15 @@ impl LoadedDevices {
             .unwrap_or(tick_interval_ms(DEFAULT_DEVICE_FPS))
     }
 
-    fn update_sound(&mut self, index: usize, frame: &Telemetry, now_ns: u64) {
+    fn write_sound(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
         let Some(Some(voice)) = self.voices.get(index) else {
-            return;
+            return Vec::new();
         };
         let mut voice = voice.lock().unwrap_or_else(|poison| poison.into_inner());
-        voice.update(frame, &VirtualClock::from_monotonic_ns(now_ns));
+        let Some(step) = voice.update(frame, &VirtualClock::from_monotonic_ns(now_ns)) else {
+            return Vec::new();
+        };
+        vec![notice(Level::Trace, sound_tick_message(&step))]
     }
 
     fn write_g29(&mut self, index: usize, rpm: u32, maxrpm: u32) -> Vec<InitNotice> {
@@ -918,6 +921,28 @@ fn moza_step_notices(step: &cargopit_devices::serial::MozaNewStep) -> Vec<InitNo
         notices.push(notice(Level::Warn, games::MSG_MOZA_RPM_FAILED));
     }
     notices
+}
+
+fn sound_tick_message(step: &sound::SoundTick) -> String {
+    match step {
+        sound::SoundTick::Engine(tick) => games::engine_rumble_message(
+            tick.rpm,
+            tick.firing_hz,
+            tick.tone_hz,
+            tick.throttle,
+            tick.amplitude,
+        ),
+        sound::SoundTick::Gear(tick) => games::gear_frequency_message(tick.frequency),
+        sound::SoundTick::Continuous(tick) => {
+            games::continuous_tone_message(tick.level, tick.frequency, tick.amplitude)
+        }
+        sound::SoundTick::Abs(tick) => {
+            games::abs_vibration_message(tick.level, tick.frequency, tick.amplitude, tick.pulse_hz)
+        }
+        sound::SoundTick::Suspension(tick) => {
+            games::suspension_vibration_message(tick.level, tick.frequency, tick.amplitude)
+        }
+    }
 }
 
 fn write_serial_frames(port: Option<&mut SerialPort>, frames: &[Vec<u8>]) -> bool {
@@ -7640,8 +7665,171 @@ mod tests {
         frame.set_maxrpm(ENGINE_MAX);
         frame.set_gas(ENGINE_THROTTLE);
         let mut devices = loaded.devices;
-        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let rumble = expected_sound_tick(VibrationEffect::EngineRpm, &frame, SOUND_TICK_NS);
+        let tick = devices.tick(0, &frame, SOUND_TICK_NS);
+        assert!(notice_has(&tick, &rumble));
         let played = devices.rendered_sound(0, nbytes).expect("voice");
         assert!(played.iter().any(|byte| *byte != 0));
+        let idle = Telemetry::new();
+        let silent_tick = devices.tick(0, &idle, SOUND_NEXT_NS);
+        assert!(notice_absent(&silent_tick, &rumble));
+    }
+
+    #[test]
+    fn sound_tick_logs_a_gear_change() {
+        const SECOND: u32 = 2;
+        let loaded = open_profile_at(
+            &sound_profile(sound_entry("Gear", None)),
+            0,
+            false,
+            PROBE_OPEN_NS,
+            true,
+            None,
+        );
+        let mut frame = Telemetry::new();
+        frame.set_gear(SECOND);
+        let mut devices = loaded.devices;
+        let expected = expected_sound_tick(VibrationEffect::GearShift, &frame, SOUND_TICK_NS);
+        let tick = devices.tick(0, &frame, SOUND_TICK_NS);
+        assert!(notice_has(&tick, &expected));
+        let again = devices.tick(0, &frame, SOUND_NEXT_NS);
+        assert!(notice_absent(&again, &expected));
+    }
+
+    #[test]
+    fn sound_tick_logs_a_slip_tone() {
+        let loaded = open_haptic_sound("TyreSlip");
+        let frame = moving_sound_frame(SOUND_GAS, SOUND_COAST_BRAKE, SOUND_SPIN);
+        let mut devices = loaded.devices;
+        let expected = expected_sound_tick(VibrationEffect::TyreSlip, &frame, SOUND_TICK_NS);
+        let tick = devices.tick(0, &frame, SOUND_TICK_NS);
+        assert!(notice_has(&tick, &expected));
+    }
+
+    #[test]
+    fn sound_tick_logs_a_lock_tone() {
+        let loaded = open_haptic_sound("TyreLock");
+        let frame = moving_sound_frame(SOUND_COAST_GAS, SOUND_BRAKE, SOUND_LOCK);
+        let mut devices = loaded.devices;
+        let expected = expected_sound_tick(VibrationEffect::TyreLock, &frame, SOUND_TICK_NS);
+        let tick = devices.tick(0, &frame, SOUND_TICK_NS);
+        assert!(notice_has(&tick, &expected));
+    }
+
+    #[test]
+    fn sound_tick_logs_an_abs_pulse() {
+        let loaded = open_haptic_sound("ABS");
+        let first = moving_sound_frame(SOUND_COAST_GAS, SOUND_BRAKE, SOUND_LOCK);
+        let second = moving_sound_frame(SOUND_COAST_GAS, SOUND_BRAKE, SOUND_LOCK_MORE);
+        let mut devices = loaded.devices;
+        let expected = expected_two_tick_sound(VibrationEffect::AbsBrakes, &first, &second);
+        let silent = devices.tick(0, &first, SOUND_TICK_NS);
+        assert!(notice_absent(&silent, &expected));
+        let tick = devices.tick(0, &second, SOUND_NEXT_NS);
+        assert!(notice_has(&tick, &expected));
+    }
+
+    #[test]
+    fn sound_tick_logs_a_suspension_spike() {
+        let loaded = open_haptic_sound("Suspension");
+        let first = suspension_frame(SOUND_SUSP_BASE);
+        let second = suspension_frame(SOUND_SUSP_SPIKE);
+        let mut devices = loaded.devices;
+        let expected = expected_two_tick_sound(VibrationEffect::Suspension, &first, &second);
+        let silent = devices.tick(0, &first, SOUND_TICK_NS);
+        assert!(notice_absent(&silent, &expected));
+        let tick = devices.tick(0, &second, SOUND_NEXT_NS);
+        assert!(notice_has(&tick, &expected));
+    }
+
+    const SOUND_TICK_NS: u64 = 16_000_000;
+    const SOUND_NEXT_NS: u64 = SOUND_TICK_NS + SOUND_TICK_NS;
+    const SOUND_SPEED: u32 = 80;
+    const SOUND_Y: f64 = 1.0;
+    const SOUND_GAS: f64 = 0.2;
+    const SOUND_BRAKE: f64 = 0.2;
+    const SOUND_COAST_GAS: f64 = 0.0;
+    const SOUND_COAST_BRAKE: f64 = 0.0;
+    const SOUND_NO_SLIP: f64 = 0.0;
+    const SOUND_SPIN: f64 = -0.4;
+    const SOUND_LOCK: f64 = 0.4;
+    const SOUND_LOCK_MORE: f64 = 0.8;
+    const SOUND_SUSP_BASE: f64 = 0.2;
+    const SOUND_SUSP_SPIKE: f64 = 5.0;
+    const SOUND_TYRE_ALL: &str = "ALL";
+
+    fn open_haptic_sound(effect: &str) -> ProfileLoad {
+        open_profile_at(
+            &sound_profile(sound_entry(effect, Some(SOUND_TYRE_ALL))),
+            0,
+            false,
+            PROBE_OPEN_NS,
+            true,
+            None,
+        )
+    }
+
+    fn moving_sound_frame(gas: f64, brake: f64, slip: f64) -> Telemetry {
+        let mut frame = Telemetry::new();
+        frame.set_velocity(SOUND_SPEED);
+        frame.set_y_velocity(SOUND_Y);
+        frame.set_gas(gas);
+        frame.set_brake(brake);
+        frame.set_tyre_slip(WHEEL_FRONT_LEFT, slip);
+        frame
+    }
+
+    fn suspension_frame(velocity: f64) -> Telemetry {
+        let mut frame = moving_sound_frame(SOUND_COAST_GAS, SOUND_COAST_BRAKE, SOUND_NO_SLIP);
+        frame.set_susp_velocity(WHEEL_FRONT_LEFT, velocity);
+        frame
+    }
+
+    fn sound_frequency() -> u32 {
+        u32::try_from(SOUND_FREQUENCY).unwrap_or(0)
+    }
+
+    fn sound_noise_hz() -> f64 {
+        f64::from(i32::try_from(SOUND_NOISE).unwrap_or(0))
+    }
+
+    fn probe_voice(effect: VibrationEffect) -> sound::ShakerVoice {
+        sound::ShakerVoice::new(
+            HapticSettings {
+                effect,
+                frequency: sound_frequency(),
+                amplitude: u32::try_from(sound_host::SOUND_AMPLITUDE_UNITY).unwrap_or(0),
+                duration: SOUND_DURATION_S,
+                ..HapticSettings::default()
+            },
+            u8::try_from(SOUND_CHANNELS).unwrap_or(1),
+            sound_noise_hz(),
+        )
+    }
+
+    fn expected_sound_tick(effect: VibrationEffect, frame: &Telemetry, now_ns: u64) -> String {
+        let mut voice = probe_voice(effect);
+        expected_voice_tick(&mut voice, frame, now_ns)
+    }
+
+    fn expected_two_tick_sound(
+        effect: VibrationEffect,
+        first: &Telemetry,
+        second: &Telemetry,
+    ) -> String {
+        let mut voice = probe_voice(effect);
+        let _ = voice.update(first, &VirtualClock::from_monotonic_ns(SOUND_TICK_NS));
+        expected_voice_tick(&mut voice, second, SOUND_NEXT_NS)
+    }
+
+    fn expected_voice_tick(
+        voice: &mut sound::ShakerVoice,
+        frame: &Telemetry,
+        now_ns: u64,
+    ) -> String {
+        let step = voice
+            .update(frame, &VirtualClock::from_monotonic_ns(now_ns))
+            .expect("sound tick");
+        sound_tick_message(&step)
     }
 }

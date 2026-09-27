@@ -34,6 +34,9 @@ const SECONDS_PER_MINUTE: f64 = 60.0;
 const ENGINE_IDLE_AMP: f64 = 0.20;
 const ENGINE_LOAD_WEIGHT: f64 = 0.75;
 const ENGINE_RPM_WEIGHT: f64 = 0.12;
+const ENGINE_HARMONIC2_GAIN: f64 = 0.0;
+const ENGINE_HARMONIC3_GAIN: f64 = 0.0;
+const ENGINE_PULSE_DEPTH: f64 = 0.0;
 const GEAR_DECAY_K: f64 = 3.0;
 const GEAR_DURATION_S: f64 = 0.10;
 const GEAR_NEUTRAL: u32 = 1;
@@ -63,6 +66,44 @@ const CLOCK_OP: &str = concat!("clock_", "gettime");
 
 pub type SharedShaker = Arc<Mutex<ShakerVoice>>;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SoundTick {
+    Engine(SoundEngineTick),
+    Gear(SoundGearTick),
+    Continuous(SoundToneTick),
+    Abs(SoundAbsTick),
+    Suspension(SoundToneTick),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SoundEngineTick {
+    pub rpm: u32,
+    pub firing_hz: f64,
+    pub tone_hz: f64,
+    pub throttle: f64,
+    pub amplitude: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SoundGearTick {
+    pub frequency: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SoundToneTick {
+    pub level: f64,
+    pub frequency: f64,
+    pub amplitude: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SoundAbsTick {
+    pub level: f64,
+    pub frequency: f64,
+    pub amplitude: u32,
+    pub pulse_hz: f64,
+}
+
 pub struct ShakerVoice {
     tone: Tone,
     channels: usize,
@@ -76,8 +117,8 @@ impl ShakerVoice {
         Self { tone, channels }
     }
 
-    pub fn update(&mut self, frame: &Telemetry, clock: &impl Clock) {
-        self.tone.update(frame, clock);
+    pub fn update(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
+        self.tone.update(frame, clock)
     }
 
     pub fn render(&mut self, nbytes: usize) -> Vec<u8> {
@@ -304,23 +345,23 @@ impl Tone {
         }
     }
 
-    fn update(&mut self, frame: &Telemetry, clock: &impl Clock) {
+    fn update(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
         match self.effect {
             VibrationEffect::EngineRpm => self.update_engine(frame),
             VibrationEffect::GearShift => self.update_gear(frame),
             VibrationEffect::TyreSlip | VibrationEffect::TyreLock => {
-                self.update_continuous(frame, clock, SLIP_PLAY_REF);
+                self.update_continuous(frame, clock, SLIP_PLAY_REF)
             }
             VibrationEffect::AbsBrakes => self.update_abs(frame, clock),
             VibrationEffect::Suspension => self.update_suspension(frame, clock),
         }
     }
 
-    fn update_engine(&mut self, frame: &Telemetry) {
+    fn update_engine(&mut self, frame: &Telemetry) -> Option<SoundTick> {
         let rpm = engine_play_rpm(frame);
         if rpm == 0 || frame.maxrpm() == 0 {
             self.silence_engine();
-            return;
+            return None;
         }
         let amp = engine_amp_frac(frame.gas(), rpm, frame.maxrpm());
         self.duration = 0.0;
@@ -332,10 +373,17 @@ impl Tone {
             f64::from(self.frequency_max),
         );
         self.curr_amplitude = amplitude_from_level(amp);
-        self.harmonic2_gain = 0.0;
-        self.harmonic3_gain = 0.0;
-        self.pulse_depth = 0.0;
+        self.harmonic2_gain = ENGINE_HARMONIC2_GAIN;
+        self.harmonic3_gain = ENGINE_HARMONIC3_GAIN;
+        self.pulse_depth = ENGINE_PULSE_DEPTH;
         self.pulse_hz = 0.0;
+        Some(SoundTick::Engine(SoundEngineTick {
+            rpm,
+            firing_hz: engine_firing_hz(rpm),
+            tone_hz: self.curr_frequency,
+            throttle: frame.gas(),
+            amplitude: self.curr_amplitude,
+        }))
     }
 
     fn silence_engine(&mut self) {
@@ -344,9 +392,9 @@ impl Tone {
         self.pulse_hz = 0.0;
     }
 
-    fn update_gear(&mut self, frame: &Telemetry) {
+    fn update_gear(&mut self, frame: &Telemetry) -> Option<SoundTick> {
         if self.last_gear == frame.gear() {
-            return;
+            return None;
         }
         self.last_gear = frame.gear();
         self.curr_frequency = f64::from(self.frequency);
@@ -356,43 +404,60 @@ impl Tone {
         self.play_frequency = self.curr_frequency;
         self.play_amplitude = f64::from(self.curr_amplitude);
         self.play_gain = 1.0;
+        Some(SoundTick::Gear(SoundGearTick {
+            frequency: self.curr_frequency,
+        }))
     }
 
-    fn update_continuous(&mut self, frame: &Telemetry, clock: &impl Clock, play_ref: f64) {
+    fn update_continuous(
+        &mut self,
+        frame: &Telemetry,
+        clock: &impl Clock,
+        play_ref: f64,
+    ) -> Option<SoundTick> {
         let play = self.haptic.play_with_clock(frame, clock);
-        if play <= 0.0 || play_ref <= 0.0 {
+        let Some(level) = play_level(play, play_ref) else {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
             self.curr_duration = 0.0;
-            return;
-        }
-        let level = clamp_unit(play / play_ref);
+            return None;
+        };
         self.duration = 0.0;
         self.curr_frequency = f64::from(self.frequency);
         self.curr_amplitude = amplitude_from_level(level);
+        Some(SoundTick::Continuous(SoundToneTick {
+            level,
+            frequency: self.curr_frequency,
+            amplitude: self.curr_amplitude,
+        }))
     }
 
-    fn update_abs(&mut self, frame: &Telemetry, clock: &impl Clock) {
+    fn update_abs(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
         let play = self.haptic.play_with_clock(frame, clock);
-        if play <= 0.0 {
+        let Some(level) = play_level(play, ABS_PLAY_REF) else {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
             self.curr_duration = 0.0;
             self.pulse_hz = 0.0;
             self.pulse_depth = 0.0;
             self.pulse_duty = 0.0;
-            return;
-        }
-        let level = clamp_unit(play / ABS_PLAY_REF);
+            return None;
+        };
         self.duration = 0.0;
         self.curr_frequency = f64::from(self.frequency);
         self.curr_amplitude = amplitude_from_level(level);
         self.pulse_hz = ABS_PULSE_HZ;
         self.pulse_depth = ABS_PULSE_DEPTH;
         self.pulse_duty = ABS_PULSE_DUTY;
+        Some(SoundTick::Abs(SoundAbsTick {
+            level,
+            frequency: self.curr_frequency,
+            amplitude: self.curr_amplitude,
+            pulse_hz: self.pulse_hz,
+        }))
     }
 
-    fn update_suspension(&mut self, frame: &Telemetry, clock: &impl Clock) {
+    fn update_suspension(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
         if !chassis_is_rolling(frame) {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
@@ -401,16 +466,15 @@ impl Tone {
             self.play_gain = 0.0;
             self.play_frequency = 0.0;
             self.play_amplitude = 0.0;
-            return;
+            return None;
         }
         let effect = self.haptic.play_with_clock(frame, clock);
-        if effect <= 0.0 {
+        let Some(level) = play_level(effect, SUSP_PLAY_REF) else {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
-            return;
-        }
-        let mut level = clamp_unit(effect / SUSP_PLAY_REF);
-        level = level.powf(SUSP_GAMMA);
+            return None;
+        };
+        let level = level.powf(SUSP_GAMMA);
         let fmin = self.frequency;
         let mut fmax = self.frequency_max;
         if fmax < fmin {
@@ -419,6 +483,11 @@ impl Tone {
         self.duration = 0.0;
         self.curr_frequency = f64::from(fmin) + (f64::from(fmax) - f64::from(fmin)) * level;
         self.curr_amplitude = amplitude_from_level(level);
+        Some(SoundTick::Suspension(SoundToneTick {
+            level,
+            frequency: self.curr_frequency,
+            amplitude: self.curr_amplitude,
+        }))
     }
 
     fn render(&mut self) -> Vec<u8> {
@@ -571,6 +640,13 @@ fn coeffs() -> Coeff {
 
 fn clamp_unit(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
+}
+
+fn play_level(play: f64, play_ref: f64) -> Option<f64> {
+    if play <= 0.0 || play_ref <= 0.0 {
+        return None;
+    }
+    Some(clamp_unit(play / play_ref))
 }
 
 fn apply_noise(base: f64, noise: f64) -> f64 {
@@ -751,22 +827,170 @@ mod tests {
 
     #[test]
     fn engine_update_renders_samples() {
-        let mut voice = ShakerVoice::new(
-            capture_settings(VibrationEffect::EngineRpm),
-            ENGINE_CHANNELS,
-            NOISE_OFF,
-        );
+        let mut voice = engine_voice();
         let silent = voice.render(RENDER_BYTES);
         assert!(silent.iter().all(|byte| *byte == 0));
+        let frame = engine_frame();
+        let step = voice.update(&frame, &VirtualClock::new()).expect("tick");
+        let SoundTick::Engine(tick) = step else {
+            panic!("engine tick");
+        };
+        assert_eq!(tick.rpm, ENGINE_RPM);
+        assert_eq!(tick.firing_hz, engine_firing_hz(ENGINE_RPM));
+        assert_eq!(tick.throttle, ENGINE_THROTTLE);
+        assert!(tick.tone_hz > 0.0);
+        assert!(tick.amplitude > 0);
+        let played = voice.render(RENDER_BYTES);
+        assert!(played.iter().any(|byte| *byte != 0));
+    }
+
+    #[test]
+    fn engine_tick_is_silent_when_rpm_is_zero() {
+        let mut voice = engine_voice();
+        let frame = Telemetry::new();
+        assert!(voice.update(&frame, &VirtualClock::new()).is_none());
+    }
+
+    #[test]
+    fn gear_tick_logs_when_the_gear_changes() {
+        const SECOND: u32 = 2;
+        const THIRD: u32 = 3;
+        let mut voice = effect_voice(VibrationEffect::GearShift);
+        let mut frame = Telemetry::new();
+        frame.set_gear(SECOND);
+        let step = voice.update(&frame, &VirtualClock::new()).expect("tick");
+        let SoundTick::Gear(tick) = step else {
+            panic!("gear tick");
+        };
+        assert_eq!(tick.frequency, f64::from(HAPTIC_HZ));
+        frame.set_gear(SECOND);
+        assert!(voice.update(&frame, &VirtualClock::new()).is_none());
+        frame.set_gear(THIRD);
+        assert!(voice.update(&frame, &VirtualClock::new()).is_some());
+    }
+
+    #[test]
+    fn slip_tick_logs_a_continuous_tone() {
+        assert_continuous_tick(VibrationEffect::TyreSlip, slip_frame());
+    }
+
+    #[test]
+    fn lock_tick_logs_a_continuous_tone() {
+        assert_continuous_tick(VibrationEffect::TyreLock, lock_frame());
+    }
+
+    fn assert_continuous_tick(effect: VibrationEffect, frame: Telemetry) {
+        let mut voice = effect_voice(effect);
+        let step = voice
+            .update(&frame, &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS))
+            .expect("tick");
+        let SoundTick::Continuous(tick) = step else {
+            panic!("continuous tick");
+        };
+        assert!(tick.level > 0.0);
+        assert_eq!(tick.frequency, f64::from(HAPTIC_HZ));
+        assert!(tick.amplitude > 0);
+    }
+
+    #[test]
+    fn abs_tick_logs_the_pulse() {
+        let mut voice = effect_voice(VibrationEffect::AbsBrakes);
+        let first = abs_frame(ABS_LOCK);
+        let _ = voice.update(&first, &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS));
+        let second = abs_frame(ABS_LOCK_MORE);
+        let step = voice
+            .update(&second, &VirtualClock::from_monotonic_ns(CLOCK_NEXT_NS))
+            .expect("tick");
+        let SoundTick::Abs(tick) = step else {
+            panic!("abs tick");
+        };
+        assert!(tick.level > 0.0);
+        assert_eq!(tick.frequency, f64::from(HAPTIC_HZ));
+        assert_eq!(tick.pulse_hz, ABS_PULSE_HZ);
+    }
+
+    #[test]
+    fn suspension_tick_logs_after_a_spike() {
+        let mut voice = effect_voice(VibrationEffect::Suspension);
+        let first = suspension_frame(SUSP_BASE);
+        assert!(voice
+            .update(&first, &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS))
+            .is_none());
+        let second = suspension_frame(SUSP_SPIKE);
+        let step = voice
+            .update(&second, &VirtualClock::from_monotonic_ns(CLOCK_NEXT_NS))
+            .expect("tick");
+        let SoundTick::Suspension(tick) = step else {
+            panic!("suspension tick");
+        };
+        assert!(tick.level > 0.0);
+        assert!(tick.frequency >= f64::from(HAPTIC_HZ));
+        assert!(tick.amplitude > 0);
+    }
+
+    fn engine_voice() -> ShakerVoice {
+        effect_voice(VibrationEffect::EngineRpm)
+    }
+
+    fn effect_voice(effect: VibrationEffect) -> ShakerVoice {
+        ShakerVoice::new(capture_settings(effect), ENGINE_CHANNELS, NOISE_OFF)
+    }
+
+    fn engine_frame() -> Telemetry {
         let mut frame = Telemetry::new();
         frame.set_rpms(ENGINE_RPM);
         frame.set_idlerpm(ENGINE_IDLE);
         frame.set_maxrpm(ENGINE_MAX);
         frame.set_gas(ENGINE_THROTTLE);
-        voice.update(&frame, &VirtualClock::new());
-        let played = voice.render(RENDER_BYTES);
-        assert!(played.iter().any(|byte| *byte != 0));
+        frame
     }
+
+    fn slip_frame() -> Telemetry {
+        moving_frame(SLIP_GAS, SLIP_BRAKE, SLIP_SPIN)
+    }
+
+    fn lock_frame() -> Telemetry {
+        moving_frame(LOCK_GAS, LOCK_BRAKE, LOCK_SLIP)
+    }
+
+    fn abs_frame(lock: f64) -> Telemetry {
+        moving_frame(ABS_GAS, ABS_BRAKE, lock)
+    }
+
+    fn suspension_frame(velocity: f64) -> Telemetry {
+        let mut frame = moving_frame(LOCK_GAS, SLIP_BRAKE, STATIONARY_SLIP);
+        frame.set_susp_velocity(WHEEL_FRONT_LEFT, velocity);
+        frame
+    }
+
+    fn moving_frame(gas: f64, brake: f64, slip: f64) -> Telemetry {
+        let mut frame = Telemetry::new();
+        frame.set_velocity(MOVING_SPEED);
+        frame.set_y_velocity(MOVING_Y);
+        frame.set_gas(gas);
+        frame.set_brake(brake);
+        frame.set_tyre_slip(WHEEL_FRONT_LEFT, slip);
+        frame
+    }
+
+    const CLOCK_TICK_NS: u64 = 16_000_000;
+    const CLOCK_NEXT_NS: u64 = CLOCK_TICK_NS + CLOCK_TICK_NS;
+    const MOVING_SPEED: u32 = 80;
+    const MOVING_Y: f64 = 1.0;
+    const SLIP_GAS: f64 = 0.2;
+    const SLIP_BRAKE: f64 = 0.0;
+    const SLIP_SPIN: f64 = -0.4;
+    const LOCK_GAS: f64 = 0.0;
+    const LOCK_BRAKE: f64 = 0.2;
+    const LOCK_SLIP: f64 = 0.4;
+    const ABS_GAS: f64 = 0.0;
+    const ABS_BRAKE: f64 = 0.2;
+    const ABS_LOCK: f64 = 0.4;
+    const ABS_LOCK_MORE: f64 = 0.8;
+    const STATIONARY_SLIP: f64 = 0.0;
+    const SUSP_BASE: f64 = 0.2;
+    const SUSP_SPIKE: f64 = 5.0;
+    const WHEEL_FRONT_LEFT: usize = 0;
 
     #[test]
     fn noise_offsets_frequency_the_way_c_does() {
