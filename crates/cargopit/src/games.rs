@@ -645,6 +645,49 @@ pub fn haptic_motor_message(motor: i64) -> String {
     format!("haptic motorposition: {motor}")
 }
 
+const WHEELSLIP_FROM_SIM: &str = "wheelslip values from sim are";
+const WHEELSLIP_CALCULATED: &str = "wheelslip values are";
+
+pub fn wheelslip_from_sim_message(wheels: &[f64]) -> String {
+    wheelslip_message(WHEELSLIP_FROM_SIM, wheels)
+}
+
+pub fn wheelslip_calculated_message(wheels: &[f64]) -> String {
+    wheelslip_message(WHEELSLIP_CALCULATED, wheels)
+}
+
+fn wheelslip_message(prefix: &str, wheels: &[f64]) -> String {
+    let mut message = String::from(prefix);
+    for wheel in wheels {
+        message.push_str(&format!(" {wheel:.6}"));
+    }
+    message
+}
+
+pub fn velocities_message(x: f64, y: f64, z: f64) -> String {
+    format!("velocities (x,y,z) are {x:.6} {y:.6} {z:.6}")
+}
+
+pub fn slip_is_message(play: f64) -> String {
+    format!("slip is {play:.6}")
+}
+
+pub fn lock_is_message(play: f64) -> String {
+    format!("lock is {play:.6}")
+}
+
+pub fn abs_is_message(play: f64) -> String {
+    format!("abs is {play:.6}")
+}
+
+pub fn suspension_is_message(play: f64) -> String {
+    format!("suspension is {play:.6}")
+}
+
+pub fn unknown_effect_message(effect: i32) -> String {
+    format!("Unknown effect type {effect}")
+}
+
 pub fn sound_subtype_message(effect: i32) -> String {
     format!("Attempting to configure sound device with subtype: {effect}")
 }
@@ -1655,6 +1698,35 @@ mod tests {
         assert_eq!(haptic_frequency_message(50), "haptic base frequency: 50");
         assert_eq!(haptic_amplitude_message(100), "haptic base amplitude: 100");
         assert_eq!(haptic_motor_message(1), "haptic motorposition: 1");
+        const WHEEL_FL: f64 = 0.4;
+        const WHEEL_FR: f64 = 0.0;
+        const WHEEL_RL: f64 = -0.2;
+        const WHEEL_RR: f64 = 0.1;
+        const VELOCITY_X: f64 = 0.0;
+        const VELOCITY_Y: f64 = 1.0;
+        const VELOCITY_Z: f64 = 0.0;
+        const PLAY: f64 = 0.3;
+        const UNKNOWN_ENGINE: i32 = 0;
+        assert_eq!(
+            wheelslip_from_sim_message(&[WHEEL_FL, WHEEL_FR, WHEEL_RL, WHEEL_RR]),
+            "wheelslip values from sim are 0.400000 0.000000 -0.200000 0.100000"
+        );
+        assert_eq!(
+            wheelslip_calculated_message(&[WHEEL_FL, WHEEL_FR, WHEEL_RL, WHEEL_RR]),
+            "wheelslip values are 0.400000 0.000000 -0.200000 0.100000"
+        );
+        assert_eq!(
+            velocities_message(VELOCITY_X, VELOCITY_Y, VELOCITY_Z),
+            "velocities (x,y,z) are 0.000000 1.000000 0.000000"
+        );
+        assert_eq!(slip_is_message(PLAY), "slip is 0.300000");
+        assert_eq!(lock_is_message(PLAY), "lock is 0.300000");
+        assert_eq!(abs_is_message(PLAY), "abs is 0.300000");
+        assert_eq!(suspension_is_message(PLAY), "suspension is 0.300000");
+        assert_eq!(
+            unknown_effect_message(UNKNOWN_ENGINE),
+            "Unknown effect type 0"
+        );
         assert_eq!(
             sound_subtype_message(cargopit_config::names::EFFECT_TYRE_LOCK),
             "Attempting to configure sound device with subtype: 4"

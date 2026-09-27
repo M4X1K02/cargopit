@@ -5,7 +5,9 @@ use std::cell::{Cell, RefCell};
 use std::sync::{Arc, Mutex};
 
 use crate::clock::{Clock, VirtualClock};
-use crate::haptic::{chassis_is_rolling, HapticEffect, HapticSettings, TyreId, VibrationEffect};
+use crate::haptic::{
+    chassis_is_rolling, HapticEffect, HapticSettings, HapticTrace, TyreId, VibrationEffect,
+};
 use crate::telemetry::Telemetry;
 
 const ORIGIN_US: u64 = 1_000_000;
@@ -75,6 +77,26 @@ pub enum SoundTick {
     Suspension(SoundToneTick),
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundPlay {
+    pub tick: Option<SoundTick>,
+    pub traces: Vec<HapticTrace>,
+}
+
+fn silent_sound() -> SoundPlay {
+    SoundPlay {
+        tick: None,
+        traces: Vec::new(),
+    }
+}
+
+fn sound_tick(tick: SoundTick) -> SoundPlay {
+    SoundPlay {
+        tick: Some(tick),
+        traces: Vec::new(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SoundEngineTick {
     pub rpm: u32,
@@ -118,6 +140,10 @@ impl ShakerVoice {
     }
 
     pub fn update(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
+        self.update_traced(frame, clock).tick
+    }
+
+    pub fn update_traced(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {
         self.tone.update(frame, clock)
     }
 
@@ -345,10 +371,16 @@ impl Tone {
         }
     }
 
-    fn update(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
+    fn update(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {
         match self.effect {
-            VibrationEffect::EngineRpm => self.update_engine(frame),
-            VibrationEffect::GearShift => self.update_gear(frame),
+            VibrationEffect::EngineRpm => match self.update_engine(frame) {
+                Some(tick) => sound_tick(tick),
+                None => silent_sound(),
+            },
+            VibrationEffect::GearShift => match self.update_gear(frame) {
+                Some(tick) => sound_tick(tick),
+                None => silent_sound(),
+            },
             VibrationEffect::TyreSlip | VibrationEffect::TyreLock => {
                 self.update_continuous(frame, clock, SLIP_PLAY_REF)
             }
@@ -414,34 +446,43 @@ impl Tone {
         frame: &Telemetry,
         clock: &impl Clock,
         play_ref: f64,
-    ) -> Option<SoundTick> {
-        let play = self.haptic.play_with_clock(frame, clock);
-        let Some(level) = play_level(play, play_ref) else {
+    ) -> SoundPlay {
+        let played = self.haptic.play_with_clock_traced(frame, clock);
+        let Some(level) = play_level(played.value, play_ref) else {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
             self.curr_duration = 0.0;
-            return None;
+            return SoundPlay {
+                tick: None,
+                traces: played.traces,
+            };
         };
         self.duration = 0.0;
         self.curr_frequency = f64::from(self.frequency);
         self.curr_amplitude = amplitude_from_level(level);
-        Some(SoundTick::Continuous(SoundToneTick {
-            level,
-            frequency: self.curr_frequency,
-            amplitude: self.curr_amplitude,
-        }))
+        SoundPlay {
+            tick: Some(SoundTick::Continuous(SoundToneTick {
+                level,
+                frequency: self.curr_frequency,
+                amplitude: self.curr_amplitude,
+            })),
+            traces: played.traces,
+        }
     }
 
-    fn update_abs(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
-        let play = self.haptic.play_with_clock(frame, clock);
-        let Some(level) = play_level(play, ABS_PLAY_REF) else {
+    fn update_abs(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {
+        let played = self.haptic.play_with_clock_traced(frame, clock);
+        let Some(level) = play_level(played.value, ABS_PLAY_REF) else {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
             self.curr_duration = 0.0;
             self.pulse_hz = 0.0;
             self.pulse_depth = 0.0;
             self.pulse_duty = 0.0;
-            return None;
+            return SoundPlay {
+                tick: None,
+                traces: played.traces,
+            };
         };
         self.duration = 0.0;
         self.curr_frequency = f64::from(self.frequency);
@@ -449,15 +490,18 @@ impl Tone {
         self.pulse_hz = ABS_PULSE_HZ;
         self.pulse_depth = ABS_PULSE_DEPTH;
         self.pulse_duty = ABS_PULSE_DUTY;
-        Some(SoundTick::Abs(SoundAbsTick {
-            level,
-            frequency: self.curr_frequency,
-            amplitude: self.curr_amplitude,
-            pulse_hz: self.pulse_hz,
-        }))
+        SoundPlay {
+            tick: Some(SoundTick::Abs(SoundAbsTick {
+                level,
+                frequency: self.curr_frequency,
+                amplitude: self.curr_amplitude,
+                pulse_hz: self.pulse_hz,
+            })),
+            traces: played.traces,
+        }
     }
 
-    fn update_suspension(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
+    fn update_suspension(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {
         if !chassis_is_rolling(frame) {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
@@ -466,13 +510,16 @@ impl Tone {
             self.play_gain = 0.0;
             self.play_frequency = 0.0;
             self.play_amplitude = 0.0;
-            return None;
+            return silent_sound();
         }
-        let effect = self.haptic.play_with_clock(frame, clock);
-        let Some(level) = play_level(effect, SUSP_PLAY_REF) else {
+        let played = self.haptic.play_with_clock_traced(frame, clock);
+        let Some(level) = play_level(played.value, SUSP_PLAY_REF) else {
             self.curr_frequency = 0.0;
             self.curr_amplitude = 0;
-            return None;
+            return SoundPlay {
+                tick: None,
+                traces: played.traces,
+            };
         };
         let level = level.powf(SUSP_GAMMA);
         let fmin = self.frequency;
@@ -483,11 +530,14 @@ impl Tone {
         self.duration = 0.0;
         self.curr_frequency = f64::from(fmin) + (f64::from(fmax) - f64::from(fmin)) * level;
         self.curr_amplitude = amplitude_from_level(level);
-        Some(SoundTick::Suspension(SoundToneTick {
-            level,
-            frequency: self.curr_frequency,
-            amplitude: self.curr_amplitude,
-        }))
+        SoundPlay {
+            tick: Some(SoundTick::Suspension(SoundToneTick {
+                level,
+                frequency: self.curr_frequency,
+                amplitude: self.curr_amplitude,
+            })),
+            traces: played.traces,
+        }
     }
 
     fn render(&mut self) -> Vec<u8> {

@@ -31,7 +31,9 @@ use cargopit_config::names;
 use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
 use cargopit_devices::clock::{SystemClock, VirtualClock};
-use cargopit_devices::haptic::{HapticEffect, HapticSettings, TyreId, VibrationEffect};
+use cargopit_devices::haptic::{
+    HapticEffect, HapticPlay, HapticSettings, HapticTrace, TyreId, VibrationEffect,
+};
 use cargopit_devices::lua_host::{lua_detail, LuaHost, LuaLedLevel, LuaLedLog, LuaLedMode};
 use cargopit_devices::serial::{self, MozaKsWheel, MozaNewWheel};
 use cargopit_devices::sound::{self, SharedShaker};
@@ -302,10 +304,12 @@ impl LoadedDevices {
             return Vec::new();
         };
         let mut voice = voice.lock().unwrap_or_else(|poison| poison.into_inner());
-        let Some(step) = voice.update(frame, &VirtualClock::from_monotonic_ns(now_ns)) else {
-            return Vec::new();
-        };
-        vec![notice(Level::Trace, sound_tick_message(&step))]
+        let played = voice.update_traced(frame, &VirtualClock::from_monotonic_ns(now_ns));
+        let mut notices = haptic_notices(&played.traces);
+        if let Some(step) = played.tick {
+            notices.push(notice(Level::Trace, sound_tick_message(&step)));
+        }
+        notices
     }
 
     fn write_g29(&mut self, index: usize, rpm: u32, maxrpm: u32) -> Vec<InitNotice> {
@@ -379,29 +383,30 @@ impl LoadedDevices {
             return Vec::new();
         };
         let clock = VirtualClock::from_monotonic_ns(now_ns);
-        let Some(play) = csl_play(pedal, frame, &clock) else {
+        let Some(played) = haptic_play_traced(&mut pedal.effect, frame, &clock) else {
             return Vec::new();
         };
-        if play == pedal.state {
-            return Vec::new();
+        let notices = haptic_notices(&played.traces);
+        if played.value == pedal.state {
+            return notices;
         }
         let Some(kind) = pedal.effect.as_ref().map(HapticEffect::effect) else {
-            return Vec::new();
+            return notices;
         };
-        let text = usb::csl_rumble_text(kind, play);
+        let text = usb::csl_rumble_text(kind, played.value);
         write_csl_bytes(&mut pedal.file, text.as_bytes());
-        pedal.state = play;
-        Vec::new()
+        pedal.state = played.value;
+        notices
     }
 
     fn write_p1000(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
-        let Some(reports) = self.p1000_changes(index, frame, now_ns) else {
+        let Some((reports, traces)) = self.p1000_changes(index, frame, now_ns) else {
             return Vec::new();
         };
+        let mut notices = haptic_notices(&traces);
         if reports.is_empty() {
-            return Vec::new();
+            return notices;
         }
-        let mut notices = Vec::new();
         let Some(port) = self.ports.get_mut(index) else {
             return notices;
         };
@@ -416,24 +421,27 @@ impl LoadedDevices {
         index: usize,
         frame: &Telemetry,
         now_ns: u64,
-    ) -> Option<Vec<[u8; usb::P1000_LEN]>> {
+    ) -> Option<(Vec<[u8; usb::P1000_LEN]>, Vec<HapticTrace>)> {
         let pedal = self.p1000.get_mut(index)?.as_mut()?;
         let clock = VirtualClock::from_monotonic_ns(now_ns);
-        let play = haptic_play(&mut pedal.effect, frame, &clock)?;
-        if play == pedal.state {
-            return None;
+        let played = haptic_play_traced(&mut pedal.effect, frame, &clock)?;
+        if played.value == pedal.state {
+            return Some((Vec::new(), played.traces));
         }
         let kind = pedal.effect.as_ref()?.effect();
-        let reports = usb::p1000_reports(kind, play);
-        pedal.state = play;
-        Some(reports)
+        let reports = usb::p1000_reports(kind, played.value);
+        pedal.state = played.value;
+        Some((reports, played.traces))
     }
 
     fn write_simnet(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
-        let Some(report) = self.simnet_changes(index, frame, now_ns) else {
+        let Some((report, traces)) = self.simnet_changes(index, frame, now_ns) else {
             return Vec::new();
         };
-        let mut notices = Vec::new();
+        let mut notices = haptic_notices(&traces);
+        let Some(report) = report else {
+            return notices;
+        };
         let Some(port) = self.ports.get_mut(index) else {
             return notices;
         };
@@ -451,22 +459,22 @@ impl LoadedDevices {
         index: usize,
         frame: &Telemetry,
         now_ns: u64,
-    ) -> Option<[u8; usb::SIMNET_LEN]> {
+    ) -> Option<(Option<[u8; usb::SIMNET_LEN]>, Vec<HapticTrace>)> {
         let pedal = self.simnet.get_mut(index)?.as_mut()?;
         let clock = VirtualClock::from_monotonic_ns(now_ns);
-        let play = haptic_play(&mut pedal.effect, frame, &clock)?;
-        if play == pedal.state {
-            return None;
+        let played = haptic_play_traced(&mut pedal.effect, frame, &clock)?;
+        if played.value == pedal.state {
+            return Some((None, played.traces));
         }
         let effect = pedal.effect.as_ref()?;
         let report = usb::simnet_report(
             effect.motor_position(),
             effect.frequency(),
             effect.amplitude(),
-            play > 0.0,
+            played.value > 0.0,
         );
-        pedal.state = play;
-        Some(report)
+        pedal.state = played.value;
+        Some((Some(report), played.traces))
     }
 
     fn close_csl(&mut self) {
@@ -929,6 +937,29 @@ fn moza_step_notices(step: &cargopit_devices::serial::MozaNewStep) -> Vec<InitNo
         notices.push(notice(Level::Warn, games::MSG_MOZA_RPM_FAILED));
     }
     notices
+}
+
+fn haptic_notices(traces: &[HapticTrace]) -> Vec<InitNotice> {
+    traces.iter().map(haptic_notice).collect()
+}
+
+fn haptic_notice(trace: &HapticTrace) -> InitNotice {
+    match trace {
+        HapticTrace::SlipFromSim(wheels) => {
+            notice(Level::Trace, games::wheelslip_from_sim_message(wheels))
+        }
+        HapticTrace::SlipCalculated(wheels) => {
+            notice(Level::Trace, games::wheelslip_calculated_message(wheels))
+        }
+        HapticTrace::Velocities { x, y, z } => {
+            notice(Level::Trace, games::velocities_message(*x, *y, *z))
+        }
+        HapticTrace::Slip(play) => notice(Level::Trace, games::slip_is_message(*play)),
+        HapticTrace::Lock(play) => notice(Level::Trace, games::lock_is_message(*play)),
+        HapticTrace::Abs(play) => notice(Level::Trace, games::abs_is_message(*play)),
+        HapticTrace::Suspension(play) => notice(Level::Trace, games::suspension_is_message(*play)),
+        HapticTrace::Unknown(kind) => notice(Level::Warn, games::unknown_effect_message(*kind)),
+    }
 }
 
 fn sound_tick_message(step: &sound::SoundTick) -> String {
@@ -2430,16 +2461,12 @@ fn open_csl_file(path: &str) -> CslOpen {
     }
 }
 
-fn csl_play(pedal: &mut CslPedal, frame: &Telemetry, clock: &VirtualClock) -> Option<f64> {
-    haptic_play(&mut pedal.effect, frame, clock)
-}
-
-fn haptic_play(
+fn haptic_play_traced(
     effect: &mut Option<HapticEffect>,
     frame: &Telemetry,
     clock: &VirtualClock,
-) -> Option<f64> {
-    Some(effect.as_mut()?.play_with_clock(frame, clock))
+) -> Option<HapticPlay> {
+    Some(effect.as_mut()?.play_with_clock_traced(frame, clock))
 }
 
 fn write_csl_bytes(file: &mut CslFile, bytes: &[u8]) {
@@ -3249,26 +3276,31 @@ struct SerialHapticTick {
     effect_id: i32,
     raw: f64,
     ampfactor: f64,
+    traces: Vec<HapticTrace>,
 }
 
 impl SerialHaptic {
     fn tick(&mut self, frame: &Telemetry, now_ns: u64) -> SerialHapticTick {
-        let raw = self.raw_play(frame, now_ns);
-        let step = self.state.tick(raw, self.ampfactor, self.motor);
+        let played = self.raw_play(frame, now_ns);
+        let step = self.state.tick(played.value, self.ampfactor, self.motor);
         SerialHapticTick {
             step,
             effect_id: self.effect_id,
-            raw,
+            raw: played.value,
             ampfactor: self.ampfactor,
+            traces: played.traces,
         }
     }
 
-    fn raw_play(&mut self, frame: &Telemetry, now_ns: u64) -> f64 {
+    fn raw_play(&mut self, frame: &Telemetry, now_ns: u64) -> HapticPlay {
         let Some(effect) = self.effect.as_mut() else {
-            return HAPTIC_STATE_IDLE;
+            return HapticPlay {
+                value: HAPTIC_STATE_IDLE,
+                traces: Vec::new(),
+            };
         };
         let clock = VirtualClock::from_monotonic_ns(now_ns);
-        effect.play_with_clock(frame, &clock)
+        effect.play_with_clock_traced(frame, &clock)
     }
 }
 
@@ -3277,6 +3309,7 @@ fn serial_haptic_tick_notices(tick: &SerialHapticTick) -> Vec<InitNotice> {
         Level::Trace,
         games::MSG_SERIAL_HAPTIC_UPDATING.to_string(),
     )];
+    notices.extend(haptic_notices(&tick.traces));
     for channel in tick.step.channels.into_iter().flatten() {
         notices.push(notice(
             Level::Trace,
@@ -5330,8 +5363,22 @@ mod tests {
         );
         let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
         assert!(notice_has(&tick, games::MSG_SERIAL_HAPTIC_UPDATING));
-        assert!(notice_has(
+        const ZERO_SLIP: f64 = 0.0;
+        let wheelslip =
+            games::wheelslip_from_sim_message(&[SAMPLE_SLIP, ZERO_SLIP, ZERO_SLIP, ZERO_SLIP]);
+        assert!(notice_before(
             &tick,
+            games::MSG_SERIAL_HAPTIC_UPDATING,
+            &wheelslip
+        ));
+        assert!(notice_before(
+            &tick,
+            &wheelslip,
+            &games::slip_is_message(SAMPLE_PLAY)
+        ));
+        assert!(notice_before(
+            &tick,
+            &games::slip_is_message(SAMPLE_PLAY),
             &games::serial_haptic_channel_message(
                 names::EFFECT_TYRE_SLIP,
                 i32::from(SLIP_SPEED),
@@ -5345,6 +5392,8 @@ mod tests {
             &games::arduino_copy_message(serial::HAPTIC_PACKET_LEN)
         ));
         let held = devices.tick(0, &frame, PROBE_OPEN_NS);
+        assert!(notice_has(&held, games::MSG_SERIAL_HAPTIC_UPDATING));
+        assert!(notice_has(&held, &games::slip_is_message(SAMPLE_PLAY)));
         assert!(notice_absent(
             &held,
             &games::serial_haptic_channel_message(
@@ -7163,14 +7212,16 @@ mod tests {
             WHEEL_FRONT_LEFT,
             CSL_SLIP,
         );
-        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
         assert_eq!(
             devices.captured_sysfs(0).and_then(|frames| frames.last()),
             Some(&slip_bytes)
         );
+        assert!(notice_has(&tick, &games::slip_is_message(CSL_SLIP.abs())));
         let once = devices.captured_sysfs(0).map(|frames| frames.len());
-        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let held = devices.tick(0, &frame, PROBE_OPEN_NS);
         assert_eq!(devices.captured_sysfs(0).map(|frames| frames.len()), once);
+        assert!(notice_has(&held, &games::slip_is_message(CSL_SLIP.abs())));
         let stronger = csl_frame(
             CSL_SPEED,
             CSL_Y_VELOCITY,
@@ -7326,8 +7377,9 @@ mod tests {
             P1000_SLIP,
         );
         let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
-        assert!(notice_has(
+        assert!(notice_before(
             &tick,
+            &games::slip_is_message(P1000_SLIP.abs()),
             &games::p1000_sent_message(p1000_nbytes())
         ));
         assert!(notice_has(
@@ -7502,14 +7554,22 @@ mod tests {
             SIMNET_SLIP,
         );
         let tick = devices.tick(0, &frame, PROBE_OPEN_NS);
-        assert!(notice_has(&tick, &games::simnet_write_message(&active)));
+        assert!(notice_before(
+            &tick,
+            &games::slip_is_message(SIMNET_SLIP.abs()),
+            &games::simnet_write_message(&active)
+        ));
         assert_eq!(
             devices.captured_reports(0).and_then(|frames| frames.last()),
             Some(&active.to_vec())
         );
         let once = devices.captured_reports(0).map(|frames| frames.len());
-        let _ = devices.tick(0, &frame, PROBE_OPEN_NS);
+        let held = devices.tick(0, &frame, PROBE_OPEN_NS);
         assert_eq!(devices.captured_reports(0).map(|frames| frames.len()), once);
+        assert!(notice_has(
+            &held,
+            &games::slip_is_message(SIMNET_SLIP.abs())
+        ));
         let stronger = csl_frame(
             SIMNET_SPEED,
             SIMNET_Y_VELOCITY,
@@ -7965,7 +8025,11 @@ mod tests {
         let mut devices = loaded.devices;
         let expected = expected_sound_tick(VibrationEffect::TyreSlip, &frame, SOUND_TICK_NS);
         let tick = devices.tick(0, &frame, SOUND_TICK_NS);
-        assert!(notice_has(&tick, &expected));
+        assert!(notice_before(
+            &tick,
+            &games::slip_is_message(SOUND_SPIN.abs()),
+            &expected
+        ));
     }
 
     #[test]
@@ -7975,7 +8039,11 @@ mod tests {
         let mut devices = loaded.devices;
         let expected = expected_sound_tick(VibrationEffect::TyreLock, &frame, SOUND_TICK_NS);
         let tick = devices.tick(0, &frame, SOUND_TICK_NS);
-        assert!(notice_has(&tick, &expected));
+        assert!(notice_before(
+            &tick,
+            &games::lock_is_message(SOUND_LOCK),
+            &expected
+        ));
     }
 
     #[test]
@@ -7987,6 +8055,7 @@ mod tests {
         let expected = expected_two_tick_sound(VibrationEffect::AbsBrakes, &first, &second);
         let silent = devices.tick(0, &first, SOUND_TICK_NS);
         assert!(notice_absent(&silent, &expected));
+        assert!(notice_has(&silent, &games::abs_is_message(0.0)));
         let tick = devices.tick(0, &second, SOUND_NEXT_NS);
         assert!(notice_has(&tick, &expected));
     }
