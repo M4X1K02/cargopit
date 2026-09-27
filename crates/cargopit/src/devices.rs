@@ -30,6 +30,7 @@ use cargopit_config::keys::{self, CLASS_SERIAL, CLASS_SOUND, CLASS_USB};
 use cargopit_config::names;
 use cargopit_config::paths;
 use cargopit_config::tach::{self, ERR_TACH_XML_EMPTY};
+use cargopit_config::Value;
 use cargopit_devices::clock::{SystemClock, VirtualClock};
 use cargopit_devices::haptic::{
     HapticEffect, HapticPlay, HapticSettings, HapticTrace, Modulation, TyreId, VibrationEffect,
@@ -1503,6 +1504,7 @@ fn device_parse_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
     let mut notices = device_trace_notices(entry);
     notices.extend(device_class_notices(entry));
     notices.extend(fps_notices(entry));
+    notices.extend(serial_port_notices(entry));
     notices.extend(haptic_settings_notices(entry));
     notices
 }
@@ -1533,8 +1535,48 @@ fn requested_fps(entry: &DeviceEntry) -> i32 {
     let Some(value) = entry.get_i64(keys::KEY_FPS) else {
         return keys::FPS_DEFAULT;
     };
+    i32_from_config(value)
+}
+
+fn serial_port_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    if lookup_device_class(entry.get_str(keys::KEY_DEVICE)) != Some(names::DEVICE_SERIAL) {
+        return Vec::new();
+    }
+    vec![notice(
+        Level::Trace,
+        games::serial_port_settings_message(
+            serial_setup_baud(entry),
+            serial_setup_ampfactor(entry),
+            serial_setup_fanpower(entry),
+        ),
+    )]
+}
+
+fn serial_setup_baud(entry: &DeviceEntry) -> i32 {
+    let baud = entry
+        .get(keys::KEY_BAUD)
+        .and_then(Value::strict_i64)
+        .unwrap_or(keys::BAUD_DEFAULT);
+    i32_from_config(baud)
+}
+
+fn serial_setup_ampfactor(entry: &DeviceEntry) -> f64 {
+    entry
+        .get(keys::KEY_AMPFACTOR)
+        .and_then(Value::strict_f64)
+        .unwrap_or(keys::AMPFACTOR_DEFAULT)
+}
+
+fn serial_setup_fanpower(entry: &DeviceEntry) -> f64 {
+    entry
+        .get(keys::KEY_FANPOWER)
+        .and_then(Value::strict_f64)
+        .unwrap_or(keys::FANPOWER_DEFAULT)
+}
+
+fn i32_from_config(value: i64) -> i32 {
     match i32::try_from(value) {
-        Ok(fps) => fps,
+        Ok(parsed) => parsed,
         Err(_) if value < 0 => i32::MIN,
         Err(_) => i32::MAX,
     }
@@ -5003,6 +5045,104 @@ mod tests {
         assert!(notice_absent(
             &loaded.setup_notices,
             &games::fps_below_message(FPS_BELOW)
+        ));
+    }
+
+    #[test]
+    fn setup_notices_log_c_serial_port_settings() {
+        const CUSTOM_BAUD: i32 = 115_200;
+        const CUSTOM_AMPFACTOR: f64 = 2.5;
+        const CUSTOM_FANPOWER: f64 = 0.8;
+        const INTEGER_AMPFACTOR: i64 = 2;
+        const INTEGER_FANPOWER: i64 = 1;
+        const FPS_BELOW: i32 = 0;
+        let default_message = games::serial_port_settings_message(
+            i32::try_from(keys::BAUD_DEFAULT).expect("baud default fits i32"),
+            keys::AMPFACTOR_DEFAULT,
+            keys::FANPOWER_DEFAULT,
+        );
+
+        let usb = load_parse_device(named_device(keys::CLASS_USB, keys::TYPE_WHEEL));
+        assert!(notice_absent(&usb.setup_notices, &default_message));
+
+        let mut usb_with_baud = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        usb_with_baud.set_int(keys::KEY_BAUD, i64::from(CUSTOM_BAUD));
+        let loaded = load_parse_device(usb_with_baud);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::serial_port_settings_message(
+                CUSTOM_BAUD,
+                keys::AMPFACTOR_DEFAULT,
+                keys::FANPOWER_DEFAULT,
+            )
+        ));
+
+        let sound = load_parse_device(named_device(keys::CLASS_SOUND, ""));
+        assert!(notice_absent(&sound.setup_notices, &default_message));
+
+        let mut missing_subtype = DeviceEntry::new();
+        missing_subtype.set_str(keys::KEY_DEVICE, keys::CLASS_SERIAL);
+        let loaded = load_parse_device(missing_subtype);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Trace,
+            &default_message
+        ));
+
+        let serial = load_parse_device(named_device(keys::CLASS_SERIAL, keys::TYPE_HAPTIC));
+        assert!(notice_has_level(
+            &serial.setup_notices,
+            Level::Trace,
+            &default_message
+        ));
+        assert!(notice_before(
+            &serial.setup_notices,
+            &default_message,
+            games::MSG_ANALYSING_HAPTIC
+        ));
+
+        let mut custom = named_device(keys::CLASS_SERIAL, keys::TYPE_HAPTIC);
+        custom.set_int(keys::KEY_BAUD, i64::from(CUSTOM_BAUD));
+        custom.set_float(keys::KEY_AMPFACTOR, CUSTOM_AMPFACTOR);
+        custom.set_float(keys::KEY_FANPOWER, CUSTOM_FANPOWER);
+        let loaded = load_parse_device(custom);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Trace,
+            &games::serial_port_settings_message(CUSTOM_BAUD, CUSTOM_AMPFACTOR, CUSTOM_FANPOWER)
+        ));
+
+        let mut integer_fields = named_device(keys::CLASS_SERIAL, keys::TYPE_HAPTIC);
+        integer_fields.set_int(keys::KEY_AMPFACTOR, INTEGER_AMPFACTOR);
+        integer_fields.set_int(keys::KEY_FANPOWER, INTEGER_FANPOWER);
+        let loaded = load_parse_device(integer_fields);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Trace,
+            &default_message
+        ));
+
+        let mut float_baud = named_device(keys::CLASS_SERIAL, keys::TYPE_HAPTIC);
+        float_baud.set_float(keys::KEY_BAUD, f64::from(CUSTOM_BAUD));
+        let loaded = load_parse_device(float_baud);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Trace,
+            &default_message
+        ));
+
+        let mut below = named_device(keys::CLASS_SERIAL, keys::TYPE_HAPTIC);
+        below.set_int(keys::KEY_FPS, i64::from(FPS_BELOW));
+        let loaded = load_parse_device(below);
+        assert!(notice_before(
+            &loaded.setup_notices,
+            &games::fps_below_message(FPS_BELOW),
+            &default_message
+        ));
+        assert!(notice_before(
+            &loaded.setup_notices,
+            &default_message,
+            games::MSG_ANALYSING_HAPTIC
         ));
     }
 
