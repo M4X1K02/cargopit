@@ -368,6 +368,7 @@ pub fn invalid_device_subsubtype_message(name: &str) -> String {
 
 pub const MSG_INIT_USB: &str = "initializing usb device...";
 pub const MSG_INIT_WHEEL: &str = "initializing wheel or pedals device...";
+pub const MSG_UNKNOWN_WHEEL: &str = "Possibly unknown wheel device";
 pub const MSG_G29_ATTEMPT: &str = "Attempting to initialize Logitech G29";
 pub const MSG_G29_INIT: &str = "initializing Logitech G29 wheel...";
 pub const MSG_G29_FOUND: &str = "Found Logitech G29 Wheel...";
@@ -1452,6 +1453,7 @@ mod tests {
         );
         assert_eq!(MSG_INIT_USB, "initializing usb device...");
         assert_eq!(MSG_INIT_WHEEL, "initializing wheel or pedals device...");
+        assert_eq!(MSG_UNKNOWN_WHEEL, "Possibly unknown wheel device");
         assert_eq!(MSG_G29_ATTEMPT, "Attempting to initialize Logitech G29");
         assert_eq!(MSG_G29_INIT, "initializing Logitech G29 wheel...");
         assert_eq!(MSG_G29_FOUND, "Found Logitech G29 Wheel...");
