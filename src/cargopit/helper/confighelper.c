@@ -909,6 +909,13 @@ int load_device_configs(const char* config_file_str, int confignum, int configur
 {
     int numdevices = 0;
     config_t cfg;
+
+    if (config_file_str == NULL || ms == NULL || ds == NULL || configureddevices <= 0)
+    {
+        return 0;
+    }
+
+    memset(ds, 0, (size_t)configureddevices * sizeof(*ds));
     config_init(&cfg);
     if (!config_read_file(&cfg, config_file_str))
     {
@@ -957,9 +964,13 @@ int load_device_configs(const char* config_file_str, int confignum, int configur
             }
             if (error == CARGOPIT_ERROR_NONE)
             {
+                ds[numdevices] = settings;
                 numdevices++;
             }
-            ds[i] = settings;
+            else
+            {
+                settingsfree(settings);
+            }
 
             i++;
 
