@@ -8,6 +8,7 @@ use std::path::Path;
 pub const SOCKET_NAME: &str = "cargopit.sock";
 const SOCKET_MODE: u32 = 0o600;
 pub const RUNTIME_DIR_ENV: &str = "XDG_RUNTIME_DIR";
+pub const PATH_MAX: usize = 108;
 pub const CMD_STATUS: &str = "status";
 pub const CMD_RELOAD: &str = "reload";
 pub const CMD_STOP: &str = "stop";
@@ -48,6 +49,31 @@ pub enum ControlEffect {
     None,
     Reload,
     Stop,
+}
+
+#[derive(Debug)]
+pub enum ControlStart {
+    Ready(UnixListener),
+    PathTooLong,
+    OwnedByAnother,
+    ListenFailed,
+}
+
+pub fn start(path: &str) -> ControlStart {
+    if path.len() >= PATH_MAX {
+        return ControlStart::PathTooLong;
+    }
+    if has_listener(path) {
+        return ControlStart::OwnedByAnother;
+    }
+    match bind_listener(path) {
+        Ok(listener) => ControlStart::Ready(listener),
+        Err(_) => ControlStart::ListenFailed,
+    }
+}
+
+fn has_listener(path: &str) -> bool {
+    UnixStream::connect(path).is_ok()
 }
 
 pub fn effect(command: &str) -> ControlEffect {
@@ -170,6 +196,23 @@ mod tests {
             "/run/user/1/cargopit.sock"
         );
         assert_eq!(socket_path(None, 7), "/tmp/cargopit-7.sock");
+        assert_eq!(PATH_MAX, 108);
+    }
+
+    #[test]
+    fn start_refuses_a_live_owner_and_a_too_long_path() {
+        let dir = std::env::temp_dir().join(format!("cargopit-sock-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(SOCKET_NAME);
+        let path_str = path.to_str().unwrap();
+        let ControlStart::Ready(_listener) = start(path_str) else {
+            panic!("first start");
+        };
+        assert!(matches!(start(path_str), ControlStart::OwnedByAnother));
+        let long_path = "x".repeat(PATH_MAX);
+        assert!(matches!(start(&long_path), ControlStart::PathTooLong));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
