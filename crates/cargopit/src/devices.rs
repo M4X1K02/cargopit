@@ -1836,6 +1836,9 @@ fn consider_entry(
     if simnet_entry(entry) {
         return consider_simnet(entry, slot, id, disable_audio, supports_haptics, attempt);
     }
+    if usb_wheel_entry(entry) {
+        return consider_unknown_wheel(entry, slot, disable_audio, supports_haptics);
+    }
     consider_closed(entry, slot, disable_audio)
 }
 
@@ -2817,16 +2820,41 @@ fn configured_motor(entry: &DeviceEntry) -> u32 {
     u32_from_i64(configured_motor_i64(entry))
 }
 
-fn usb_wheel_hardware(entry: &DeviceEntry, hardware: i32) -> bool {
+fn usb_wheel_entry(entry: &DeviceEntry) -> bool {
     if entry_kind(entry) != DeviceKind::Usb {
         return false;
     }
     let kind = entry.get_str(keys::KEY_TYPE).unwrap_or("");
-    if names::lookup(names::USB_TYPES, kind) != Some(names::SUBTYPE_USB_WHEEL) {
+    names::lookup(names::USB_TYPES, kind) == Some(names::SUBTYPE_USB_WHEEL)
+}
+
+fn usb_wheel_hardware(entry: &DeviceEntry, hardware: i32) -> bool {
+    if !usb_wheel_entry(entry) {
         return false;
     }
     let name = entry.get_str(keys::KEY_SUBTYPE).unwrap_or("");
     names::lookup(names::HARDWARE, name) == Some(hardware)
+}
+
+fn consider_unknown_wheel(
+    entry: &DeviceEntry,
+    slot: i32,
+    disable_audio: bool,
+    supports_haptics: bool,
+) -> Considered {
+    if let Some(skip) = device_skip(entry, disable_audio) {
+        return skipped(Vec::new(), skip, slot);
+    }
+    let mut notices = Vec::new();
+    if !supports_haptics {
+        notices.push(notice(Level::Info, games::MSG_USB_NO_HAPTICS));
+    }
+    notices.extend([
+        notice(Level::Info, games::MSG_INIT_USB),
+        notice(Level::Info, games::MSG_INIT_WHEEL),
+        notice(Level::Warn, games::MSG_UNKNOWN_WHEEL),
+    ]);
+    unopened(notices)
 }
 
 fn consider_g29(
@@ -5247,6 +5275,105 @@ mod tests {
         assert!(notice_absent(
             &loaded.setup_notices,
             &games::invalid_device_type_message(keys::CLASS_SOUND)
+        ));
+    }
+
+    #[test]
+    fn setup_notices_log_c_unknown_wheel_device() {
+        const UNKNOWN_DEVICE_HARDWARE: &str = "NotAHardware";
+        const FIRST_DEVICE_INDEX: i32 = 0;
+        let missing = load_parse_device(named_device(keys::CLASS_USB, keys::TYPE_WHEEL));
+        assert!(notice_has_level(
+            &missing.notices,
+            Level::Info,
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_has_level(
+            &missing.notices,
+            Level::Info,
+            games::MSG_INIT_WHEEL
+        ));
+        assert!(notice_has_level(
+            &missing.notices,
+            Level::Warn,
+            games::MSG_UNKNOWN_WHEEL
+        ));
+        assert!(notice_before(
+            &missing.notices,
+            games::MSG_INIT_USB,
+            games::MSG_INIT_WHEEL
+        ));
+        assert!(notice_before(
+            &missing.notices,
+            games::MSG_INIT_WHEEL,
+            games::MSG_UNKNOWN_WHEEL
+        ));
+        assert!(notice_absent(
+            &missing.notices,
+            &games::could_not_initialize_message(CLASS_USB)
+        ));
+        assert!(notice_absent(&missing.notices, games::MSG_USB_NO_HAPTICS));
+
+        let mut unknown_hardware = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        unknown_hardware.set_str(keys::KEY_SUBTYPE, UNKNOWN_DEVICE_HARDWARE);
+        let loaded = load_parse_device(unknown_hardware);
+        assert!(notice_has_level(
+            &loaded.notices,
+            Level::Warn,
+            games::MSG_UNKNOWN_WHEEL
+        ));
+
+        let moza = names::name_for(names::HARDWARE, names::HARDWARE_MOZA_R5).expect("moza");
+        let mut usb_moza = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        usb_moza.set_str(keys::KEY_SUBTYPE, moza);
+        let loaded = load_parse_device(usb_moza);
+        assert!(notice_has_level(
+            &loaded.notices,
+            Level::Warn,
+            games::MSG_UNKNOWN_WHEEL
+        ));
+
+        let g29 = names::name_for(names::HARDWARE, names::HARDWARE_LOGITECH_G29).expect("g29");
+        let mut known = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        known.set_str(keys::KEY_SUBTYPE, g29);
+        let loaded = load_parse_device(known);
+        assert!(notice_absent(&loaded.notices, games::MSG_UNKNOWN_WHEEL));
+
+        let tach = load_parse_device(named_device(keys::CLASS_USB, keys::TYPE_TACHOMETER));
+        assert!(notice_absent(&tach.notices, games::MSG_UNKNOWN_WHEEL));
+
+        let haptic = load_parse_device(named_device(keys::CLASS_USB, keys::TYPE_HAPTIC));
+        assert!(notice_absent(&haptic.notices, games::MSG_UNKNOWN_WHEEL));
+
+        let serial = load_parse_device(named_device(keys::CLASS_SERIAL, keys::TYPE_WHEEL));
+        assert!(notice_absent(&serial.notices, games::MSG_UNKNOWN_WHEEL));
+
+        let mut disabled = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        disabled.set_bool(keys::KEY_ENABLED, false);
+        let loaded = load_parse_device(disabled);
+        assert!(notice_absent(&loaded.notices, games::MSG_UNKNOWN_WHEEL));
+        assert!(notice_has(
+            &loaded.notices,
+            &games::skipping_disabled_message(FIRST_DEVICE_INDEX)
+        ));
+
+        let config = CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![named_device(keys::CLASS_USB, keys::TYPE_WHEEL)],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        };
+        let unsupported = open_probed_hid(&config, false, |_vendor, _product| false);
+        assert!(notice_before(
+            &unsupported.notices,
+            games::MSG_USB_NO_HAPTICS,
+            games::MSG_INIT_USB
+        ));
+        assert!(notice_has_level(
+            &unsupported.notices,
+            Level::Warn,
+            games::MSG_UNKNOWN_WHEEL
         ));
     }
 
