@@ -258,12 +258,13 @@ manual_dep_hint() {
 Required build packages (names vary by distro):
   git cmake gcc make pkg-config
   libserialport hidapi lua libpulse libproc2 (or libprocps)
-  yder (simd), cargo/rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ (or rustup)
+  simd (C): libuv argtable libconfig yder
+  cargo/rustc ${TUI_MIN_RUSTC_MAJOR}.${TUI_MIN_RUSTC_MINOR}+ (or rustup)
   optional: mingw-w64 (only with --build-bridges), python3 (tests)
 
-Arch:    pacman -S --needed git cmake base-devel hidapi lua54 libpulse pkgconf libserialport rust python yder clang procps-ng
-Fedora:  dnf install git cmake gcc gcc-c++ make hidapi-devel lua-devel pulseaudio-libs-devel libserialport-devel pkgconf-pkg-config cargo python3 clang-devel libudev-devel procps-ng-devel
-Debian:  apt install build-essential git cmake libserialport-dev libhidapi-dev liblua5.4-dev libpulse-dev libproc2-dev pkg-config cargo python3 libclang-dev libudev-dev
+Arch:    pacman -S --needed git cmake base-devel hidapi lua54 libpulse pkgconf libserialport rust python libuv argtable libconfig yder clang procps-ng
+Fedora:  dnf install git cmake gcc gcc-c++ make hidapi-devel lua-devel pulseaudio-libs-devel libserialport-devel libuv-devel argtable-devel libconfig-devel pkgconf-pkg-config cargo python3 clang-devel libudev-devel procps-ng-devel
+Debian:  apt install build-essential git cmake libserialport-dev libhidapi-dev liblua5.4-dev libpulse-dev libproc2-dev libuv1-dev libargtable2-dev libconfig-dev pkg-config cargo python3 libclang-dev libudev-dev
 EOF
 }
 
@@ -318,7 +319,8 @@ install_yder_from_source() {
 install_deps_arch() {
     local deps=(
         git cmake make gcc pkgconf python curl unzip rust clang
-        hidapi lua54 libpulse libserialport yder procps-ng
+        hidapi lua54 libpulse libserialport procps-ng
+        libuv argtable libconfig yder
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw-w64-gcc)
@@ -332,6 +334,7 @@ install_deps_fedora() {
         git cmake gcc gcc-c++ make pkgconf-pkg-config python3 curl unzip ca-certificates cargo
         hidapi-devel lua-devel pulseaudio-libs-devel libserialport-devel
         procps-ng-devel clang-devel libudev-devel
+        libuv-devel argtable-devel libconfig-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)
@@ -354,6 +357,7 @@ install_deps_debian() {
     local deps=(
         build-essential git cmake pkg-config python3 curl unzip ca-certificates cargo
         libserialport-dev libhidapi-dev libpulse-dev libclang-dev libudev-dev
+        libuv1-dev libargtable2-dev libconfig-dev
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw-w64)
@@ -381,6 +385,7 @@ install_deps_opensuse() {
         git cmake gcc gcc-c++ make pkg-config python3 curl unzip cargo
         hidapi-devel lua-devel libpulse-devel libserialport-devel
         procps-devel clang-devel libudev-devel
+        libuv-devel argtable-devel libconfig-devel
     )
     if [ "$BUILD_BRIDGES" -eq 1 ]; then
         deps+=(mingw64-gcc)
