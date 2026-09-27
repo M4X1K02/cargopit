@@ -4,9 +4,56 @@ use crate::bindings;
 
 const MAP_CREATE_FAILED: &str = "simapi_simmap_create returned null";
 const CLEAR_FAILED: &str = "simapi_sim_clear failed";
+const CLOSED_FD: libc::c_int = -1;
 
 fn map_error(code: bindings::SimAPIError) -> i32 {
     code as i32
+}
+
+fn attached_addr(map: *mut bindings::SimMap) -> bool {
+    if map.is_null() {
+        return false;
+    }
+    let addr = unsafe { (*map).addr };
+    !addr.is_null() && addr != libc::MAP_FAILED
+}
+
+fn fd_allows_write(fd: libc::c_int) -> bool {
+    if fd < 0 {
+        return false;
+    }
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return false;
+    }
+    let access = flags & libc::O_ACCMODE;
+    access == libc::O_RDWR || access == libc::O_WRONLY
+}
+
+fn publish_map_is_writable(map: *mut bindings::SimMap) -> bool {
+    if !attached_addr(map) {
+        return false;
+    }
+    fd_allows_write(unsafe { (*map).fd })
+}
+
+fn detach_publish_view(map: *mut bindings::SimMap) {
+    if map.is_null() {
+        return;
+    }
+    unsafe {
+        let addr = (*map).addr;
+        if !addr.is_null() && addr != libc::MAP_FAILED {
+            libc::munmap(addr, std::mem::size_of::<bindings::SimData>());
+        }
+        (*map).addr = std::ptr::null_mut();
+        let fd = (*map).fd;
+        if fd >= 0 {
+            libc::close(fd);
+            (*map).fd = CLOSED_FD;
+        }
+        (*map).hasSimApiDat = false;
+    }
 }
 
 pub struct GameSession {
@@ -26,7 +73,7 @@ impl GameSession {
         assert!(!map.is_null(), "{MAP_CREATE_FAILED}");
         unsafe {
             std::ptr::write_bytes(map, 0, 1);
-            (*map).fd = -1;
+            (*map).fd = CLOSED_FD;
         }
         Self {
             data: Box::new(bindings::SimData::default()),
@@ -100,12 +147,13 @@ impl GameSession {
         if self.map.is_null() {
             return map_error(bindings::SimAPIError_SIMAPI_ERROR_UNKNOWN);
         }
-        unsafe {
-            if !(*self.map).addr.is_null() {
-                return map_error(bindings::SimAPIError_SIMAPI_ERROR_NONE);
-            }
-            bindings::simapi_universalmap_open(self.map, self.data.as_mut())
+        if publish_map_is_writable(self.map) {
+            return map_error(bindings::SimAPIError_SIMAPI_ERROR_NONE);
         }
+        // A detected simd record is mapped read-only. Publishing into it
+        // faults, so drop that view and open a writable SIMAPI.DAT.
+        detach_publish_view(self.map);
+        unsafe { bindings::simapi_universalmap_open(self.map, self.data.as_mut()) }
     }
 
     pub fn map_open(&self) -> bool {
@@ -113,7 +161,7 @@ impl GameSession {
     }
 
     pub fn publish_bytes(&mut self, bytes: &[u8]) -> bool {
-        if !self.map_open() || !self.write_frame(bytes) {
+        if !publish_map_is_writable(self.map) || !self.write_frame(bytes) {
             return false;
         }
         self.copy_data_to_map()
@@ -128,7 +176,7 @@ impl GameSession {
     }
 
     fn copy_data_to_map(&mut self) -> bool {
-        if !self.map_open() {
+        if !publish_map_is_writable(self.map) {
             return false;
         }
         let len = std::mem::size_of::<bindings::SimData>();
@@ -200,9 +248,29 @@ impl Drop for GameSession {
         unsafe {
             bindings::simapi_universalmap_free(self.map);
         }
-        if fd != -1 {
+        if fd != CLOSED_FD {
             unsafe { libc::free(self.map.cast()) };
         }
         self.map = std::ptr::null_mut();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fd_allows_write;
+
+    const NULL_DEVICE: &std::ffi::CStr = c"/dev/null";
+
+    #[test]
+    fn readonly_descriptor_cannot_publish() {
+        let readonly = unsafe { libc::open(NULL_DEVICE.as_ptr(), libc::O_RDONLY) };
+        assert!(readonly >= 0);
+        assert!(!fd_allows_write(readonly));
+        unsafe { libc::close(readonly) };
+
+        let readwrite = unsafe { libc::open(NULL_DEVICE.as_ptr(), libc::O_RDWR) };
+        assert!(readwrite >= 0);
+        assert!(fd_allows_write(readwrite));
+        unsafe { libc::close(readwrite) };
     }
 }
