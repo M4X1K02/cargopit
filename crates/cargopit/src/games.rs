@@ -392,6 +392,8 @@ pub const MSG_GT_NEEDS_CONFIG: &str = "Simagic GT Neo requires lua config file t
 pub const MSG_GT_FEATURE_FAILED: &str = "Failed to send HID feature report";
 pub const MSG_GT_FEATURE_CHUNK_FAILED: &str = "Failed to send HID feature report chunk";
 pub const MSG_USB_NO_HAPTICS: &str = "This sim does not support haptic effects";
+pub const MSG_USB_DEVICE_FREE: &str = "Usb device free";
+pub const MSG_WHEEL_DEVICE_FREE: &str = "wheel device free";
 pub const MSG_CSL_ATTEMPT: &str = "Attempting to initialize CSL Elite V3 Pedals";
 pub const MSG_CSL_INIT: &str = "initializing CSL Elite V3 Pedals...";
 pub const MSG_CSL_FOUND: &str = "CSL Elite V3 Pedals Successfully initialized...";
@@ -1447,6 +1449,8 @@ mod tests {
             MSG_USB_NO_HAPTICS,
             "This sim does not support haptic effects"
         );
+        assert_eq!(MSG_USB_DEVICE_FREE, "Usb device free");
+        assert_eq!(MSG_WHEEL_DEVICE_FREE, "wheel device free");
         assert_eq!(
             MSG_CSL_ATTEMPT,
             "Attempting to initialize CSL Elite V3 Pedals"
