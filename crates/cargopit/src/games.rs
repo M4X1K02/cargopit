@@ -661,6 +661,10 @@ pub fn invalid_effect_message(name: &str) -> String {
     format!("effect {name} is not a valid effect")
 }
 
+pub fn serial_port_settings_message(baud: i32, ampfactor: f64, fanpower: f64) -> String {
+    format!("set port baud rate to {baud}, ampfactor {ampfactor:.6}, fanpower {fanpower:.6}")
+}
+
 pub fn modulation_found_message(name: &str) -> String {
     format!("Effect modulation found, set to {name}")
 }
@@ -1758,6 +1762,13 @@ mod tests {
         assert_eq!(
             invalid_effect_message("bogus"),
             "effect bogus is not a valid effect"
+        );
+        const SAMPLE_BAUD: i32 = 9_600;
+        const SAMPLE_AMPFACTOR: f64 = 1.0;
+        const SAMPLE_FANPOWER: f64 = 0.6;
+        assert_eq!(
+            serial_port_settings_message(SAMPLE_BAUD, SAMPLE_AMPFACTOR, SAMPLE_FANPOWER),
+            "set port baud rate to 9600, ampfactor 1.000000, fanpower 0.600000"
         );
         assert_eq!(
             modulation_found_message("Frequency"),
