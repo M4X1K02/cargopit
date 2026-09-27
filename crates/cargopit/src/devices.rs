@@ -1502,8 +1502,42 @@ impl Drop for SerialPort {
 fn device_parse_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
     let mut notices = device_trace_notices(entry);
     notices.extend(device_class_notices(entry));
+    notices.extend(fps_notices(entry));
     notices.extend(haptic_settings_notices(entry));
     notices
+}
+
+fn fps_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    if !reached_fps_clamp(entry) {
+        return Vec::new();
+    }
+    let fps = requested_fps(entry);
+    if fps < keys::FPS_MIN {
+        return vec![notice(Level::Warn, games::fps_below_message(fps))];
+    }
+    if fps > keys::FPS_MAX {
+        return vec![notice(Level::Warn, games::fps_above_message(fps))];
+    }
+    Vec::new()
+}
+
+fn reached_fps_clamp(entry: &DeviceEntry) -> bool {
+    names::map_device(
+        entry.get_str(keys::KEY_DEVICE).unwrap_or(""),
+        entry.get_str(keys::KEY_TYPE).unwrap_or(""),
+    )
+    .is_ok()
+}
+
+fn requested_fps(entry: &DeviceEntry) -> i32 {
+    let Some(value) = entry.get_i64(keys::KEY_FPS) else {
+        return keys::FPS_DEFAULT;
+    };
+    match i32::try_from(value) {
+        Ok(fps) => fps,
+        Err(_) if value < 0 => i32::MIN,
+        Err(_) => i32::MAX,
+    }
 }
 
 fn device_trace_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
@@ -4403,7 +4437,7 @@ fn skip_message(skip: DeviceSkip, index: i32) -> String {
 
 fn build_device(entry: &DeviceEntry, id: i32) -> PreparedDevice {
     let kind = entry_kind(entry);
-    let fps = scheduler::clamp_fps(entry.get_i64(keys::KEY_FPS).unwrap_or(0) as i32);
+    let fps = scheduler::clamp_fps(requested_fps(entry));
     let mut device = SimDevice::new(id, fps, kind);
     device.set_initialized(true);
     device.set_config_file(entry.get_str(keys::KEY_CONFIG).map(str::to_string));
@@ -4814,6 +4848,128 @@ mod tests {
     }
 
     #[test]
+    fn setup_notices_log_c_fps_clamp() {
+        const FPS_BELOW: i32 = 0;
+        const FPS_NEGATIVE: i32 = -5;
+        const UNKNOWN_DEVICE_SUBTYPE: &str = "NotASubtype";
+        let missing = load_parse_device(named_device(keys::CLASS_USB, keys::TYPE_WHEEL));
+        assert!(notice_absent(
+            &missing.setup_notices,
+            &games::fps_below_message(FPS_BELOW)
+        ));
+        assert!(notice_absent(
+            &missing.setup_notices,
+            &games::fps_above_message(keys::FPS_MAX + 1)
+        ));
+
+        let mut default_rate = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        default_rate.set_int(keys::KEY_FPS, i64::from(keys::FPS_DEFAULT));
+        let loaded = load_parse_device(default_rate);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::fps_below_message(keys::FPS_DEFAULT)
+        ));
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::fps_above_message(keys::FPS_DEFAULT)
+        ));
+
+        let mut min_rate = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        min_rate.set_int(keys::KEY_FPS, i64::from(keys::FPS_MIN));
+        let loaded = load_parse_device(min_rate);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::fps_below_message(keys::FPS_MIN)
+        ));
+
+        let mut max_rate = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        max_rate.set_int(keys::KEY_FPS, i64::from(keys::FPS_MAX));
+        let loaded = load_parse_device(max_rate);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::fps_above_message(keys::FPS_MAX)
+        ));
+
+        let mut below = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        below.set_int(keys::KEY_FPS, i64::from(FPS_BELOW));
+        let loaded = load_parse_device(below);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::fps_below_message(FPS_BELOW)
+        ));
+        assert!(notice_before(
+            &loaded.setup_notices,
+            &games::fps_below_message(FPS_BELOW),
+            games::MSG_ANALYSING_HAPTIC
+        ));
+
+        let mut negative = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        negative.set_int(keys::KEY_FPS, i64::from(FPS_NEGATIVE));
+        let loaded = load_parse_device(negative);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::fps_below_message(FPS_NEGATIVE)
+        ));
+
+        let mut above = named_device(keys::CLASS_USB, keys::TYPE_WHEEL);
+        above.set_int(keys::KEY_FPS, i64::from(keys::FPS_MAX) + 1);
+        let loaded = load_parse_device(above);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::fps_above_message(keys::FPS_MAX + 1)
+        ));
+
+        let mut sound = named_device(keys::CLASS_SOUND, "");
+        sound.set_int(keys::KEY_FPS, i64::from(FPS_BELOW));
+        let loaded = load_parse_device(sound);
+        assert!(notice_has_level(
+            &loaded.setup_notices,
+            Level::Warn,
+            &games::fps_below_message(FPS_BELOW)
+        ));
+
+        let mut rejected = named_device(keys::CLASS_USB, UNKNOWN_DEVICE_SUBTYPE);
+        rejected.set_int(keys::KEY_FPS, i64::from(FPS_BELOW));
+        let loaded = load_parse_device(rejected);
+        assert!(notice_absent(
+            &loaded.setup_notices,
+            &games::fps_below_message(FPS_BELOW)
+        ));
+    }
+
+    #[test]
+    fn opened_device_fps_matches_c_default_and_clamp() {
+        let missing = open_tach_fps(None);
+        assert_eq!(
+            missing.devices.device(0).unwrap().fps(),
+            keys::FPS_DEFAULT as u32
+        );
+        assert!(notice_absent(
+            &missing.setup_notices,
+            &games::fps_below_message(0)
+        ));
+
+        let below = open_tach_fps(Some(0));
+        assert_eq!(below.devices.device(0).unwrap().fps(), keys::FPS_MIN as u32);
+        assert!(notice_has_level(
+            &below.setup_notices,
+            Level::Warn,
+            &games::fps_below_message(0)
+        ));
+
+        let above = open_tach_fps(Some(i64::from(keys::FPS_MAX) + 1));
+        assert_eq!(above.devices.device(0).unwrap().fps(), keys::FPS_MAX as u32);
+        assert!(notice_has_level(
+            &above.setup_notices,
+            Level::Warn,
+            &games::fps_above_message(keys::FPS_MAX + 1)
+        ));
+    }
+
+    #[test]
     fn csl_effect_keeps_parsed_frequency_modulation() {
         const FREQ: i64 = 40;
         const FREQ_MAX: i64 = 80;
@@ -4898,6 +5054,33 @@ mod tests {
         };
         open_profile_probed(&config, 0, false, PLAY_USES_PULSES, |_vendor, _product| {
             false
+        })
+    }
+
+    fn named_device(class: &str, subtype: &str) -> DeviceEntry {
+        let mut device = DeviceEntry::new();
+        device.set_str(keys::KEY_DEVICE, class);
+        device.set_str(keys::KEY_TYPE, subtype);
+        device
+    }
+
+    fn open_tach_fps(fps: Option<i64>) -> ProfileLoad {
+        let mut device = named_device(keys::CLASS_USB, keys::TYPE_TACHOMETER);
+        device.set_str(keys::KEY_CONFIG, sample_xml());
+        device.set_int(keys::KEY_GRANULARITY, GRANULARITY_ONE);
+        device.set_bool(keys::KEY_ENABLED, true);
+        if let Some(fps) = fps {
+            device.set_int(keys::KEY_FPS, fps);
+        }
+        let config = CargopitConfig {
+            profiles: vec![SimProfile {
+                devices: vec![device],
+                ..SimProfile::default()
+            }],
+            extra: Vec::new(),
+        };
+        open_profile_probed(&config, 0, false, PLAY_USES_PULSES, |_vendor, _product| {
+            true
         })
     }
 

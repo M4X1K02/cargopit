@@ -872,6 +872,20 @@ pub fn starting_device_message(device_type: i32, id: i32, fps: u32) -> String {
     format!("starting device type {device_type} at id {id} on its own thread at {fps} fps")
 }
 
+pub fn fps_below_message(fps: i32) -> String {
+    format!(
+        "fps {fps} is below {min}, using {min}",
+        min = cargopit_config::keys::FPS_MIN
+    )
+}
+
+pub fn fps_above_message(fps: i32) -> String {
+    format!(
+        "fps {fps} is above {max}, using {max}",
+        max = cargopit_config::keys::FPS_MAX
+    )
+}
+
 pub fn device_runner_message(index: i32, updates: u64, overruns: u64) -> String {
     format!("device {index}: {updates} updates, {overruns} overruns")
 }
@@ -1948,6 +1962,12 @@ mod tests {
         assert_eq!(
             starting_device_message(cargopit_config::names::DEVICE_USB, 0, 60),
             "starting device type 0 at id 0 on its own thread at 60 fps"
+        );
+        assert_eq!(fps_below_message(0), "fps 0 is below 1, using 1");
+        assert_eq!(fps_below_message(-5), "fps -5 is below 1, using 1");
+        assert_eq!(
+            fps_above_message(cargopit_config::keys::FPS_MAX + 1),
+            "fps 1001 is above 1000, using 1000"
         );
         assert_eq!(
             device_runner_message(0, 1, 0),
