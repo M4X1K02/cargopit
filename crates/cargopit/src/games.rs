@@ -25,6 +25,8 @@ pub const MSG_EXITING: &str = "Cargopit is exiting...";
 pub const MSG_RELEASE_LOOP: &str = "release loop";
 pub const MSG_RELEASING_DEVICES: &str = "releasing devices, please wait";
 pub const MSG_RESTART_CHECK: &str = "restarting checking for data...";
+pub const MSG_STOPPED_CHECKING: &str = "stopped checking for data";
+pub const MSG_THREADS_STOPPED: &str = "All threads stopped...";
 pub const MSG_RELOAD: &str = "reload requested, releasing devices to load the saved profile";
 pub const MSG_CONTROL_PATH_TOO_LONG: &str =
     "control socket path is too long; control socket disabled";
@@ -155,6 +157,14 @@ pub enum PlayAction {
     Wait,
     StartMapping { use_udp: bool },
     Release,
+}
+
+pub fn simfree_returned_message(code: i32) -> String {
+    format!("simfree returned {code}")
+}
+
+pub fn datacheck_still_running(phase: PlayPhase, use_udp: bool) -> bool {
+    phase != PlayPhase::Mapping || !use_udp
 }
 
 pub fn simd_map_is_stale(map_api: i32, daemon_advancing: bool) -> bool {
@@ -323,6 +333,37 @@ pub fn initializing_simdevices_message(simulator_api: i32) -> String {
 
 pub fn skipping_disabled_message(index: i32) -> String {
     format!("skipping disabled device at index {index}")
+}
+
+pub fn device_type_message(name: &str) -> String {
+    format!("device type: {name}")
+}
+
+pub fn device_subtype_message(name: &str) -> String {
+    format!("device sub type: {name}")
+}
+
+pub fn device_config_file_message(path: &str) -> String {
+    format!("device config file: {path}")
+}
+
+const INVALID_DEVICE_TYPE_BODY: &str =
+    "does not appear to be a valid device type, but attempting to continue with other devices";
+const INVALID_DEVICE_SUBTYPE_BODY: &str =
+    "does not appear to be a valid device sub type, but attempting to continue with other devices";
+const INVALID_DEVICE_SUBSUBTYPE_BODY: &str =
+    "does not appear to be a valid device sub sub type, but attempting to continue with other devices";
+
+pub fn invalid_device_type_message(name: &str) -> String {
+    format!("{name} {INVALID_DEVICE_TYPE_BODY}")
+}
+
+pub fn invalid_device_subtype_message(name: &str) -> String {
+    format!("{name} {INVALID_DEVICE_SUBTYPE_BODY}")
+}
+
+pub fn invalid_device_subsubtype_message(name: &str) -> String {
+    format!("{name} {INVALID_DEVICE_SUBSUBTYPE_BODY}")
 }
 
 pub const MSG_INIT_USB: &str = "initializing usb device...";
@@ -1096,6 +1137,16 @@ mod tests {
         assert_eq!(MSG_RELEASE_LOOP, "release loop");
         assert_eq!(MSG_RELEASING_DEVICES, "releasing devices, please wait");
         assert_eq!(MSG_RESTART_CHECK, "restarting checking for data...");
+        assert_eq!(MSG_STOPPED_CHECKING, "stopped checking for data");
+        assert_eq!(MSG_THREADS_STOPPED, "All threads stopped...");
+        const SIMFREE_OK: i32 = 0;
+        const SIMFREE_BUSY: i32 = 1;
+        assert_eq!(simfree_returned_message(SIMFREE_OK), "simfree returned 0");
+        assert_eq!(simfree_returned_message(SIMFREE_BUSY), "simfree returned 1");
+        assert!(datacheck_still_running(PlayPhase::Searching, true));
+        assert!(datacheck_still_running(PlayPhase::Searching, false));
+        assert!(datacheck_still_running(PlayPhase::Mapping, false));
+        assert!(!datacheck_still_running(PlayPhase::Mapping, true));
         assert_eq!(
             MSG_RELOAD,
             "reload requested, releasing devices to load the saved profile"
@@ -1284,6 +1335,39 @@ mod tests {
         assert_eq!(
             skipping_disabled_message(3),
             "skipping disabled device at index 3"
+        );
+        assert_eq!(
+            device_type_message(cargopit_config::keys::CLASS_USB),
+            "device type: USB"
+        );
+        assert_eq!(
+            device_subtype_message(cargopit_config::keys::TYPE_WHEEL),
+            "device sub type: Wheel"
+        );
+        assert_eq!(
+            device_type_message(DEVICE_NAME_MISSING),
+            "device type: (null)"
+        );
+        assert_eq!(
+            device_subtype_message(DEVICE_NAME_MISSING),
+            "device sub type: (null)"
+        );
+        const SAMPLE_DEVICE_CONFIG: &str = "/tmp/revburner.xml";
+        assert_eq!(
+            device_config_file_message(SAMPLE_DEVICE_CONFIG),
+            "device config file: /tmp/revburner.xml"
+        );
+        assert_eq!(
+            invalid_device_type_message(DEVICE_NAME_MISSING),
+            "(null) does not appear to be a valid device type, but attempting to continue with other devices"
+        );
+        assert_eq!(
+            invalid_device_subtype_message(cargopit_config::keys::TYPE_WHEEL),
+            "Wheel does not appear to be a valid device sub type, but attempting to continue with other devices"
+        );
+        assert_eq!(
+            invalid_device_subsubtype_message(DEVICE_NAME_MISSING),
+            "(null) does not appear to be a valid device sub sub type, but attempting to continue with other devices"
         );
         assert_eq!(MSG_INIT_USB, "initializing usb device...");
         assert_eq!(MSG_INIT_WHEEL, "initializing wheel or pedals device...");

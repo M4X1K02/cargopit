@@ -179,9 +179,12 @@ impl GameSession {
         }
     }
 
+    pub fn clear_status(&mut self, issimd: bool) -> i32 {
+        unsafe { bindings::simapi_sim_clear(self.data.as_mut(), self.map, issimd) }
+    }
+
     pub fn clear(&mut self, issimd: bool) -> Result<(), &'static str> {
-        let rc = unsafe { bindings::simapi_sim_clear(self.data.as_mut(), self.map, issimd) };
-        if rc != 0 {
+        if self.clear_status(issimd) != 0 {
             return Err(CLEAR_FAILED);
         }
         Ok(())
