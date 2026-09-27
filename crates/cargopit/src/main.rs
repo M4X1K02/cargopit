@@ -751,6 +751,12 @@ fn announce_device_init(
     let devices = &config.profiles[index].devices;
     let device_count = i32::try_from(devices.len()).unwrap_or(i32::MAX);
     let confignum = i32::try_from(index).unwrap_or(i32::MAX);
+    slog(parsed, Level::Trace, games::MSG_UI_CONFIG_CHECK);
+    slog(
+        parsed,
+        Level::Trace,
+        &games::selected_config_num_message(confignum),
+    );
     slog(
         parsed,
         Level::Debug,
