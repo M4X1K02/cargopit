@@ -60,8 +60,12 @@ pub const MIN_TERMINAL_WIDTH: u16 = 60;
 pub const MIN_TERMINAL_HEIGHT: u16 = 20;
 
 pub const STATUS_REFRESH_MS: u64 = 1000;
-pub const EVENT_POLL_MS: u64 = 200;
+pub const UI_FRAME_MS: u64 = 16;
+pub const EVENT_POLL_MS: u64 = UI_FRAME_MS;
 pub const EVENT_DRAIN_MS: u64 = 0;
+pub const EVENT_DRAIN_LIMIT: usize = 16;
+pub const TEST_KEY_REPEAT_MS: u64 = 250;
+pub const LOG_REFRESH_MS: u64 = 100;
 pub const FLOW_HOLD_MS: u64 = 1000;
 pub const PROCESS_STOP_WAIT_MS: u64 = 1000;
 pub const PROCESS_STOP_POLL_MS: u64 = 50;
