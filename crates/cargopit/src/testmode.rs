@@ -1,5 +1,4 @@
 //! Hardware-test announcements and telemetry. Ticks are counted, not slept.
-//! Device backends stay closed.
 
 use cargopit_config::config::{CargopitConfig, DeviceEntry};
 use cargopit_config::keys::{self, KEY_THRESHOLD, KEY_TYRE};
@@ -18,6 +17,8 @@ use crate::devices::{self, profile_index};
 use crate::games;
 
 pub const TICK_US: u64 = 16_000;
+const NS_PER_US: u64 = 1_000;
+pub const TICK_NS: u64 = TICK_US * NS_PER_US;
 pub const STEP_PREFIX: &str = "test step: ";
 pub const MSG_PREPARING: &str = "preparing test with";
 pub const MSG_STARTING: &str = "Starting";
@@ -57,6 +58,8 @@ pub const LABEL_SUSPENSION: &str = "suspension";
 const US_PER_MS: u64 = 1000;
 const PHASE_HOLD_US: u64 = 3_000_000;
 const IDLE_HOLD_US: u64 = 1_000_000;
+const FOCUSED_EFFECT_HOLD_US: u64 = 500_000;
+const FOCUSED_GEAR_HOLD_US: u64 = 125_000;
 const RPM_IDLE: u32 = 1000;
 const RPM_MAX: u32 = 8000;
 const RPM_SWEEP_STEP: u32 = 50;
@@ -114,6 +117,8 @@ const QUIT_KEY: u8 = b'q';
 const QUIT_KEY_UPPER: u8 = b'Q';
 const QUIT_KEY_ESC: u8 = 0o33;
 const SIMAPI_TEST: u8 = simapi_sys::bindings::SimulatorAPI_SIMULATORAPI_SIMAPI_TEST as u8;
+pub const TEST_SIMULATOR_API: i32 =
+    simapi_sys::bindings::SimulatorAPI_SIMULATORAPI_SIMAPI_TEST as i32;
 const SIMEXE_TEST_NONE: u64 =
     simapi_sys::bindings::SimulatorEXE_SIMULATOREXE_SIMAPI_TEST_NONE as u64;
 const SIMAPI_VERSION: u8 = simapi_sys::SIMAPI_VERSION_VALUE as u8;
@@ -294,8 +299,32 @@ where
     F: FnMut(u64) -> bool,
     P: FnMut(&[u8]),
 {
-    let mut runner = Runner::new(options.trace, options.publish, halt, on_frame);
+    run_frames_with_device(options, halt, on_frame, &mut |_frame: &[u8]| {})
+}
+
+pub fn run_frames_with_device<F, P, D>(
+    options: &RunOptions<'_>,
+    halt: &mut F,
+    on_frame: &mut P,
+    on_device_frame: &mut D,
+) -> Run
+where
+    F: FnMut(u64) -> bool,
+    P: FnMut(&[u8]),
+    D: FnMut(&[u8]),
+{
+    let mut runner = Runner::new(
+        options.trace,
+        options.publish,
+        options.device_index.is_some(),
+        halt,
+        on_frame,
+        on_device_frame,
+    );
     set_identity(&mut runner.frame);
+    if options.device_index.is_some() {
+        set_basic(&mut runner.frame);
+    }
     runner.publish_frame(false);
     if let Some(index) = options.device_index {
         runner.lines.push(format!("{MSG_DEVICE_INDEX} {index}"));
@@ -350,7 +379,7 @@ fn effect_uses_tyre(effect: i32) -> bool {
         || effect == EFFECT_SUSPENSION
 }
 
-struct Runner<'a, F, P> {
+struct Runner<'a, F, P, D> {
     frame: Telemetry,
     lines: Vec<String>,
     trace: Vec<TickView>,
@@ -359,16 +388,26 @@ struct Runner<'a, F, P> {
     stopped: bool,
     record_trace: bool,
     publish: bool,
+    focused: bool,
     halt: &'a mut F,
     on_frame: &'a mut P,
+    on_device_frame: &'a mut D,
 }
 
-impl<'a, F, P> Runner<'a, F, P>
+impl<'a, F, P, D> Runner<'a, F, P, D>
 where
     F: FnMut(u64) -> bool,
     P: FnMut(&[u8]),
+    D: FnMut(&[u8]),
 {
-    fn new(record_trace: bool, publish: bool, halt: &'a mut F, on_frame: &'a mut P) -> Self {
+    fn new(
+        record_trace: bool,
+        publish: bool,
+        focused: bool,
+        halt: &'a mut F,
+        on_frame: &'a mut P,
+        on_device_frame: &'a mut D,
+    ) -> Self {
         let frame = Telemetry::new();
         let scratch = vec![0u8; frame.byte_len()];
         Self {
@@ -380,8 +419,10 @@ where
             stopped: false,
             record_trace,
             publish,
+            focused,
             halt,
             on_frame,
+            on_device_frame,
         }
     }
 
@@ -422,16 +463,16 @@ where
     }
 
     fn publish_frame(&mut self, bump_mtick: bool) {
-        if !self.publish {
-            return;
-        }
-        if bump_mtick {
+        if self.publish && bump_mtick {
             self.frame.set_mtick(self.frame.mtick().wrapping_add(1));
         }
         if !self.frame.copy_into(&mut self.scratch) {
             return;
         }
-        (self.on_frame)(&self.scratch);
+        if self.publish {
+            (self.on_frame)(&self.scratch);
+        }
+        (self.on_device_frame)(&self.scratch);
     }
 
     fn record(&mut self) {
@@ -503,16 +544,36 @@ where
         self.announce_named(MSG_STARTING, label);
         set_basic(&mut self.frame);
         if is_haptic(subject) {
-            self.run_haptic(subject);
+            if self.focused {
+                self.run_focused_haptic(subject);
+            } else {
+                self.run_haptic(subject);
+            }
         } else {
             self.run_lights();
         }
         if self.halted() {
             return;
         }
+        if self.focused {
+            self.announce_named(MSG_FINISHED, label);
+            return;
+        }
         reset_idle(&mut self.frame);
         self.phase(MSG_COAST, IDLE_HOLD_US, Mod::None);
         self.announce_named(MSG_FINISHED, label);
+    }
+
+    fn run_focused_haptic(&mut self, subject: &TestSubject) {
+        match subject.effect.unwrap_or(EFFECT_ENGINE) {
+            EFFECT_ENGINE => self.run_focused_engine(),
+            EFFECT_GEAR => self.run_focused_gear(),
+            EFFECT_TYRE_SLIP => self.run_spin_for(subject, FOCUSED_EFFECT_HOLD_US),
+            EFFECT_TYRE_LOCK => self.run_lock_for(subject, FOCUSED_EFFECT_HOLD_US),
+            EFFECT_ABS => self.run_abs_for(subject, FOCUSED_EFFECT_HOLD_US),
+            EFFECT_SUSPENSION => self.run_suspension_for(FOCUSED_EFFECT_HOLD_US),
+            _ => {}
+        }
     }
 
     fn run_haptic(&mut self, subject: &TestSubject) {
@@ -525,6 +586,17 @@ where
             EFFECT_SUSPENSION => self.run_suspension(),
             _ => {}
         }
+    }
+
+    fn run_focused_engine(&mut self) {
+        self.frame.set_gas(GAS_CRUISE);
+        self.frame.set_rpms(RPM_MAX);
+        self.phase(MSG_REV, FOCUSED_EFFECT_HOLD_US, Mod::None);
+    }
+
+    fn run_focused_gear(&mut self) {
+        set_gear(&mut self.frame, GEAR_FIRST, GEAR_CHAR_FIRST);
+        self.phase(MSG_FIRST, FOCUSED_GEAR_HOLD_US, Mod::None);
     }
 
     fn run_engine(&mut self) {
@@ -549,27 +621,43 @@ where
     }
 
     fn run_spin(&mut self, subject: &TestSubject) {
+        self.run_spin_for(subject, PHASE_HOLD_US);
+    }
+
+    fn run_spin_for(&mut self, subject: &TestSubject, hold_us: u64) {
         set_wheel_spin(&mut self.frame);
         self.lines.push(slip_line(subject, &self.frame));
-        self.phase(MSG_SPIN, PHASE_HOLD_US, Mod::None);
+        self.phase(MSG_SPIN, hold_us, Mod::None);
     }
 
     fn run_lock(&mut self, subject: &TestSubject) {
+        self.run_lock_for(subject, PHASE_HOLD_US);
+    }
+
+    fn run_lock_for(&mut self, subject: &TestSubject, hold_us: u64) {
         set_wheel_lock(&mut self.frame);
         self.lines.push(slip_line(subject, &self.frame));
-        self.phase(MSG_LOCK, PHASE_HOLD_US, Mod::None);
+        self.phase(MSG_LOCK, hold_us, Mod::None);
     }
 
     fn run_abs(&mut self, subject: &TestSubject) {
+        self.run_abs_for(subject, PHASE_HOLD_US);
+    }
+
+    fn run_abs_for(&mut self, subject: &TestSubject, hold_us: u64) {
         set_abs_phase(&mut self.frame);
         self.lines.push(slip_line(subject, &self.frame));
-        self.phase(MSG_ABS, PHASE_HOLD_US, Mod::Abs);
+        self.phase(MSG_ABS, hold_us, Mod::Abs);
     }
 
     fn run_suspension(&mut self) {
+        self.run_suspension_for(PHASE_HOLD_US);
+    }
+
+    fn run_suspension_for(&mut self, hold_us: u64) {
         self.frame.set_gas(GAS_CRUISE);
         fill_susp(&mut self.frame, SUSP_VEL_A);
-        self.phase(MSG_SUSPENSION, PHASE_HOLD_US, Mod::Suspension);
+        self.phase(MSG_SUSPENSION, hold_us, Mod::Suspension);
     }
 
     fn run_lights(&mut self) {
@@ -928,6 +1016,15 @@ mod tests {
         }
     }
 
+    fn focused_options(subjects: &[TestSubject]) -> RunOptions<'_> {
+        RunOptions {
+            subjects,
+            device_index: Some(DEVICE_INDEX_SELECT as u32),
+            trace: true,
+            publish: false,
+        }
+    }
+
     fn frame_from(bytes: &[u8]) -> Telemetry {
         let buf = simapi_sys::SimDataBuf::from_bytes(bytes).expect("frame");
         Telemetry::from_buf(buf)
@@ -1024,6 +1121,33 @@ mod tests {
         assert_eq!(run.trace[0].gear_char, b'1');
         assert_eq!(run.trace[GEAR_PULSE_TICKS as usize].gear, GEAR_NEUTRAL);
         assert_eq!(run.trace[GEAR_PULSE_TICKS as usize].gear_char, b'N');
+    }
+
+    #[test]
+    fn device_callback_sees_the_opening_frame_and_every_tick_without_publishing() {
+        let subject = TestSubject::lights(DeviceKind::Usb);
+        let mut device_frames = 0u64;
+        let mut published_frames = 0u64;
+        let run = run_frames_with_device(
+            &options(&[subject]),
+            &mut |_| false,
+            &mut |_| published_frames += 1,
+            &mut |_| device_frames += 1,
+        );
+        assert_eq!(device_frames, run.tick_count + 1);
+        assert_eq!(published_frames, 0);
+    }
+
+    #[test]
+    fn focused_gear_test_only_emits_one_shift() {
+        let subject = TestSubject::haptic(DeviceKind::Sound, EFFECT_GEAR);
+        let run = run_frames(&focused_options(&[subject]), &mut |_| false, &mut |_| {});
+        assert!(run.lines.iter().any(|line| line.contains(MSG_FIRST)));
+        assert!(!run.lines.iter().any(|line| line.contains(MSG_FOURTH)));
+        assert!(!run.lines.iter().any(|line| line.contains(MSG_COAST)));
+        assert_eq!(run.tick_count, tick_count(FOCUSED_GEAR_HOLD_US) + 1);
+        assert_eq!(run.trace[0].gear, GEAR_FIRST);
+        assert_eq!(run.trace[0].gear_char, b'1');
     }
 
     #[test]
@@ -1128,6 +1252,29 @@ mod tests {
         assert_eq!(close.simstatus(), STATUS_OFF);
         assert_eq!(run.simstatus, STATUS_OFF);
         assert_eq!(map_open_warning(SHM_OPEN_FAILED), MAP_OPEN_WARNING);
+    }
+
+    #[test]
+    fn device_frames_run_even_when_shared_memory_is_closed() {
+        const DEVICE_FRAME_COUNT: usize = 2;
+        let mut disabled = TestSubject::lights(DeviceKind::Usb);
+        disabled.active = false;
+        let subjects = [disabled];
+        let options = options(&subjects);
+        let mut device_frames = 0_usize;
+        let mut published_frames = 0_usize;
+        let _run = run_frames_with_device(
+            &options,
+            &mut |_| false,
+            &mut |_frame: &[u8]| {
+                published_frames += 1;
+            },
+            &mut |_frame: &[u8]| {
+                device_frames += 1;
+            },
+        );
+        assert_eq!(published_frames, 0);
+        assert_eq!(device_frames, DEVICE_FRAME_COUNT);
     }
 
     #[test]

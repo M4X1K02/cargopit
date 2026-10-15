@@ -878,8 +878,8 @@ fn test_mode(parsed: &cli::Invocation) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     slog(parsed, Level::Info, games::MSG_TEST_MODE_BANNER);
-    let pulse = open_pulse(parsed);
-    let code = run_test(parsed);
+    let mut pulse = open_pulse(parsed);
+    let code = run_test(parsed, pulse.as_mut());
     log_action_exit(
         parsed,
         code,
@@ -891,7 +891,7 @@ fn test_mode(parsed: &cli::Invocation) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_test(parsed: &cli::Invocation) -> i32 {
+fn run_test(parsed: &cli::Invocation, pulse: Option<&mut PulseSession>) -> i32 {
     let path = games::config_path_for(
         parsed.config_file.as_deref().map(std::path::Path::new),
         parsed.config_dir.as_deref().map(std::path::Path::new),
@@ -919,7 +919,11 @@ fn run_test(parsed: &cli::Invocation) -> i32 {
             subjects,
             device_index,
         } => {
-            print_test_script(parsed, &subjects, device_index);
+            let Some(config) = config.as_ref() else {
+                slog(parsed, Level::Error, games::MSG_TEST_INDEX);
+                return games::ERROR_INVALID_DEV;
+            };
+            print_test_script(parsed, config, &subjects, device_index, pulse);
             games::ERROR_NONE
         }
     }
@@ -1014,8 +1018,10 @@ fn log_action_exit(
 
 fn print_test_script(
     parsed: &cli::Invocation,
+    config: &cargopit_config::config::CargopitConfig,
     subjects: &[testmode::TestSubject],
     device_index: Option<u32>,
+    pulse: Option<&mut PulseSession>,
 ) {
     let mut session = GameSession::new();
     let open_error = session.try_open_publish_map();
@@ -1023,18 +1029,111 @@ fn print_test_script(
     if !publish {
         slog(parsed, Level::Warn, &testmode::map_open_warning(open_error));
     }
+    let opened_at_ns = SystemClock::new().monotonic_ns();
+    let mut loaded = load_test_devices(parsed, config, device_index, opened_at_ns, pulse);
+    let mut device_frame_count = 0;
     let options = testmode::RunOptions {
         subjects,
         device_index,
         trace: false,
         publish,
     };
-    let script = testmode::run_frames(&options, &mut |_| false, &mut |bytes| {
+    let mut publish_frame = |bytes: &[u8]| {
         let _ = session.publish_bytes(bytes);
-    });
+    };
+    let mut drive_device_frame = |bytes: &[u8]| {
+        drive_test_frame(
+            parsed,
+            &mut loaded,
+            bytes,
+            opened_at_ns,
+            &mut device_frame_count,
+        );
+    };
+    let script = testmode::run_frames_with_device(
+        &options,
+        &mut |_| false,
+        &mut publish_frame,
+        &mut drive_device_frame,
+    );
+    let release_ns =
+        opened_at_ns.saturating_add(device_frame_count.saturating_mul(testmode::TICK_NS));
+    log_notices(parsed, loaded.release(release_ns));
     for line in script.lines {
         slog(parsed, Level::Info, &line);
     }
+}
+
+fn load_test_devices(
+    parsed: &cli::Invocation,
+    config: &cargopit_config::config::CargopitConfig,
+    device_index: Option<u32>,
+    opened_at_ns: u64,
+    pulse: Option<&mut PulseSession>,
+) -> LoadedDevices {
+    let Some(profile_index) = devices::profile_index(config.profiles.len(), parsed.config_index)
+    else {
+        return LoadedDevices::empty();
+    };
+    if let Some(device_index) = device_index {
+        let Some(test_config) = selected_test_config(config, profile_index, device_index) else {
+            return LoadedDevices::empty();
+        };
+        return announce_device_init(
+            parsed,
+            &test_config,
+            profile_index,
+            testmode::TEST_SIMULATOR_API,
+            opened_at_ns,
+            true,
+            pulse,
+        );
+    }
+    announce_device_init(
+        parsed,
+        config,
+        profile_index,
+        testmode::TEST_SIMULATOR_API,
+        opened_at_ns,
+        true,
+        pulse,
+    )
+}
+
+fn selected_test_config(
+    config: &cargopit_config::config::CargopitConfig,
+    profile_index: usize,
+    device_index: u32,
+) -> Option<cargopit_config::config::CargopitConfig> {
+    let selected_index = usize::try_from(device_index).ok()?;
+    let mut test_config = config.clone();
+    let profile = test_config.profiles.get_mut(profile_index)?;
+    let mut selected = profile.devices.get(selected_index)?.clone();
+    selected.set_bool(cargopit_config::keys::KEY_ENABLED, true);
+    profile.devices = vec![selected];
+    Some(test_config)
+}
+
+fn drive_test_frame(
+    parsed: &cli::Invocation,
+    loaded: &mut LoadedDevices,
+    bytes: &[u8],
+    opened_at_ns: u64,
+    frame_count: &mut u64,
+) {
+    let Some(buf) = simapi_sys::SimDataBuf::from_bytes(bytes) else {
+        return;
+    };
+    let frame = Telemetry::from_buf(buf);
+    let now_ns = opened_at_ns.saturating_add((*frame_count).saturating_mul(testmode::TICK_NS));
+    for index in 0..loaded.len() {
+        let notices = loaded.tick(index, &frame, now_ns);
+        log_notices(parsed, notices);
+    }
+    if !loaded.is_empty() {
+        thread::sleep(Duration::from_micros(testmode::TICK_US));
+    }
+    *frame_count = (*frame_count).saturating_add(1);
 }
 
 fn slog_simd_ensure(parsed: &cli::Invocation, start: &EnsureStart) {
