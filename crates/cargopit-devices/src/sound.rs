@@ -1180,9 +1180,9 @@ mod tests {
         }
         let mut energy = 0.0;
         let mut count = 0.0;
-        for chunk in bytes[start..end].chunks_exact(BYTES_PER_SAMPLE) {
-            let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
-            let value = f64::from(sample);
+        let (samples, _) = bytes[start..end].as_chunks::<BYTES_PER_SAMPLE>();
+        for sample in samples {
+            let value = f64::from(i16::from_le_bytes(*sample));
             energy += value * value;
             count += 1.0;
         }
