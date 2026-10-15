@@ -57,6 +57,10 @@ const ABS_PULSE_DUTY: f64 = ABS_PULSE_ON_S / ABS_PULSE_PERIOD_S;
 const ABS_PULSE_DEPTH: f64 = 1.0;
 const SUSP_PLAY_REF: f64 = 8.0;
 const SUSP_GAMMA: f64 = 0.50;
+const SUSPENSION_HIT_S: f64 = 0.10;
+const SLIP_WOBBLE_HZ: f64 = 4.0;
+const SLIP_WOBBLE_DEPTH: f64 = 0.65;
+const SLIP_WOBBLE_DUTY: f64 = 0.0;
 const HARMONIC2: f64 = 2.0;
 const HARMONIC3: f64 = 3.0;
 const I16_MAX: f64 = 32_767.0;
@@ -201,6 +205,7 @@ struct Tone {
     lp1: f64,
     lp2: f64,
     last_gear: u32,
+    suspension_held: bool,
     noise: f64,
 }
 
@@ -367,6 +372,7 @@ impl Tone {
             lp1: 0.0,
             lp2: 0.0,
             last_gear: GEAR_NEUTRAL,
+            suspension_held: false,
             noise: NOISE_OFF,
         }
     }
@@ -381,9 +387,8 @@ impl Tone {
                 Some(tick) => sound_tick(tick),
                 None => silent_sound(),
             },
-            VibrationEffect::TyreSlip | VibrationEffect::TyreLock => {
-                self.update_continuous(frame, clock, SLIP_PLAY_REF)
-            }
+            VibrationEffect::TyreSlip => self.update_slip(frame, clock),
+            VibrationEffect::TyreLock => self.update_continuous(frame, clock, SLIP_PLAY_REF),
             VibrationEffect::AbsBrakes => self.update_abs(frame, clock),
             VibrationEffect::Suspension => self.update_suspension(frame, clock),
         }
@@ -429,16 +434,21 @@ impl Tone {
             return None;
         }
         self.last_gear = frame.gear();
-        self.curr_frequency = f64::from(self.frequency);
-        self.curr_amplitude = AMPLITUDE_UNITY;
-        self.curr_duration = 0.0;
-        self.phase = 0.0;
-        self.play_frequency = self.curr_frequency;
-        self.play_amplitude = f64::from(self.curr_amplitude);
-        self.play_gain = 1.0;
-        Some(SoundTick::Gear(SoundGearTick {
-            frequency: self.curr_frequency,
-        }))
+        let frequency = f64::from(self.frequency);
+        self.begin_decay(frequency, AMPLITUDE_UNITY, self.duration);
+        Some(SoundTick::Gear(SoundGearTick { frequency }))
+    }
+
+    fn update_slip(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {
+        let played = self.update_continuous(frame, clock, SLIP_PLAY_REF);
+        if played.tick.is_none() {
+            self.clear_wobble();
+            return played;
+        }
+        self.pulse_hz = SLIP_WOBBLE_HZ;
+        self.pulse_depth = SLIP_WOBBLE_DEPTH;
+        self.pulse_duty = SLIP_WOBBLE_DUTY;
+        played
     }
 
     fn update_continuous(
@@ -503,38 +513,33 @@ impl Tone {
 
     fn update_suspension(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {
         if !chassis_is_rolling(frame) {
-            self.curr_frequency = 0.0;
-            self.curr_amplitude = 0;
-            self.curr_duration = 0.0;
-            self.duration = 0.0;
-            self.play_gain = 0.0;
-            self.play_frequency = 0.0;
-            self.play_amplitude = 0.0;
+            self.suspension_held = false;
+            self.stop_decay();
             return silent_sound();
         }
         let played = self.haptic.play_with_clock_traced(frame, clock);
-        let Some(level) = play_level(played.value, SUSP_PLAY_REF) else {
-            self.curr_frequency = 0.0;
-            self.curr_amplitude = 0;
+        let Some(level) = suspension_level(played.value) else {
+            self.suspension_held = false;
             return SoundPlay {
                 tick: None,
                 traces: played.traces,
             };
         };
-        let level = level.powf(SUSP_GAMMA);
-        let fmin = self.frequency;
-        let mut fmax = self.frequency_max;
-        if fmax < fmin {
-            fmax = fmin;
+        if self.suspension_held {
+            return SoundPlay {
+                tick: None,
+                traces: played.traces,
+            };
         }
-        self.duration = 0.0;
-        self.curr_frequency = f64::from(fmin) + (f64::from(fmax) - f64::from(fmin)) * level;
-        self.curr_amplitude = amplitude_from_level(level);
+        self.suspension_held = true;
+        let frequency = self.band_hz(level);
+        let amplitude = amplitude_from_level(level);
+        self.begin_decay(frequency, amplitude, SUSPENSION_HIT_S);
         SoundPlay {
             tick: Some(SoundTick::Suspension(SoundToneTick {
                 level,
-                frequency: self.curr_frequency,
-                amplitude: self.curr_amplitude,
+                frequency,
+                amplitude,
             })),
             traces: played.traces,
         }
@@ -562,7 +567,7 @@ impl Tone {
                 let end = offset + BYTES_PER_SAMPLE;
                 bytes[offset..end].copy_from_slice(&sample.to_le_bytes());
             }
-            self.advance_gear(&coeff);
+            self.advance_decay(&coeff);
         }
         bytes
     }
@@ -577,7 +582,43 @@ impl Tone {
         1.0
     }
 
-    fn advance_gear(&mut self, coeff: &Coeff) {
+    fn begin_decay(&mut self, frequency: f64, amplitude: u32, duration: f64) {
+        self.duration = duration;
+        self.curr_frequency = frequency;
+        self.curr_amplitude = amplitude;
+        self.curr_duration = 0.0;
+        self.phase = 0.0;
+        self.play_frequency = frequency;
+        self.play_amplitude = f64::from(amplitude);
+        self.play_gain = 1.0;
+    }
+
+    fn stop_decay(&mut self) {
+        self.duration = 0.0;
+        self.curr_duration = 0.0;
+        self.curr_frequency = 0.0;
+        self.curr_amplitude = 0;
+        self.play_frequency = 0.0;
+        self.play_amplitude = 0.0;
+        self.play_gain = 0.0;
+    }
+
+    fn clear_wobble(&mut self) {
+        self.pulse_hz = 0.0;
+        self.pulse_depth = 0.0;
+        self.pulse_duty = 0.0;
+    }
+
+    fn band_hz(&self, level: f64) -> f64 {
+        let fmin = f64::from(self.frequency);
+        let mut fmax = f64::from(self.frequency_max);
+        if fmax < fmin {
+            fmax = fmin;
+        }
+        fmin + (fmax - fmin) * clamp_unit(level)
+    }
+
+    fn advance_decay(&mut self, coeff: &Coeff) {
         if self.duration <= 0.0 || self.curr_frequency <= 0.0 {
             return;
         }
@@ -690,6 +731,10 @@ fn coeffs() -> Coeff {
 
 fn clamp_unit(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
+}
+
+fn suspension_level(play: f64) -> Option<f64> {
+    play_level(play, SUSP_PLAY_REF).map(|level| level.powf(SUSP_GAMMA))
 }
 
 fn play_level(play: f64, play_ref: f64) -> Option<f64> {
@@ -960,6 +1005,104 @@ mod tests {
     }
 
     #[test]
+    fn slip_wobbles_while_lock_stays_steady() {
+        let mut slip = effect_voice(VibrationEffect::TyreSlip);
+        slip.update(
+            &slip_frame(),
+            &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS),
+        )
+        .expect("slip");
+        assert_eq!(slip.tone.pulse_hz, SLIP_WOBBLE_HZ);
+        assert_eq!(slip.tone.pulse_depth, SLIP_WOBBLE_DEPTH);
+        assert_eq!(slip.tone.pulse_duty, SLIP_WOBBLE_DUTY);
+        let mut lock = effect_voice(VibrationEffect::TyreLock);
+        lock.update(
+            &lock_frame(),
+            &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS),
+        )
+        .expect("lock");
+        assert_eq!(lock.tone.pulse_hz, NOISE_OFF);
+        assert_eq!(lock.tone.pulse_depth, NOISE_OFF);
+        let high = WOBBLE_HIGH_PHASE;
+        let low = WOBBLE_LOW_PHASE;
+        let slip_ratio = window_ratio(&mut slip, high, low);
+        let lock_ratio = window_ratio(&mut lock, high, low);
+        assert!(slip_ratio > LOCK_WOBBLE_RATIO_MAX);
+        assert!(lock_ratio < LOCK_WOBBLE_RATIO_MAX);
+    }
+
+    #[test]
+    fn slip_wobble_clears_when_the_tyre_grips() {
+        let mut slip = effect_voice(VibrationEffect::TyreSlip);
+        slip.update(
+            &slip_frame(),
+            &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS),
+        )
+        .expect("slip");
+        assert!(slip
+            .update(
+                &Telemetry::new(),
+                &VirtualClock::from_monotonic_ns(CLOCK_NEXT_NS)
+            )
+            .is_none());
+        assert_eq!(slip.tone.pulse_hz, NOISE_OFF);
+        assert_eq!(slip.tone.pulse_depth, NOISE_OFF);
+    }
+
+    #[test]
+    fn suspension_hit_fades_after_the_spike() {
+        let mut voice = effect_voice(VibrationEffect::Suspension);
+        assert!(voice
+            .update(
+                &suspension_frame(SUSP_BASE),
+                &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS)
+            )
+            .is_none());
+        voice
+            .update(
+                &suspension_frame(SUSP_SPIKE),
+                &VirtualClock::from_monotonic_ns(CLOCK_NEXT_NS),
+            )
+            .expect("hit");
+        assert_eq!(voice.tone.duration, SUSPENSION_HIT_S);
+        let early = voice.render(RENDER_BYTES);
+        assert!(early.iter().any(|byte| *byte != 0));
+        let settle_s = SUSPENSION_HIT_S + RELEASE_S;
+        let nbytes = (SAMPLE_RATE * settle_s) as usize * BYTES_PER_SAMPLE * CHANNELS;
+        let _ = voice.render(nbytes);
+        let tail = voice.render(RENDER_BYTES);
+        assert!(tail.iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn suspension_does_not_retrigger_while_the_spike_holds() {
+        const HELD_S: f64 = 0.04;
+        let mut voice = effect_voice(VibrationEffect::Suspension);
+        assert!(voice
+            .update(
+                &suspension_frame(SUSP_BASE),
+                &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS)
+            )
+            .is_none());
+        voice
+            .update(
+                &suspension_frame(SUSP_SPIKE),
+                &VirtualClock::from_monotonic_ns(CLOCK_NEXT_NS),
+            )
+            .expect("hit");
+        voice.tone.curr_duration = HELD_S;
+        let third_ns = CLOCK_NEXT_NS + CLOCK_TICK_NS;
+        assert!(voice
+            .update(
+                &suspension_frame(SUSP_SPIKE),
+                &VirtualClock::from_monotonic_ns(third_ns)
+            )
+            .is_none());
+        assert_eq!(voice.tone.curr_duration, HELD_S);
+        assert!(voice.tone.suspension_held);
+    }
+
+    #[test]
     fn suspension_tick_logs_after_a_spike() {
         let mut voice = effect_voice(VibrationEffect::Suspension);
         let first = suspension_frame(SUSP_BASE);
@@ -1013,6 +1156,42 @@ mod tests {
         frame
     }
 
+    fn window_ratio(voice: &mut ShakerVoice, high_phase: f64, low_phase: f64) -> f64 {
+        let period = (SAMPLE_RATE / SLIP_WOBBLE_HZ) as usize;
+        let carrier = (SAMPLE_RATE / f64::from(HAPTIC_HZ)) as usize;
+        let high_at = (high_phase * period as f64) as usize;
+        let low_at = (low_phase * period as f64) as usize;
+        let end = low_at + carrier;
+        let bytes = voice.render(end * BYTES_PER_SAMPLE * CHANNELS);
+        let high = slice_rms(&bytes, high_at, carrier);
+        let low = slice_rms(&bytes, low_at, carrier);
+        if low <= 0.0 {
+            return 0.0;
+        }
+        high / low
+    }
+
+    fn slice_rms(bytes: &[u8], start_frame: usize, frames: usize) -> f64 {
+        let frame_bytes = BYTES_PER_SAMPLE * CHANNELS;
+        let start = start_frame * frame_bytes;
+        let end = (start_frame + frames) * frame_bytes;
+        if end > bytes.len() {
+            return 0.0;
+        }
+        let mut energy = 0.0;
+        let mut count = 0.0;
+        for chunk in bytes[start..end].chunks_exact(BYTES_PER_SAMPLE) {
+            let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+            let value = f64::from(sample);
+            energy += value * value;
+            count += 1.0;
+        }
+        if count <= 0.0 {
+            return 0.0;
+        }
+        (energy / count).sqrt()
+    }
+
     fn moving_frame(gas: f64, brake: f64, slip: f64) -> Telemetry {
         let mut frame = Telemetry::new();
         frame.set_velocity(MOVING_SPEED);
@@ -1023,6 +1202,9 @@ mod tests {
         frame
     }
 
+    const WOBBLE_HIGH_PHASE: f64 = 0.25;
+    const WOBBLE_LOW_PHASE: f64 = 0.75;
+    const LOCK_WOBBLE_RATIO_MAX: f64 = 1.25;
     const CLOCK_TICK_NS: u64 = 16_000_000;
     const CLOCK_NEXT_NS: u64 = CLOCK_TICK_NS + CLOCK_TICK_NS;
     const MOVING_SPEED: u32 = 80;
