@@ -107,6 +107,10 @@ pub struct App {
     last_flow: Option<Instant>,
     child_rx: Option<Receiver<(SessionKind, String)>>,
     child: Option<ChildSession>,
+    status_request_tx: mpsc::Sender<()>,
+    status_rx: Receiver<Option<control::PlayStatus>>,
+    status_pending: bool,
+    last_log_refresh: Instant,
     diag: Diagnostics,
 }
 
@@ -121,6 +125,15 @@ impl App {
         let tyres = tyres::load(&paths::diameters_path()).unwrap_or_default();
         let flags_original = tui_state.play_flags.clone();
         let profile_index = tui_state.profile_index;
+        let (status_request_tx, status_request_rx) = mpsc::channel();
+        let (status_result_tx, status_rx) = mpsc::channel();
+        thread::spawn(move || {
+            while status_request_rx.recv().is_ok() {
+                if status_result_tx.send(control::status()).is_err() {
+                    break;
+                }
+            }
+        });
         let mut app = Self {
             screen: Screen::Dashboard,
             previous: Screen::Dashboard,
@@ -172,6 +185,10 @@ impl App {
             last_flow: None,
             child_rx: None,
             child: None,
+            status_request_tx,
+            status_rx,
+            status_pending: false,
+            last_log_refresh: Instant::now(),
             diag: Diagnostics::default(),
         };
         app.clamp_profile_index();
@@ -274,9 +291,13 @@ impl App {
     fn refresh_runtime(&mut self) {
         let listing = process::process_listing();
         self.status = process::check_processes_from(&listing);
-        self.play_status = self.status.cargopit_running.then(control::status).flatten();
+        if self.status.cargopit_running {
+            self.request_status();
+        } else {
+            self.play_status = None;
+        }
         self.discovery = Discovery::live();
-        self.logs.refresh_files();
+        self.refresh_logs_now();
         self.extra_games = simapi_shm::extras_from_listing(&self.simd, &listing);
         self.refresh_diagnostics();
         if !self.status.cleaned_pid_files.is_empty() {
@@ -286,6 +307,45 @@ impl App {
             );
         }
         self.last_tick = Instant::now();
+    }
+
+    fn request_status(&mut self) {
+        if self.status_pending {
+            return;
+        }
+        if self.status_request_tx.send(()).is_ok() {
+            self.status_pending = true;
+        }
+    }
+
+    fn drain_status(&mut self) {
+        loop {
+            match self.status_rx.try_recv() {
+                Ok(status) => {
+                    self.status_pending = false;
+                    if self.status.cargopit_running {
+                        self.play_status = status;
+                    }
+                }
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    self.status_pending = false;
+                    return;
+                }
+            }
+        }
+    }
+
+    fn refresh_logs(&mut self) {
+        if self.last_log_refresh.elapsed() < Duration::from_millis(consts::LOG_REFRESH_MS) {
+            return;
+        }
+        self.refresh_logs_now();
+    }
+
+    fn refresh_logs_now(&mut self) {
+        self.logs.refresh_files();
+        self.last_log_refresh = Instant::now();
     }
 
     pub fn simapi_exists(&self) -> bool {
@@ -299,6 +359,7 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        self.drain_status();
         let shm_event = self.shm.drain();
         let status_due =
             self.last_tick.elapsed() >= Duration::from_millis(consts::STATUS_REFRESH_MS);
@@ -318,7 +379,7 @@ impl App {
         self.sync_simapi_diag();
         self.drain_child();
         if self.child.is_some() {
-            self.logs.refresh_files();
+            self.refresh_logs();
         }
     }
 
