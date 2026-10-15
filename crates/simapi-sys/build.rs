@@ -127,6 +127,8 @@ fn emit_layout(include: &Path, out_dir: &Path) {
 
 fn compile_mappers(root: &Path, include: &Path, proc: &ProcLibs) {
     let mut build = cc::Build::new();
+    // simapi is an external C dependency; keep its warnings out of this crate's build output.
+    build.warnings(false);
     build
         .include(include)
         .include(root.join("include"))
