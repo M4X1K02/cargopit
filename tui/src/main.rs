@@ -86,12 +86,8 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
 fn drain_events(app: &mut App, last_test_key: &mut Option<Instant>) -> Result<()> {
     for _ in 0..consts::EVENT_DRAIN_LIMIT {
         let input = event::read()?;
-        if !suppress_test_repeat(app.test_running(), &input, *last_test_key) {
-            let test_key = is_test_key(&input);
+        if accept_test_key(app.test_running(), &input, last_test_key) {
             app.handle_event(input)?;
-            if test_key {
-                *last_test_key = Some(Instant::now());
-            }
         }
         if app.should_quit {
             return Ok(());
@@ -103,11 +99,44 @@ fn drain_events(app: &mut App, last_test_key: &mut Option<Instant>) -> Result<()
     Ok(())
 }
 
-fn suppress_test_repeat(test_running: bool, input: &Event, last_test_key: Option<Instant>) -> bool {
-    if !test_running || !is_test_key(input) {
+fn accept_test_key(test_running: bool, input: &Event, last_press: &mut Option<Instant>) -> bool {
+    if test_key_released(input) {
+        *last_press = None;
+        return true;
+    }
+    if test_key_repeat(input) {
+        *last_press = Some(Instant::now());
         return false;
     }
-    last_test_key.is_some_and(|at| at.elapsed() < Duration::from_millis(consts::TEST_KEY_REPEAT_MS))
+    let repeated = suppress_test_repeat(test_running, input, *last_press);
+    if is_test_key(input) {
+        *last_press = Some(Instant::now());
+    }
+    !repeated
+}
+
+fn suppress_test_repeat(test_running: bool, input: &Event, last_test_key: Option<Instant>) -> bool {
+    test_running && is_test_key(input) && press_within_repeat_window(last_test_key)
+}
+
+fn press_within_repeat_window(last_press: Option<Instant>) -> bool {
+    last_press.is_some_and(|at| at.elapsed() < Duration::from_millis(consts::TEST_KEY_REPEAT_MS))
+}
+
+fn test_key_released(input: &Event) -> bool {
+    matches!(
+        input,
+        Event::Key(key)
+            if key.kind == KeyEventKind::Release && key.code == consts::KEY_TEST
+    )
+}
+
+fn test_key_repeat(input: &Event) -> bool {
+    matches!(
+        input,
+        Event::Key(key)
+            if key.kind == KeyEventKind::Repeat && key.code == consts::KEY_TEST
+    )
 }
 
 fn is_test_key(input: &Event) -> bool {
@@ -130,6 +159,12 @@ mod tests {
     fn release(code: KeyCode) -> Event {
         let mut key = KeyEvent::new(code, KeyModifiers::NONE);
         key.kind = KeyEventKind::Release;
+        Event::Key(key)
+    }
+
+    fn repeat(code: KeyCode) -> Event {
+        let mut key = KeyEvent::new(code, KeyModifiers::NONE);
+        key.kind = KeyEventKind::Repeat;
         Event::Key(key)
     }
 
@@ -164,5 +199,31 @@ mod tests {
     fn other_keys_are_never_suppressed() {
         let other = press(KeyCode::Char('x'));
         assert!(!suppress_test_repeat(true, &other, Some(Instant::now())));
+    }
+
+    #[test]
+    fn holding_the_test_key_keeps_later_presses_suppressed() {
+        let mut last = None;
+        let key = press(consts::KEY_TEST);
+        assert!(accept_test_key(false, &key, &mut last));
+        assert!(!accept_test_key(true, &key, &mut last));
+        assert!(!accept_test_key(true, &key, &mut last));
+    }
+
+    #[test]
+    fn release_allows_the_next_press_immediately() {
+        let mut last = Some(Instant::now());
+        let key = press(consts::KEY_TEST);
+        assert!(accept_test_key(true, &release(consts::KEY_TEST), &mut last));
+        assert!(last.is_none());
+        assert!(accept_test_key(true, &key, &mut last));
+    }
+
+    #[test]
+    fn key_repeat_refreshes_the_window_without_being_delivered() {
+        let mut last = repeat_window_ago();
+        let key = press(consts::KEY_TEST);
+        assert!(!accept_test_key(true, &repeat(consts::KEY_TEST), &mut last));
+        assert!(!accept_test_key(true, &key, &mut last));
     }
 }
