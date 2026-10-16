@@ -22,6 +22,8 @@ find_package(Python3 COMPONENTS Interpreter)
 if (Python3_Interpreter_FOUND)
     add_test(NAME fr_to_filterchain_test
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fr_to_filterchain_test.py)
+    add_test(NAME seat_sweep_test
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/seat_sweep_test.py)
 endif()
 
 find_program(BASH_PROGRAM bash)

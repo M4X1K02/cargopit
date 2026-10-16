@@ -29,7 +29,7 @@ Follow these on every change:
 | `conf/` | Example `cargopit.config` |
 | `tests/` | CMake-wrapped `cargo test`, startup scripts, parity goldens. Hardware/interactive tools in `tests/manual/` |
 | `tui/` | Ratatui manager: `cargopit-tui` |
-| `tools/` | Installer helpers, distro packaging |
+| `tools/` | Installer helpers, distro packaging, haptic seat-sweep / filter-chain generators |
 | `udev/` | `69-cargopit.rules` |
 | `.github/workflows/` | PR build (`pr-build.yaml`), installer CI (`installer.yml`), manual release packages (`ci.yaml`) |
 
@@ -78,7 +78,7 @@ PR CI (`.github/workflows/pr-build.yaml`) configures with `-DENABLE_TESTS=ON` an
 ctest --test-dir build --output-on-failure --timeout 300
 ```
 
-Automated tests live in the Cargo workspace (`crates/` and `tui/`) plus `tests/` scripts (`startup_play.sh`, `version_reporting.sh`, parity goldens). Do not add hardware-dependent or interactive tools there; those belong in `tests/manual/`.
+Automated tests live in the Cargo workspace (`crates/` and `tui/`) plus `tests/` scripts (`startup_play.sh`, `version_reporting.sh`, `fr_to_filterchain_test.py`, `seat_sweep_test.py`, parity goldens). Do not add hardware-dependent or interactive tools there; those belong in `tests/manual/`. The phyphox seat-sweep tests use a mock HTTP server (Android and iOS), not a phone.
 
 Device-level check with real hardware (config must list only connected devices):
 

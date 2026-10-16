@@ -11,6 +11,9 @@
   PipeWire filter-chain sink with fitted peaking cuts, a subsonic high-pass,
   a band-top low-pass, and a clamp. Sweeps and presets stay in the user's
   config.
+- `tools/haptics/seat_sweep.py` plays a stepped sine on the shaker sink and
+  records the seat with phyphox (Android and iOS remote API) as a
+  `frequency_hz,transfer_db` CSV. iOS points above Nyquist are dropped.
 - The TUI lists hardware sinks before processor sinks, tags processors, and
   shows the selected sink's full name in the field help.
 

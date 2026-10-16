@@ -34,14 +34,26 @@ A single node can leave that chain. Carla, Easy Effects, or a WirePlumber rule c
 
 ![Haptic streams into a shared filter chain, and one tyre stream on its own EQ](docs/diagrams/audio-filters.svg)
 
-## Calibrating bass shakers: Work in progress
+## Calibrating bass shakers
 
 Seat response depends on the seat, the mount, and the amplifier. Cargopit does not ship a curve. Measure the seat, fit a filter, and keep both files with your own config.
 
-1. Put the phone on the seat, in the phyphox experiment **Acceleration with g**.
-2. Play a sine sweep through the shaker.
-3. Export the sweep as a CSV with the columns `frequency_hz` and `transfer_db`.
-4. From a source checkout, fit the filter and install it as a PipeWire drop-in. Replace the amplifier sink with the name from `pactl list short sinks`:
+`tools/haptics/seat_sweep.py` plays a stepped sine on the tactile amplifier sink and records the seat with phyphox **Acceleration with g** over the [remote HTTP API](https://phyphox.org/docs/remote-interface/). That API is the same on Android and iOS once **Allow remote access** is on.
+
+1. Put the phone on the seat. Open **Acceleration with g**. From the experiment menu, enable **Allow remote access**. Use the URL phyphox shows.
+2. Phone and PC on the same Wi-Fi. iPhone: turn cellular data off (iOS will not serve remote access while mobile data is up) and use port 80 (`http://PHONE_IP`). Android defaults to port 8080 (`http://PHONE_IP:8080`).
+3. Play the sweep and write `frequency_hz,transfer_db`. Replace the URL and the amplifier sink (`pactl list short sinks`, or `seat_sweep.py --list-sinks`):
+
+```bash
+tools/haptics/seat_sweep.py \
+    --phyphox http://192.168.1.20:8080 \
+    --sink <amp sink from pactl list short sinks> \
+    --output ~/.config/cargopit/seat-sweep.csv
+```
+
+`--check` only talks to phyphox (experiment, Android vs iOS, measuring state) without playing audio. iOS accelerometer rate is typically 100 Hz, so the script keeps points below 90% of Nyquist (~45 Hz) and drops the rest of the 10–120 Hz shaker band. Android phones that report 200 Hz or faster can cover the full band.
+
+4. From a source checkout, fit the filter and install it as a PipeWire drop-in:
 
 ```bash
 tools/haptics/fr_to_filterchain.py ~/.config/cargopit/seat-sweep.csv \
@@ -52,7 +64,7 @@ systemctl --user restart pipewire
 
 The sink is named `cargopit_tactile`. The fit cuts towards the median level of the 32–120 Hz band and does not boost. It adds the 10 Hz high-pass, the 120 Hz low-pass, and the sample clamp from the diagram above. `--help` lists the target, resonance, cut, filter, and channel options. PipeWire 1.0 or newer is required. In the TUI, set the Sound device's device id to `cargopit_tactile`.
 
-**Planned automation.** The sweep, the phyphox export, and the script are still a manual path. The project will take that path over: play the sweep on the shaker stream, import the `frequency_hz,transfer_db` CSV, fit the same filter graph, write the PipeWire drop-in next to the rig profile, and reload the sound device onto `cargopit_tactile`. The measurement still belongs to that seat. The generator will keep writing a curve for the rig you measured.
+The measurement still belongs to that seat. The TUI does not run this path yet; reload the sound device onto `cargopit_tactile` after the drop-in is in place.
 
 ## How to install
 
@@ -297,5 +309,5 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 ## ToDo
 
 - road and kerb sound haptic effects
-- in-project bass-shaker calibration: play the sweep, import a phyphox CSV, write the filter-chain, reload the sound device
+- TUI path for bass-shaker calibration: run the phyphox sweep, write the filter-chain, reload the sound device onto `cargopit_tactile`
 
