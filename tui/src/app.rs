@@ -712,7 +712,7 @@ impl App {
     }
 
     fn live_session_uses_current_profile(&self) -> bool {
-        control::status().is_some_and(|status| {
+        self.play_status.as_ref().is_some_and(|status| {
             usize::try_from(status.config_index).ok() == Some(self.profile_index)
         })
     }

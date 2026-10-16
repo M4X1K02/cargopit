@@ -52,6 +52,10 @@ fn publish_map_is_read_write(map: *mut bindings::SimMap) -> bool {
     }
 }
 
+fn map_api_is_test(map_api: i32) -> bool {
+    map_api == bindings::SimulatorAPI_SIMULATORAPI_SIMAPI_TEST as i32
+}
+
 fn detach_publish_view(map: *mut bindings::SimMap) {
     if map.is_null() {
         return;
@@ -143,20 +147,7 @@ impl GameSession {
     }
 
     pub fn map_live(&mut self, map_api: i32, udp: bool) {
-        if map_api != bindings::SimulatorAPI_SIMULATORAPI_SIMAPI_TEST as i32
-            && !publish_map_is_read_write(self.map)
-        {
-            return;
-        }
-        unsafe {
-            bindings::simapi_datamap(
-                self.data.as_mut(),
-                self.map,
-                map_api as bindings::SimulatorAPI,
-                udp,
-                std::ptr::null_mut(),
-            );
-        }
+        self.datamap(map_api, udp, std::ptr::null_mut());
     }
 
     pub fn open_publish_map(&mut self) {
@@ -188,7 +179,7 @@ impl GameSession {
     }
 
     pub fn publish_bytes(&mut self, bytes: &[u8]) -> bool {
-        if !publish_map_is_writable(self.map) || !self.write_frame(bytes) {
+        if !publish_map_is_read_write(self.map) || !self.write_frame(bytes) {
             return false;
         }
         self.copy_data_to_map()
@@ -203,7 +194,7 @@ impl GameSession {
     }
 
     fn copy_data_to_map(&mut self) -> bool {
-        if !publish_map_is_writable(self.map) {
+        if !publish_map_is_read_write(self.map) {
             return false;
         }
         let len = std::mem::size_of::<bindings::SimData>();
@@ -221,19 +212,49 @@ impl GameSession {
         if packet.is_empty() {
             return;
         }
-        if map_api != bindings::SimulatorAPI_SIMULATORAPI_SIMAPI_TEST as i32
-            && !publish_map_is_read_write(self.map)
-        {
+        self.datamap(map_api, true, packet.as_mut_ptr().cast());
+    }
+
+    fn datamap(&mut self, map_api: i32, udp: bool, base: *mut libc::c_char) {
+        if self.map.is_null() {
             return;
         }
+        // Game mappers read their own segments, then copy into `addr`.
+        // Hide a view that cannot be made writable so that copy is skipped
+        // and the read still updates this session.
+        let hidden = self.hide_readonly_publish_view(map_api);
         unsafe {
             bindings::simapi_datamap(
                 self.data.as_mut(),
                 self.map,
                 map_api as bindings::SimulatorAPI,
-                true,
-                packet.as_mut_ptr().cast(),
+                udp,
+                base,
             );
+        }
+        self.restore_publish_view(hidden);
+    }
+
+    fn hide_readonly_publish_view(&mut self, map_api: i32) -> Option<*mut libc::c_void> {
+        if map_api_is_test(map_api) || publish_map_is_read_write(self.map) {
+            return None;
+        }
+        let addr = unsafe { (*self.map).addr };
+        unsafe {
+            (*self.map).addr = std::ptr::null_mut();
+        }
+        Some(addr)
+    }
+
+    fn restore_publish_view(&mut self, hidden: Option<*mut libc::c_void>) {
+        let Some(addr) = hidden else {
+            return;
+        };
+        if self.map.is_null() {
+            return;
+        }
+        unsafe {
+            (*self.map).addr = addr;
         }
     }
 
@@ -289,7 +310,7 @@ impl Drop for GameSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{fd_allows_write, publish_map_is_read_write};
+    use super::{fd_allows_write, publish_map_is_read_write, GameSession, CLOSED_FD};
     use crate::bindings;
 
     const NULL_DEVICE: &std::ffi::CStr = c"/dev/null";
@@ -352,6 +373,109 @@ mod tests {
         unsafe { libc::munmap(map.addr, view_len()) };
         unsafe { libc::close(readonly) };
         unsafe { libc::close(writable) };
+    }
+
+    const MARKED_VELOCITY: u32 = 4_242;
+    const PUBLISH_MARK: u8 = 0x5a;
+
+    struct FdGuard(libc::c_int);
+
+    impl Drop for FdGuard {
+        fn drop(&mut self) {
+            if self.0 < 0 {
+                return;
+            }
+            unsafe { libc::close(self.0) };
+            self.0 = CLOSED_FD;
+        }
+    }
+
+    struct PublishView {
+        session: GameSession,
+    }
+
+    impl PublishView {
+        fn open(prot: libc::c_int) -> Self {
+            let fd = writable_memfd();
+            Self::from_fd(fd, prot)
+        }
+
+        fn open_readonly() -> (Self, FdGuard) {
+            let backing = writable_memfd();
+            let path = format!("/proc/self/fd/{backing}");
+            let c_path = std::ffi::CString::new(path).expect("path");
+            let readonly = unsafe { libc::open(c_path.as_ptr(), libc::O_RDONLY) };
+            assert!(readonly >= 0);
+            (Self::from_fd(readonly, libc::PROT_READ), FdGuard(backing))
+        }
+
+        fn from_fd(fd: libc::c_int, prot: libc::c_int) -> Self {
+            let session = GameSession::new();
+            let view = map_view(fd, prot);
+            unsafe {
+                (*session.map).fd = view.fd;
+                (*session.map).addr = view.addr;
+            }
+            Self { session }
+        }
+    }
+
+    impl Drop for PublishView {
+        fn drop(&mut self) {
+            unsafe {
+                let addr = (*self.session.map).addr;
+                let fd = (*self.session.map).fd;
+                (*self.session.map).addr = std::ptr::null_mut();
+                (*self.session.map).fd = CLOSED_FD;
+                (*self.session.map).hasSimApiDat = false;
+                if !addr.is_null() && addr != libc::MAP_FAILED {
+                    libc::munmap(addr, view_len());
+                }
+                if fd >= 0 {
+                    libc::close(fd);
+                }
+            }
+        }
+    }
+
+    fn lmu_map_api() -> i32 {
+        bindings::SimulatorAPI_SIMULATORAPI_LMU as i32
+    }
+
+    #[test]
+    fn readonly_fd_still_maps_telemetry_without_writing_the_view() {
+        let (mut view, _backing) = PublishView::open_readonly();
+        let before = view.session.published_bytes().expect("view").to_vec();
+        view.session.data_mut().velocity = MARKED_VELOCITY;
+        view.session.map_live(lmu_map_api(), false);
+        let after = view.session.published_bytes().expect("view").to_vec();
+        let velocity = view.session.data_mut().velocity;
+        let mtick = view.session.data_mut().mtick;
+        assert_eq!(after, before);
+        assert_eq!(velocity, MARKED_VELOCITY);
+        assert_ne!(mtick, 0);
+    }
+
+    #[test]
+    fn writable_fd_still_receives_the_datamap_publish() {
+        let mut view = PublishView::open(libc::PROT_READ);
+        view.session.data_mut().velocity = MARKED_VELOCITY;
+        view.session.map_live(lmu_map_api(), false);
+        let published = view.session.published_bytes().expect("published").to_vec();
+        let frame = view.session.frame_bytes().to_vec();
+        let velocity = view.session.data_mut().velocity;
+        assert_eq!(published, frame);
+        assert_eq!(velocity, MARKED_VELOCITY);
+    }
+
+    #[test]
+    fn publish_bytes_upgrades_a_read_only_view_of_a_writable_fd() {
+        let mut view = PublishView::open(libc::PROT_READ);
+        let mut bytes = vec![0u8; view_len()];
+        bytes[0] = PUBLISH_MARK;
+        assert!(view.session.publish_bytes(&bytes));
+        let published = view.session.published_bytes().expect("published");
+        assert_eq!(published[0], PUBLISH_MARK);
     }
 
     #[test]
