@@ -62,9 +62,9 @@ tools/haptics/fr_to_filterchain.py ~/.config/cargopit/seat-sweep.csv \
 systemctl --user restart pipewire
 ```
 
-The sink is named `cargopit_tactile`. The fit cuts towards the median level of the 32–120 Hz band and does not boost. It adds the 10 Hz high-pass, the 120 Hz low-pass, and the sample clamp from the diagram above. `--help` lists the target, resonance, cut, filter, and channel options. PipeWire 1.0 or newer is required. In the TUI, set the Sound device's device id to `cargopit_tactile`.
+The sink is named `cargopit_tactile`. The fit cuts towards the median level of the 32–120 Hz band and does not boost. It adds the 10 Hz high-pass, the 120 Hz low-pass, and the sample clamp from the diagram above. `--help` lists the target, resonance, cut, filter, and channel options. PipeWire 1.0 or newer is required.
 
-The measurement still belongs to that seat. The TUI does not run this path yet; reload the sound device onto `cargopit_tactile` after the drop-in is in place.
+`cargopit-tui` runs the same path: **Settings → Bass shaker calibration**, or **c** on a Sound device in Tune. After a successful sweep it asks to apply the automatic tactile filter. Yes writes `~/.config/pipewire/pipewire.conf.d/cargopit-tactile.conf`, points matching Sound devices at `cargopit_tactile`, restarts PipeWire, and reloads play. No keeps the CSV. The measurement still belongs to that seat.
 
 ## How to install
 
@@ -309,5 +309,4 @@ the GPL text. Debian-format inventory of this tree and bundled works:
 ## ToDo
 
 - road and kerb sound haptic effects
-- TUI path for bass-shaker calibration: run the phyphox sweep, write the filter-chain, reload the sound device onto `cargopit_tactile`
 

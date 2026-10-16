@@ -14,6 +14,10 @@
 - `tools/haptics/seat_sweep.py` plays a stepped sine on the shaker sink and
   records the seat with phyphox (Android and iOS remote API) as a
   `frequency_hz,transfer_db` CSV. iOS points above Nyquist are dropped.
+- The TUI **Bass shaker calibration** screen (Settings, or **c** while tuning
+  a Sound device) runs that sweep and then proposes applying the automatic
+  tactile filter: PipeWire drop-in, Sound devices retargeted to
+  `cargopit_tactile`, PipeWire restart, and play reload.
 - The TUI lists hardware sinks before processor sinks, tags processors, and
   shows the selected sink's full name in the field help.
 
