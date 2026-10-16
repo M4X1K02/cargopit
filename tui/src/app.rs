@@ -19,6 +19,7 @@ use crate::logs::LogState;
 use crate::paths;
 use crate::process::{self, ChildSession, ProcessStatus, SessionKind, TestScope};
 use crate::schema::{DeviceClass, FieldId};
+use crate::seat_sweep::{self, JobKind, SeatSweep};
 use crate::simapi_shm::{self, RunningGame, SimApiSession, TelemetryView};
 use crate::simd_config::{self, SimdConfig, SimdSim};
 use crate::templates;
@@ -38,6 +39,7 @@ pub enum Screen {
     TemplatePicker,
     Confirm(ConfirmKind),
     SettingsSub(SettingsSub),
+    SeatSweep,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +49,7 @@ pub enum ConfirmKind {
     RestartAfterSave,
     ApplyTemplate(usize),
     DiscardUnsaved,
+    ApplyTactileFilter,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,6 +99,7 @@ pub struct App {
     pub profile_original: SimProfile,
     pub profile_field: usize,
     pub tune_index: usize,
+    pub seat_sweep: SeatSweep,
     pub should_quit: bool,
     pub telemetry: TelemetryView,
     pub telemetry_live: bool,
@@ -174,6 +178,7 @@ impl App {
             profile_original: SimProfile::default(),
             profile_field: 0,
             tune_index: 0,
+            seat_sweep: SeatSweep::default(),
             should_quit: false,
             telemetry: TelemetryView::default(),
             telemetry_live: false,
@@ -381,6 +386,7 @@ impl App {
         if self.child.is_some() {
             self.refresh_logs();
         }
+        self.drain_seat_sweep();
     }
 
     fn refresh_extra_games(&mut self) {
@@ -549,6 +555,10 @@ impl App {
             self.handle_form_edit(key.code);
             return Ok(());
         }
+        if self.seat_sweep.edit_buffer.is_some() && matches!(self.screen, Screen::SeatSweep) {
+            self.handle_seat_sweep_edit(key.code);
+            return Ok(());
+        }
         if is_global_tab(key.code) && is_main_tab(&self.screen) {
             self.switch_tab_key(key.code);
             return Ok(());
@@ -574,6 +584,7 @@ impl App {
             Screen::TemplatePicker => self.handle_templates(key.code),
             Screen::Confirm(ref kind) => self.handle_confirm(key.code, kind.clone())?,
             Screen::SettingsSub(sub) => self.handle_settings_sub(key.code, sub)?,
+            Screen::SeatSweep => self.handle_seat_sweep(key.code)?,
         }
         Ok(())
     }
@@ -940,6 +951,138 @@ impl App {
         self.screen = Screen::DeviceTune;
     }
 
+    fn open_seat_sweep_from_tune(&mut self) {
+        if self.form.device.class() != DeviceClass::Sound {
+            self.message = consts::MSG_SEAT_SWEEP_NOT_SOUND.into();
+            return;
+        }
+        self.open_seat_sweep();
+    }
+
+    fn open_seat_sweep(&mut self) {
+        self.discovery = Discovery::live();
+        let parent = match self.screen {
+            Screen::DeviceTune => Screen::DeviceTune,
+            _ => Screen::Settings,
+        };
+        let selected = self.device_index;
+        let devices = self
+            .current_profile()
+            .map(|profile| profile.devices.clone())
+            .unwrap_or_default();
+        self.seat_sweep
+            .prepare(&self.discovery, &devices, selected, parent.clone());
+        self.previous = parent;
+        self.screen = Screen::SeatSweep;
+    }
+
+    fn handle_seat_sweep(&mut self, code: KeyCode) -> Result<()> {
+        if self.seat_sweep.busy() && code == consts::KEY_ESC {
+            self.seat_sweep.abort_job();
+            self.message = consts::SEAT_SWEEP_STATUS_STOPPED.into();
+            return Ok(());
+        }
+        match code {
+            consts::KEY_ESC => self.screen = self.seat_sweep.parent.clone(),
+            consts::KEY_UP | consts::KEY_K => {
+                self.seat_sweep.field =
+                    wrap_index(self.seat_sweep.field, consts::SEAT_SWEEP_FIELD_COUNT, -1);
+            }
+            consts::KEY_DOWN | consts::KEY_J => {
+                self.seat_sweep.field =
+                    wrap_index(self.seat_sweep.field, consts::SEAT_SWEEP_FIELD_COUNT, 1);
+            }
+            consts::KEY_LEFT | consts::KEY_H => {
+                if self.seat_sweep.field == consts::SEAT_SWEEP_FIELD_SINK {
+                    self.seat_sweep.cycle_sink(&self.discovery, -1);
+                }
+            }
+            consts::KEY_RIGHT | consts::KEY_L => {
+                if self.seat_sweep.field == consts::SEAT_SWEEP_FIELD_SINK {
+                    self.seat_sweep.cycle_sink(&self.discovery, 1);
+                }
+            }
+            consts::KEY_ENTER => self.seat_sweep.begin_edit(),
+            consts::KEY_SAVE => self.start_seat_sweep_run(),
+            consts::KEY_CALIBRATE => self.start_seat_sweep_check(),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_seat_sweep_edit(&mut self, code: KeyCode) {
+        let Some(buffer) = self.seat_sweep.edit_buffer.as_mut() else {
+            return;
+        };
+        match code {
+            consts::KEY_ESC => self.seat_sweep.cancel_edit(),
+            consts::KEY_ENTER => self.seat_sweep.commit_edit(),
+            consts::KEY_BACKSPACE => {
+                buffer.pop();
+            }
+            KeyCode::Char(ch) => buffer.push(ch),
+            _ => {}
+        }
+    }
+
+    fn start_seat_sweep_check(&mut self) {
+        match self.seat_sweep.start_check() {
+            Ok(()) => self.message = consts::SEAT_SWEEP_STATUS_CHECK.into(),
+            Err(err) => self.message = err.to_string(),
+        }
+    }
+
+    fn start_seat_sweep_run(&mut self) {
+        match self.seat_sweep.start_run() {
+            Ok(()) => self.message = consts::SEAT_SWEEP_STATUS_RUN.into(),
+            Err(err) => self.message = err.to_string(),
+        }
+    }
+
+    fn drain_seat_sweep(&mut self) {
+        let Some(kind) = self.seat_sweep.poll() else {
+            return;
+        };
+        self.message = self.seat_sweep.status.clone();
+        if kind == JobKind::Run && self.seat_sweep.status == consts::SEAT_SWEEP_STATUS_MEASURED {
+            self.open_confirm(ConfirmKind::ApplyTactileFilter);
+        }
+    }
+
+    fn apply_tactile_filter(&mut self) {
+        let devices = match self.current_profile() {
+            Some(profile) => profile.devices.as_slice(),
+            None => &[],
+        };
+        let channels = seat_sweep::device_channels(devices, self.seat_sweep.device_index);
+        let dest = seat_sweep::tactile_conf_path();
+        if let Err(err) = seat_sweep::write_filter_chain(
+            &self.seat_sweep.csv_path,
+            &self.seat_sweep.amp_sink,
+            channels,
+            &dest,
+        ) {
+            self.message = err.to_string();
+            return;
+        }
+        let selected = self.seat_sweep.device_index;
+        let amp = self.seat_sweep.amp_sink.clone();
+        let changed = if let Some(profile) = self.current_profile_mut() {
+            seat_sweep::retarget_sound_devices(&mut profile.devices, selected, &amp)
+        } else {
+            0
+        };
+        self.persist_config();
+        let pipewire = seat_sweep::restart_pipewire()
+            .err()
+            .map(|err| format!(" ({err})"))
+            .unwrap_or_default();
+        if changed > 0 {
+            self.apply_saved_profile();
+        }
+        self.message = format!("{} ({changed}){pipewire}", consts::MSG_TACTILE_APPLIED);
+    }
+
     fn handle_form(&mut self, code: KeyCode) -> Result<()> {
         match code {
             consts::KEY_ESC => self.leave_or_confirm_discard(),
@@ -1063,6 +1206,7 @@ impl App {
                 }
                 self.apply_saved_profile();
             }
+            consts::KEY_CALIBRATE => self.open_seat_sweep_from_tune(),
             _ => {}
         }
         Ok(())
@@ -1142,10 +1286,14 @@ impl App {
                 self.apply_confirm(kind.clone())?;
                 self.screen = match kind {
                     ConfirmKind::DiscardUnsaved => editor_parent(&previous),
+                    ConfirmKind::ApplyTactileFilter => Screen::SeatSweep,
                     _ => Screen::Devices,
                 };
             }
             consts::KEY_CONFIRM_NO | consts::KEY_ESC => {
+                if matches!(kind, ConfirmKind::ApplyTactileFilter) {
+                    self.message = consts::MSG_SEAT_SWEEP_SAVED_CSV.into();
+                }
                 self.screen = self.previous.clone();
             }
             _ => {}
@@ -1193,6 +1341,7 @@ impl App {
                     self.tui_state.play_flags = self.flags_original.clone();
                 }
             }
+            ConfirmKind::ApplyTactileFilter => self.apply_tactile_filter(),
         }
         Ok(())
     }
@@ -1214,6 +1363,10 @@ impl App {
                     consts::SETTINGS_INDEX_SIMD => SettingsSub::Simd,
                     consts::SETTINGS_INDEX_LUA => SettingsSub::Lua,
                     consts::SETTINGS_INDEX_TACH => SettingsSub::Tach,
+                    consts::SETTINGS_INDEX_SEAT_SWEEP => {
+                        self.open_seat_sweep();
+                        return;
+                    }
                     consts::SETTINGS_INDEX_TYRES => SettingsSub::Tyres,
                     consts::SETTINGS_INDEX_DIAGNOSTICS => SettingsSub::Diagnostics,
                     _ => SettingsSub::Raw,

@@ -2,7 +2,8 @@
 """Fit a PipeWire filter-chain tactile preset to a measured rig response.
 
 Input is a CSV of `frequency_hz,transfer_db` points from a sine sweep measured
-at the seat of your rig (for example phyphox "Acceleration with g"). The
+at the seat of your rig. `seat_sweep.py` records that CSV through phyphox
+"Acceleration with g" (Android and iOS remote API). The
 measurement is smoothed and corrected towards a flat target (by default the
 median level of the shaker band), never boosting and capping the cut, with an
 optional extra cut at a seat resonance. That curve is approximated with
