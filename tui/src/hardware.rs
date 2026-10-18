@@ -304,7 +304,7 @@ impl PactlSink {
             format!("{} ({})", self.description, self.name)
         };
         let label = if self.is_processor() {
-            format!("{base} [{}]", consts::LABEL_SINK_PROCESSOR)
+            format!("{base} {}", consts::LABEL_SINK_PROCESSOR_TAG)
         } else {
             base
         };
@@ -401,7 +401,7 @@ Sink #40
     #[test]
     fn processor_sinks_are_labelled() {
         let sinks = parse_pactl_sinks(PACTL_MIXED_SINKS);
-        let tag = format!("[{}]", consts::LABEL_SINK_PROCESSOR);
+        let tag = consts::LABEL_SINK_PROCESSOR_TAG;
         let label = |value: &str| {
             sinks
                 .iter()
@@ -413,9 +413,9 @@ Sink #40
             label("alsa_output.usb-Nobsound.analog-stereo"),
             "Tactile amplifier (alsa_output.usb-Nobsound.analog-stereo)"
         );
-        assert!(label("easyeffects_sink").ends_with(&tag));
-        assert!(label("cargopit_tactile").ends_with(&tag));
-        assert!(!label("alsa_output.pci.analog-stereo").contains(&tag));
+        assert!(label("easyeffects_sink").ends_with(tag));
+        assert!(label("cargopit_tactile").ends_with(tag));
+        assert!(!label("alsa_output.pci.analog-stereo").contains(tag));
     }
 
     #[test]

@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use cargopit_tui::app::{App, ConfirmKind, Screen, SettingsSub};
 use cargopit_tui::consts;
-use cargopit_tui::schema::FieldId;
+use cargopit_tui::schema::{DeviceClass, FieldId};
+use cargopit_tui::seat_sweep;
 use cargopit_tui::ui;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::backend::TestBackend;
@@ -30,12 +31,63 @@ const SEED_CAR: &str = "demo-car";
 const SEED_TYRE: f64 = 0.65;
 const LOG_WAIT_STEPS: u32 = 20;
 const LOG_WAIT_MS: u64 = 50;
+const SWEEP_WAIT_STEPS: u32 = 40;
+const STUB_PHYPOX_URL: &str = "http://127.0.0.1:8080";
+const SOUND_SEED_SINK: &str = "alsa_output.demo";
+const SEAT_SWEEP_STUB_PY: &str = r#"#!/usr/bin/env python3
+import math
+import sys
+from pathlib import Path
+
+FLAG_CHECK = "--check"
+FLAG_OUTPUT = "--output"
+CSV_FREQUENCY = "frequency_hz"
+CSV_TRANSFER = "transfer_db"
+START_HZ = 10.0
+END_HZ = 120.0
+POINTS = 24
+FLAT_DB = 3.0
+PEAK_HZ = 45.0
+PEAK_DB = 12.0
+PEAK_SIGMA_HZ = 4.0
+GAUSSIAN_EXP_SCALE = 0.5
+
+
+def main(argv):
+    if FLAG_CHECK in argv:
+        print("phyphox reachable")
+        return 0
+    output = None
+    if FLAG_OUTPUT in argv:
+        index = argv.index(FLAG_OUTPUT) + 1
+        if index < len(argv):
+            output = Path(argv[index])
+    if output is None:
+        print("missing --output", file=sys.stderr)
+        return 1
+    output.parent.mkdir(parents=True, exist_ok=True)
+    ratio = (END_HZ / START_HZ) ** (1.0 / (POINTS - 1))
+    lines = [f"{CSV_FREQUENCY},{CSV_TRANSFER}"]
+    for i in range(POINTS):
+        hz = START_HZ * ratio ** i
+        x = (hz - PEAK_HZ) / PEAK_SIGMA_HZ
+        db = FLAT_DB + PEAK_DB * math.exp(-GAUSSIAN_EXP_SCALE * x * x)
+        lines.append(f"{hz:.6f},{db:.6f}")
+    output.write_text("\n".join(lines) + "\n")
+    print(f"wrote {output}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+"#;
 
 #[test]
 fn walks_all_tui_features() {
     let root = isolate_xdg();
     seed_files(&root);
     let stub = write_stub_bin(&root);
+    write_haptic_stubs(&root);
     let mut app = App::new().expect("app");
     std::env::set_var(consts::ENV_PATH, &stub);
 
@@ -225,6 +277,21 @@ fn walks_all_tui_features() {
         "device-tune",
         &[consts::TITLE_TUNE, consts::TITLE_DEVICE_TEST],
     );
+    press(&mut app, consts::KEY_CALIBRATE);
+    shot(
+        &mut step,
+        &shots,
+        &app,
+        "seat-sweep-from-tune",
+        &[
+            consts::TITLE_SEAT_SWEEP,
+            consts::SEAT_SWEEP_LABEL_URL,
+            consts::SEAT_SWEEP_LABEL_SINK,
+        ],
+    );
+    assert!(matches!(app.screen, Screen::SeatSweep));
+    press(&mut app, consts::KEY_ESC);
+    assert!(matches!(app.screen, Screen::DeviceTune));
     press(&mut app, consts::KEY_RIGHT);
     press(&mut app, consts::KEY_ESC);
     leave_editor(&mut app);
@@ -354,7 +421,7 @@ fn walks_all_tui_features() {
     press(&mut app, consts::KEY_SAVE);
     press(&mut app, consts::KEY_ESC);
 
-    open_settings_item(&mut app, 1);
+    open_settings_item(&mut app, consts::SETTINGS_INDEX_SIMD);
     shot(
         &mut step,
         &shots,
@@ -368,7 +435,7 @@ fn walks_all_tui_features() {
     );
     press(&mut app, consts::KEY_ESC);
 
-    open_settings_item(&mut app, 2);
+    open_settings_item(&mut app, consts::SETTINGS_INDEX_LUA);
     shot(
         &mut step,
         &shots,
@@ -380,7 +447,7 @@ fn walks_all_tui_features() {
     shot(&mut step, &shots, &app, "settings-lua-copied", &[]);
     press(&mut app, consts::KEY_ESC);
 
-    open_settings_item(&mut app, 3);
+    open_settings_item(&mut app, consts::SETTINGS_INDEX_TACH);
     press(&mut app, consts::KEY_RIGHT);
     shot(
         &mut step,
@@ -391,7 +458,9 @@ fn walks_all_tui_features() {
     );
     press(&mut app, consts::KEY_ESC);
 
-    open_settings_item(&mut app, 4);
+    apply_seat_sweep_filter(&mut app, &mut step, &shots);
+
+    open_settings_item(&mut app, consts::SETTINGS_INDEX_TYRES);
     press(&mut app, consts::KEY_ADD);
     shot(
         &mut step,
@@ -402,7 +471,7 @@ fn walks_all_tui_features() {
     );
     press(&mut app, consts::KEY_ESC);
 
-    open_settings_item(&mut app, 5);
+    open_settings_item(&mut app, consts::SETTINGS_INDEX_DIAGNOSTICS);
     shot(
         &mut step,
         &shots,
@@ -412,7 +481,7 @@ fn walks_all_tui_features() {
     );
     press(&mut app, consts::KEY_ESC);
 
-    open_settings_item(&mut app, 6);
+    open_settings_item(&mut app, consts::SETTINGS_INDEX_RAW);
     shot(
         &mut step,
         &shots,
@@ -509,6 +578,132 @@ fn seed_files(root: &Path) {
     fs::write(cache.join("cargopit.log"), "seed log line\n").unwrap();
 }
 
+fn apply_seat_sweep_filter(app: &mut App, step: &mut usize, shots: &ShotSink) {
+    press(app, consts::KEY_TAB2);
+    select_profile_with_sound(app);
+    open_settings_item(app, consts::SETTINGS_INDEX_SEAT_SWEEP);
+    shot(
+        step,
+        shots,
+        app,
+        "settings-seat-sweep",
+        &[
+            consts::TITLE_SEAT_SWEEP,
+            consts::SEAT_SWEEP_LABEL_URL,
+            consts::SEAT_SWEEP_LABEL_SINK,
+        ],
+    );
+    assert!(matches!(app.screen, Screen::SeatSweep));
+    press(app, consts::KEY_ENTER);
+    for ch in STUB_PHYPOX_URL.chars() {
+        press_char(app, ch);
+    }
+    press(app, consts::KEY_ENTER);
+    enter_seat_sweep_sink(app, SOUND_SEED_SINK);
+    press(app, consts::KEY_CALIBRATE);
+    wait_until(
+        app,
+        |app| app.seat_sweep.status == consts::SEAT_SWEEP_STATUS_CHECKED,
+        "phyphox check",
+    );
+    press(app, consts::KEY_SAVE);
+    wait_until(
+        app,
+        |app| matches!(app.screen, Screen::Confirm(ConfirmKind::ApplyTactileFilter)),
+        "apply-filter confirm",
+    );
+    shot(
+        step,
+        shots,
+        app,
+        "confirm-apply-tactile",
+        &[consts::TITLE_CONFIRM, consts::TACTILE_SINK_NAME],
+    );
+    press(app, consts::KEY_CONFIRM_YES);
+    assert!(
+        app.message.contains(consts::MSG_TACTILE_APPLIED),
+        "apply message: {}",
+        app.message
+    );
+    let retargeted = app
+        .current_profile()
+        .map(|profile| {
+            profile.devices.iter().any(|device| {
+                device.class() == DeviceClass::Sound
+                    && device.get_str(consts::KEY_DEVID) == Some(consts::TACTILE_SINK_NAME)
+            })
+        })
+        .unwrap_or(false);
+    assert!(retargeted, "no Sound device pointed at cargopit_tactile");
+    let conf = fs::read_to_string(seat_sweep::tactile_conf_path()).expect("tactile conf");
+    assert!(
+        conf.contains(consts::TACTILE_SINK_NAME),
+        "filter-chain missing tactile sink:\n{conf}"
+    );
+    press(app, consts::KEY_ESC);
+    assert!(matches!(app.screen, Screen::Settings));
+}
+
+fn select_profile_with_sound(app: &mut App) {
+    for _ in 0..app.config.profiles.len() {
+        if app.current_profile().is_some_and(profile_has_sound) {
+            return;
+        }
+        press(app, consts::KEY_NEXT_PROFILE);
+    }
+    panic!("no profile with a Sound device");
+}
+
+fn profile_has_sound(profile: &cargopit_tui::config::SimProfile) -> bool {
+    profile
+        .devices
+        .iter()
+        .any(|device| device.class() == DeviceClass::Sound)
+}
+
+fn enter_seat_sweep_sink(app: &mut App, sink: &str) {
+    press(app, consts::KEY_DOWN);
+    press(app, consts::KEY_ENTER);
+    let existing = app.seat_sweep.edit_buffer.as_ref().map_or(0, String::len);
+    for _ in 0..existing {
+        press(app, consts::KEY_BACKSPACE);
+    }
+    for ch in sink.chars() {
+        press_char(app, ch);
+    }
+    press(app, consts::KEY_ENTER);
+}
+
+fn wait_until(app: &mut App, pred: impl Fn(&App) -> bool, what: &str) {
+    for _ in 0..SWEEP_WAIT_STEPS {
+        app.tick();
+        if pred(app) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(LOG_WAIT_MS));
+    }
+    panic!(
+        "{what} timed out: message={} status={} screen={:?}",
+        app.message, app.seat_sweep.status, app.screen
+    );
+}
+
+fn write_haptic_stubs(root: &Path) {
+    let sweep = root.join(consts::SEAT_SWEEP_PY);
+    fs::write(&sweep, SEAT_SWEEP_STUB_PY).unwrap();
+    let systemctl = root.join("systemctl-stub");
+    fs::write(&systemctl, "#!/bin/sh\nexit 0\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&systemctl).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&systemctl, perms).unwrap();
+    }
+    std::env::set_var(consts::ENV_CARGOPIT_SEAT_SWEEP, &sweep);
+    std::env::set_var(consts::ENV_CARGOPIT_SYSTEMCTL, &systemctl);
+}
+
 fn write_stub_bin(root: &Path) -> PathBuf {
     let bin = root.join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -545,7 +740,7 @@ configs = (
       {{
         {device} = "{sound}";
         {effect} = "{engine}";
-        {devid} = "alsa_output.demo";
+        {devid} = "{sound_sink}";
         {volume} = 70;
         {pan} = 1;
         {channels} = 2;
@@ -627,6 +822,7 @@ configs = (
         endled = consts::KEY_ENDLED,
         default_sim = consts::DEFAULT_SIM,
         default_car = consts::DEFAULT_CAR,
+        sound_sink = SOUND_SEED_SINK,
     )
 }
 

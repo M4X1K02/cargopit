@@ -175,6 +175,7 @@ pub const KEY_SAVE: KeyCode = KeyCode::Char('s');
 pub const KEY_TEST: KeyCode = KeyCode::Char('t');
 pub const KEY_TEMPLATE: KeyCode = KeyCode::Char('T');
 pub const KEY_APPLY: KeyCode = KeyCode::Char('A');
+pub const KEY_CALIBRATE: KeyCode = KeyCode::Char('c');
 pub const KEY_PLUS: KeyCode = KeyCode::Char('+');
 pub const KEY_MINUS: KeyCode = KeyCode::Char('-');
 pub const KEY_EQUALS: KeyCode = KeyCode::Char('=');
@@ -355,6 +356,7 @@ pub const PACTL_PROP_NODE_VIRTUAL: &str = "node.virtual";
 pub const PACTL_PROP_SEPARATOR: char = '=';
 pub const PACTL_VALUE_TRUE: &str = "true";
 pub const LABEL_SINK_PROCESSOR: &str = "processor";
+pub const LABEL_SINK_PROCESSOR_TAG: &str = "[processor]";
 pub const PGREP_BIN: &str = "pgrep";
 pub const PGREP_EXACT: &str = "-x";
 pub const PKILL_BIN: &str = "pkill";
@@ -446,6 +448,8 @@ const _: () =
     assert!(TEST_PANEL_RUNNING.len() <= (LAYOUT_FORM_DIAGRAM_WIDTH - LAYOUT_BORDER_LINES) as usize);
 pub const TUNING_OFFLINE_HINT: &str =
     "Offline tune: save writes disk. Apply reloads devices in a running play session of this profile, or restarts play.";
+pub const SEAT_SWEEP_HINT: &str =
+    "Phone on the seat in phyphox Acceleration with g, Allow remote access. iPhone: port 80, cellular off. After the sweep, apply the automatic tactile filter.";
 pub const RAW_VIEW_HINT: &str =
     "Read-only view of the last on-disk file (comments are lost on save).";
 pub const DIAGRAM_NO_PROFILE: &str = "No profile selected";
@@ -499,6 +503,7 @@ pub const TITLE_FLAGS: &str = "Play / test flags";
 pub const TITLE_SIMD: &str = "simd.config";
 pub const TITLE_LUA: &str = "Lua scripts";
 pub const TITLE_TACH: &str = "Tachometer calibration";
+pub const TITLE_SEAT_SWEEP: &str = "Bass shaker calibration";
 pub const TITLE_TYRES: &str = "Tyre diameters";
 pub const TITLE_DIAGNOSTICS: &str = "Diagnostics";
 pub const TITLE_RAW: &str = "On-disk cargopit.config";
@@ -675,6 +680,7 @@ pub const HOTKEY_SAVE: &str = "s";
 pub const HOTKEY_TEST: &str = "t";
 pub const HOTKEY_ESC: &str = "Esc";
 pub const HOTKEY_APPLY: &str = "A";
+pub const HOTKEY_CALIBRATE: &str = "c";
 pub const HOTKEY_CONFIRM: &str = "space";
 pub const HOTKEY_CANCEL: &str = "Esc";
 pub const HOTKEY_COLUMNS: &str = "←→/wheel";
@@ -708,6 +714,9 @@ pub const HELP_DESC_CANCEL: &str = "cancel";
 pub const HELP_DESC_NUDGE: &str = "nudge";
 pub const HELP_DESC_TOGGLE: &str = "toggle";
 pub const HELP_DESC_APPLY: &str = "apply/restart";
+pub const HELP_DESC_CALIBRATE: &str = "calibrate seat";
+pub const HELP_DESC_SWEEP: &str = "run sweep";
+pub const HELP_DESC_CHECK_PHYPOX: &str = "check phyphox";
 pub const HELP_DESC_CONFIRM: &str = "confirm";
 pub const HELP_DESC_COLUMNS: &str = "columns";
 pub const HELP_DESC_ROWS: &str = "rows";
@@ -780,6 +789,15 @@ pub const HELP_TUNE: &[HelpBinding] = &[
     help_key(HOTKEY_SAVE, HELP_DESC_SAVE),
     help_key(HOTKEY_TEST, HELP_DESC_TEST_DEVICE),
     help_key(HOTKEY_APPLY, HELP_DESC_APPLY),
+    help_key(HOTKEY_CALIBRATE, HELP_DESC_CALIBRATE),
+    help_key(HOTKEY_ESC, HELP_DESC_BACK),
+];
+pub const HELP_SEAT_SWEEP: &[HelpBinding] = &[
+    help_key(HOTKEY_MOVE, HELP_DESC_FIELD),
+    help_key(HOTKEY_CYCLE, HELP_DESC_CYCLE),
+    help_key(HOTKEY_ENTER, HELP_DESC_TYPE),
+    help_key(HOTKEY_SAVE, HELP_DESC_SWEEP),
+    help_key(HOTKEY_CALIBRATE, HELP_DESC_CHECK_PHYPOX),
     help_key(HOTKEY_ESC, HELP_DESC_BACK),
 ];
 pub const HELP_CONFIRM: &[HelpBinding] = &[
@@ -845,6 +863,7 @@ pub const CONFIRM_DELETE_PROFILE: &str = "Delete this profile? y/n";
 pub const CONFIRM_RESTART: &str = "Restart play to apply? y/n";
 pub const CONFIRM_TEMPLATE: &str = "Insert this template into the current profile? y/n";
 pub const CONFIRM_DISCARD_UNSAVED: &str = "Unsaved changes. Discard without saving? y/n";
+pub const CONFIRM_APPLY_TACTILE: &str = "Apply automatic tactile filter? Writes the PipeWire drop-in, points matching Sound devices at cargopit_tactile, and reloads. y/n";
 pub const SIMD_EMPTY: &str = "No simd.config — press a to create from the simapi example.";
 pub const FLAG_LOG_DEFAULT: &str = "(default)";
 pub const FIELD_UNSET: &str = "(unset)";
@@ -875,6 +894,10 @@ pub const LAYOUT_TUNE_LOG_MIN_WIDTH: u16 = LAYOUT_FORM_DIAGRAM_WIDTH;
 pub const LAYOUT_TYRE_DIAGRAM_WIDTH: u16 = 28;
 pub const LAYOUT_CONFIRM_WIDTH: u16 = 56;
 pub const LAYOUT_CONFIRM_HEIGHT: u16 = 5;
+pub const LAYOUT_CONFIRM_FILTER_WIDTH: u16 = 64;
+pub const LAYOUT_CONFIRM_FILTER_HEIGHT: u16 = 8;
+pub const LAYOUT_SEAT_SWEEP_LOG_HEIGHT: u16 = 8;
+pub const LAYOUT_SEAT_SWEEP_LOG_MIN: u16 = 3;
 pub const LIST_HIGHLIGHT_SYMBOL: &str = "▸ ";
 pub const LIST_HIGHLIGHT_WIDTH: u16 = 2;
 pub const MOTOR_SLOT_COUNT: usize = 4;
@@ -958,15 +981,17 @@ pub const SETTINGS_INDEX_FLAGS: usize = 0;
 pub const SETTINGS_INDEX_SIMD: usize = 1;
 pub const SETTINGS_INDEX_LUA: usize = 2;
 pub const SETTINGS_INDEX_TACH: usize = 3;
-pub const SETTINGS_INDEX_TYRES: usize = 4;
-pub const SETTINGS_INDEX_DIAGNOSTICS: usize = 5;
-pub const SETTINGS_INDEX_RAW: usize = 6;
-pub const SETTINGS_ITEM_COUNT: usize = 7;
+pub const SETTINGS_INDEX_SEAT_SWEEP: usize = 4;
+pub const SETTINGS_INDEX_TYRES: usize = 5;
+pub const SETTINGS_INDEX_DIAGNOSTICS: usize = 6;
+pub const SETTINGS_INDEX_RAW: usize = 7;
+pub const SETTINGS_ITEM_COUNT: usize = 8;
 pub const SETTINGS_ITEMS: [&str; SETTINGS_ITEM_COUNT] = [
     "Play / test flags",
     "simd.config",
     "Lua scripts",
     "Tachometer calibration",
+    "Bass shaker calibration",
     "Tyre diameters",
     "Diagnostics",
     "Raw cargopit.config (read-only)",
@@ -976,9 +1001,64 @@ pub const SETTINGS_ITEM_HELP: [&str; SETTINGS_ITEM_COUNT] = [
     "Edit simd.config so simd can find and map each simulator. The live title is selected automatically.",
     "Copy bundled Lua templates into ~/.config/cargopit for custom serial devices.",
     "Generate a Revburner tachometer XML profile with max revs and granularity.",
+    "Play a sine sweep on the shaker sink and record the seat with phyphox, then apply an automatic tactile filter.",
     "Per-car tyre diameters used by slip, lock, and suspension effects.",
     "Host checks: binaries, udev group membership, and SIMAPI shared memory.",
     "Read-only view of the last on-disk cargopit.config. Saving a profile rewrites it.",
 ];
+
+pub const SEAT_SWEEP_FIELD_URL: usize = 0;
+pub const SEAT_SWEEP_FIELD_SINK: usize = 1;
+pub const SEAT_SWEEP_FIELD_COUNT: usize = 2;
+pub const SEAT_SWEEP_LABEL_URL: &str = "phyphox URL";
+pub const SEAT_SWEEP_LABEL_SINK: &str = "amplifier sink";
+pub const SEAT_SWEEP_LABEL_STATUS: &str = "status";
+pub const SEAT_SWEEP_LABEL_WIDTH: usize = 16;
+pub const SEAT_SWEEP_URL_HINT: &str = "http://PHONE_IP:8080";
+pub const TITLE_SEAT_SWEEP_LOG: &str = "phyphox / sweep log";
+pub const SEAT_SWEEP_STATUS_IDLE: &str = "Idle — c checks phyphox, s runs the sweep";
+pub const SEAT_SWEEP_STATUS_CHECK: &str = "Checking phyphox…";
+pub const SEAT_SWEEP_STATUS_CHECKED: &str = "phyphox reachable";
+pub const SEAT_SWEEP_STATUS_RUN: &str = "Sweep running — keep the phone on the seat";
+pub const SEAT_SWEEP_STATUS_MEASURED: &str = "Sweep finished";
+pub const SEAT_SWEEP_STATUS_FAILED: &str = "Sweep failed";
+pub const SEAT_SWEEP_STATUS_STOPPED: &str = "Sweep stopped";
+pub const MSG_SEAT_SWEEP_BUSY: &str = "A phyphox sweep is already running";
+pub const MSG_SEAT_SWEEP_NEED_URL: &str = "Set the phyphox remote URL first";
+pub const MSG_SEAT_SWEEP_NEED_SINK: &str = "Select the tactile amplifier sink";
+pub const MSG_SEAT_SWEEP_SPAWN: &str = "start seat sweep";
+pub const MSG_SEAT_SWEEP_NO_CSV: &str = "No seat-sweep CSV; run the sweep first";
+pub const MSG_SEAT_SWEEP_NOT_SOUND: &str = "Seat calibration is for Sound devices";
+pub const MSG_FILTERCHAIN_SPAWN: &str = "fit tactile filter-chain";
+pub const MSG_FILTERCHAIN_FAILED: &str = "filter-chain generator failed";
+pub const MSG_PIPEWIRE_RESTART_FAILED: &str = "PipeWire restart failed; restart it, then Apply";
+pub const MSG_TACTILE_APPLIED: &str = "Applied cargopit_tactile filter";
+pub const MSG_SEAT_SWEEP_SAVED_CSV: &str = "Sweep CSV saved; filter not applied";
+pub const PYTHON_BIN: &str = "python3";
+pub const PYTHON_FALLBACK: &str = "/usr/bin/python3";
+pub const CSV_FREQUENCY: &str = "frequency_hz";
+pub const CSV_TRANSFER: &str = "transfer_db";
+pub const TOOLS_DIRNAME: &str = "tools";
+pub const HAPTICS_DIRNAME: &str = "haptics";
+pub const SEAT_SWEEP_PY: &str = "seat_sweep.py";
+pub const FILTERCHAIN_PY: &str = "fr_to_filterchain.py";
+pub const ENV_CARGOPIT_SEAT_SWEEP: &str = "CARGOPIT_SEAT_SWEEP";
+pub const ENV_CARGOPIT_FILTERCHAIN: &str = "CARGOPIT_FILTERCHAIN";
+pub const ENV_CARGOPIT_SYSTEMCTL: &str = "CARGOPIT_SYSTEMCTL";
+pub const PIPEWIRE_DIRNAME: &str = "pipewire";
+pub const PIPEWIRE_CONF_D: &str = "pipewire.conf.d";
+pub const TACTILE_CONF_NAME: &str = "cargopit-tactile.conf";
+pub const TACTILE_SINK_NAME: &str = "cargopit_tactile";
+pub const SEAT_SWEEP_CSV_NAME: &str = "seat-sweep.csv";
+pub const FLAG_PHYPOX: &str = "--phyphox";
+pub const FLAG_SINK: &str = "--sink";
+pub const FLAG_OUTPUT: &str = "--output";
+pub const FLAG_CHECK: &str = "--check";
+pub const FLAG_TARGET_SINK: &str = "--target-sink";
+pub const FLAG_CHANNELS: &str = "--channels";
+pub const SYSTEMCTL_BIN: &str = "systemctl";
+pub const SYSTEMCTL_USER: &str = "--user";
+pub const SYSTEMCTL_RESTART: &str = "restart";
+pub const PIPEWIRE_UNIT: &str = "pipewire";
 
 pub const DASHBOARD_ACTIONS: &[&str] = &[ACTION_START, ACTION_TEST, ACTION_RESTART, ACTION_STOP];

@@ -58,6 +58,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
             draw_confirm(frame, size, kind);
         }
         Screen::SettingsSub(sub) => draw_settings_sub(frame, chunks[1], app, *sub),
+        Screen::SeatSweep => draw_seat_sweep(frame, chunks[1], app),
     }
     if let Some(text) = hint {
         draw_page_hint(frame, chunks[2], text);
@@ -206,6 +207,7 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
         Screen::Logs => consts::HELP_LOGS,
         Screen::DeviceForm => consts::HELP_FORM,
         Screen::DeviceTune => consts::HELP_TUNE,
+        Screen::SeatSweep => consts::HELP_SEAT_SWEEP,
         Screen::Confirm(_) => consts::HELP_CONFIRM,
         Screen::TemplatePicker => consts::HELP_TEMPLATES,
         Screen::SettingsSub(sub) => settings_sub_help(sub),
@@ -1077,15 +1079,20 @@ fn draw_confirm(frame: &mut Frame, area: Rect, kind: &ConfirmKind) {
         ConfirmKind::RestartAfterSave => consts::CONFIRM_RESTART,
         ConfirmKind::ApplyTemplate(_) => consts::CONFIRM_TEMPLATE,
         ConfirmKind::DiscardUnsaved => consts::CONFIRM_DISCARD_UNSAVED,
+        ConfirmKind::ApplyTactileFilter => consts::CONFIRM_APPLY_TACTILE,
     };
-    let popup = centered(
-        area,
-        consts::LAYOUT_CONFIRM_WIDTH,
-        consts::LAYOUT_CONFIRM_HEIGHT,
-    );
+    let (width, height) = match kind {
+        ConfirmKind::ApplyTactileFilter => (
+            consts::LAYOUT_CONFIRM_FILTER_WIDTH,
+            consts::LAYOUT_CONFIRM_FILTER_HEIGHT,
+        ),
+        _ => (consts::LAYOUT_CONFIRM_WIDTH, consts::LAYOUT_CONFIRM_HEIGHT),
+    };
+    let popup = centered(area, width, height);
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(text)
+            .wrap(Wrap { trim: true })
             .style(theme::style_warn())
             .block(theme::panel(consts::TITLE_CONFIRM)),
         popup,
@@ -1104,6 +1111,7 @@ fn draw_confirm_background(frame: &mut Frame, area: Rect, app: &App, diag: &Diag
         Screen::ProfileEdit => draw_profile_edit(frame, area, app),
         Screen::TemplatePicker => draw_templates(frame, area, app),
         Screen::SettingsSub(sub) => draw_settings_sub(frame, area, app, *sub),
+        Screen::SeatSweep => draw_seat_sweep(frame, area, app),
         Screen::Confirm(_) => draw_devices(frame, area, app),
     }
 }
@@ -1358,6 +1366,74 @@ fn draw_tach(frame: &mut Frame, area: Rect, app: &App) {
             .block(theme::panel(consts::DIAGRAM_TITLE_LEDS)),
         chunks[1],
     );
+}
+
+fn draw_seat_sweep(frame: &mut Frame, area: Rect, app: &App) {
+    let log_height = consts::LAYOUT_SEAT_SWEEP_LOG_HEIGHT
+        .min(area.height / 2)
+        .max(consts::LAYOUT_SEAT_SWEEP_LOG_MIN);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(log_height)])
+        .split(area);
+    let url = seat_sweep_field_value(app, consts::SEAT_SWEEP_FIELD_URL);
+    let sink = seat_sweep_field_value(app, consts::SEAT_SWEEP_FIELD_SINK);
+    let rows = [
+        format!(
+            "{:<width$} {url}",
+            consts::SEAT_SWEEP_LABEL_URL,
+            width = consts::SEAT_SWEEP_LABEL_WIDTH
+        ),
+        format!(
+            "{:<width$} {sink}",
+            consts::SEAT_SWEEP_LABEL_SINK,
+            width = consts::SEAT_SWEEP_LABEL_WIDTH
+        ),
+        format!(
+            "{:<width$} {}",
+            consts::SEAT_SWEEP_LABEL_STATUS,
+            app.seat_sweep.status,
+            width = consts::SEAT_SWEEP_LABEL_WIDTH
+        ),
+    ];
+    let items: Vec<ListItem> = rows.iter().map(|row| ListItem::new(row.clone())).collect();
+    render_selectable_list(
+        frame,
+        chunks[0],
+        consts::TITLE_SEAT_SWEEP,
+        items,
+        app.seat_sweep.field,
+    );
+    let log = if app.seat_sweep.lines.is_empty() {
+        consts::SEAT_SWEEP_HINT.to_string()
+    } else {
+        app.seat_sweep.lines.join("\n")
+    };
+    frame.render_widget(
+        Paragraph::new(log)
+            .wrap(Wrap { trim: true })
+            .block(theme::panel(consts::TITLE_SEAT_SWEEP_LOG)),
+        chunks[1],
+    );
+}
+
+fn seat_sweep_field_value(app: &App, field: usize) -> String {
+    if app.seat_sweep.field == field {
+        if let Some(buffer) = &app.seat_sweep.edit_buffer {
+            return format!("{buffer}{}", consts::EDIT_CURSOR);
+        }
+    }
+    let stored = match field {
+        consts::SEAT_SWEEP_FIELD_URL => app.seat_sweep.phyphox_url.as_str(),
+        _ => app.seat_sweep.sink.as_str(),
+    };
+    if !stored.is_empty() {
+        return stored.to_string();
+    }
+    if field == consts::SEAT_SWEEP_FIELD_URL {
+        return consts::SEAT_SWEEP_URL_HINT.to_string();
+    }
+    consts::FIELD_UNSET.to_string()
 }
 
 fn draw_tyres(frame: &mut Frame, area: Rect, app: &App) {
@@ -2010,6 +2086,7 @@ mod tests {
             ("simd", consts::TITLE_SIMD),
             ("lua", consts::TITLE_LUA),
             ("tach", consts::TITLE_TACH),
+            ("seat-sweep", consts::TITLE_SEAT_SWEEP),
             ("tyres", consts::TITLE_TYRES),
             ("diagnostics", consts::TITLE_DIAGNOSTICS),
             ("raw", consts::TITLE_RAW),
@@ -2242,8 +2319,8 @@ mod tests {
     #[test]
     fn device_id_help_shows_full_processor_sink_label() {
         with_app(|app| {
-            let sink = "cargopit_tactile";
-            let tag = format!("[{}]", consts::LABEL_SINK_PROCESSOR);
+            let sink = consts::TACTILE_SINK_NAME;
+            let tag = consts::LABEL_SINK_PROCESSOR_TAG;
             app.discovery.pulse_sinks = vec![crate::hardware::HardwareChoice {
                 value: sink.into(),
                 label: format!("Cargopit tactile correction ({sink}) {tag}"),
@@ -2261,7 +2338,7 @@ mod tests {
             app.tab = consts::TAB_DEVICES;
             app.screen = Screen::DeviceForm;
             let dump = render_dump_size(app, 120, 34);
-            assert!(dump.contains(&tag), "{dump}");
+            assert!(dump.contains(tag), "{dump}");
         });
     }
 

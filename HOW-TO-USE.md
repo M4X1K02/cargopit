@@ -18,7 +18,7 @@ To compile by hand instead:
 
 ## Configure SIMD & Cargopit
 
-Use `cargopit-tui` for device lists, play/test flags, simd.config, Lua scripts, tachometer calibration, and tyre diameters. A read-only raw view of `cargopit.config` is on the Settings tab.
+Use `cargopit-tui` for device lists, play/test flags, simd.config, Lua scripts, tachometer calibration, bass-shaker calibration, and tyre diameters. A read-only raw view of `cargopit.config` is on the Settings tab.
 
 * `~/.config/simd/simd.config` — [example](https://github.com/Spacefreak18/simapi/blob/master/simd/conf/simd.config) (editable in the TUI)
 * `~/.config/cargopit/cargopit.config` — start from an empty profile in the TUI, or the installer stub / [conf/cargopit.config](https://github.com/M4X1K02/cargopit/blob/master/conf/cargopit.config)
@@ -33,14 +33,20 @@ Serial/HID devices often need your user in `input`, `dialout`, and/or `uucp`, pl
 Cargopit generates the haptic signal. Room and rig correction, EQ, compression, and limiting belong to a PipeWire processor that you choose. In the TUI, set a Sound device's **Device id** to that processor's sink. Processor sinks are listed after hardware sinks and tagged `[processor]`.
 
 * **Easy Effects** or **Carla**: start the tool, then pick its sink.
-* **Correction for your rig**: seat response depends on the seat, mount, and amplifier, so cargopit does not ship a curve. Measure a seat sweep (for example phyphox "Acceleration with g") as a `frequency_hz,transfer_db` CSV and keep it with your own config. From a source checkout, run:
+* **Correction for your rig**: seat response depends on the seat, mount, and amplifier, so cargopit does not ship a curve. Put the phone on the seat, open phyphox **Acceleration with g**, enable **Allow remote access**, then in `cargopit-tui` open **Settings → Bass shaker calibration** (or press **c** on a Sound device in Tune). After the sweep, accept **Apply automatic tactile filter** to write the PipeWire drop-in, point matching Sound devices at `cargopit_tactile`, and reload. From a source checkout the same steps are:
 
   ```bash
+  tools/haptics/seat_sweep.py \
+      --phyphox http://192.168.1.20:8080 \
+      --sink <amp sink from pactl list short sinks> \
+      --output ~/.config/cargopit/seat-sweep.csv
   tools/haptics/fr_to_filterchain.py ~/.config/cargopit/seat-sweep.csv \
       --target-sink <amp sink from pactl list short sinks> \
       > ~/.config/pipewire/pipewire.conf.d/cargopit-tactile.conf
   systemctl --user restart pipewire
   ```
+
+  Android uses port 8080; iPhone uses port 80 (`http://PHONE_IP`) and needs cellular data off. iOS accelerometer rate is typically 100 Hz, so the sweep keeps points below Nyquist (~45 Hz); Android at 200 Hz or faster can cover 10–120 Hz. `--check` probes phyphox without playing audio.
 
   That creates a filter-chain sink named `cargopit_tactile`. It applies peaking cuts fitted to your sweep, a 10 Hz high-pass, a 120 Hz low-pass, and a sample clamp. By default it cuts towards the median level of the 32–120 Hz band and never boosts. `--help` lists the target, resonance, cut, filter, and channel options. It needs PipeWire 1.0 or newer.
 
