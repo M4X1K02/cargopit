@@ -133,6 +133,8 @@ pub struct SoundAbsTick {
 pub struct ShakerVoice {
     tone: Tone,
     channels: usize,
+    #[cfg(test)]
+    renders: u64,
 }
 
 impl ShakerVoice {
@@ -140,7 +142,17 @@ impl ShakerVoice {
         let channels = usize::from(channels.max(SHAKER_CHANNEL_MIN));
         let mut tone = Tone::from_settings(settings);
         tone.noise = noise_hz;
-        Self { tone, channels }
+        Self {
+            tone,
+            channels,
+            #[cfg(test)]
+            renders: 0,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn renders(&self) -> u64 {
+        self.renders
     }
 
     pub fn update(&mut self, frame: &Telemetry, clock: &impl Clock) -> Option<SoundTick> {
@@ -152,6 +164,10 @@ impl ShakerVoice {
     }
 
     pub fn render(&mut self, nbytes: usize) -> Vec<u8> {
+        #[cfg(test)]
+        {
+            self.renders = self.renders.saturating_add(1);
+        }
         self.tone.render_bytes(nbytes, self.channels)
     }
 }
