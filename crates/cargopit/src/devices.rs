@@ -8919,6 +8919,84 @@ mod tests {
     }
 
     #[test]
+    fn sound_device_tests_render_a_shake() {
+        const EFFECTS: &[(&str, i32)] = &[
+            ("Engine", names::EFFECT_ENGINE),
+            ("Gear", names::EFFECT_GEAR),
+            ("TyreSlip", names::EFFECT_TYRE_SLIP),
+            ("TyreLock", names::EFFECT_TYRE_LOCK),
+            ("ABS", names::EFFECT_ABS),
+            ("Suspension", names::EFFECT_SUSPENSION),
+        ];
+        const FOCUSED_DEVICE: Option<u32> = Some(0);
+        const WHOLE_PROFILE: Option<u32> = None;
+        for (name, effect) in EFFECTS {
+            assert!(
+                effect_test_shakes(name, *effect, FOCUSED_DEVICE),
+                "{name} focused device test rendered silence"
+            );
+            assert!(
+                effect_test_shakes(name, *effect, WHOLE_PROFILE),
+                "{name} profile test rendered silence"
+            );
+        }
+    }
+
+    fn effect_test_shakes(name: &str, effect: i32, device_index: Option<u32>) -> bool {
+        let loaded = open_haptic_sound(name);
+        if loaded.devices.is_empty() {
+            return false;
+        }
+        let subject =
+            crate::testmode::TestSubject::haptic(cargopit_devices::DeviceKind::Sound, effect);
+        let options = crate::testmode::RunOptions {
+            subjects: &[subject],
+            device_index,
+            trace: false,
+            publish: false,
+        };
+        let mut devices = loaded.devices;
+        let mut heard = false;
+        let mut tick_index = 0u64;
+        let nbytes = sound_render_bytes();
+        crate::testmode::run_frames_with_device(
+            &options,
+            &mut |_| false,
+            &mut |_| {},
+            &mut |bytes| {
+                heard = heard || shake_from_test_frame(&mut devices, bytes, tick_index, nbytes);
+                tick_index = tick_index.saturating_add(1);
+            },
+        );
+        heard
+    }
+
+    fn shake_from_test_frame(
+        devices: &mut LoadedDevices,
+        bytes: &[u8],
+        tick_index: u64,
+        nbytes: usize,
+    ) -> bool {
+        let Some(buf) = simapi_sys::SimDataBuf::from_bytes(bytes) else {
+            return false;
+        };
+        let frame = Telemetry::from_buf(buf);
+        let now_ns = SOUND_TICK_NS.saturating_mul(tick_index.saturating_add(1));
+        let _ = devices.tick(0, &frame, now_ns);
+        let Some(pcm) = devices.rendered_sound(0, nbytes) else {
+            return false;
+        };
+        pcm.iter().any(|byte| *byte != 0)
+    }
+
+    fn sound_render_bytes() -> usize {
+        const BYTES_PER_SAMPLE: usize = 2;
+        const RENDER_FRAMES: usize = 48;
+        let channels = usize::try_from(SOUND_CHANNELS).unwrap_or(0);
+        RENDER_FRAMES * BYTES_PER_SAMPLE * channels
+    }
+
+    #[test]
     fn sound_tick_logs_a_gear_change() {
         const SECOND: u32 = 2;
         let loaded = open_profile_at(

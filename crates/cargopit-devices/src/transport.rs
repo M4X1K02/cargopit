@@ -680,6 +680,11 @@ fn connect_shaker_locked(
     let stream_ptr = boxed.as_mut() as *mut Stream;
     let attr = shaker_buffer(request);
     let volume = shaker_volumes(request);
+    // Pulse can request the first buffer as soon as the stream is ready. The
+    // callback has to be in place before connect, and any request that arrived
+    // while we were waiting has to be filled here. A missed request is not
+    // repeated, so the shaker stays silent for the rest of the test.
+    arm_shaker_writes(&mut boxed, stream_ptr, &voice);
     if boxed
         .connect_playback(
             sink_arg(&request.sink),
@@ -697,11 +702,38 @@ fn connect_shaker_locked(
         release_stream(*boxed);
         return Err(());
     }
-    boxed.set_write_callback(Some(Box::new(move |nbytes| {
-        write_playback(stream_ptr, nbytes, voice.as_ref());
-    })));
+    prime_shaker_playback(stream_ptr, voice.as_ref());
     unmute_shaker(context, &boxed);
     Ok(boxed)
+}
+
+fn arm_shaker_writes(
+    stream: &mut libpulse_binding::stream::Stream,
+    stream_ptr: *mut libpulse_binding::stream::Stream,
+    voice: &Option<SharedShaker>,
+) {
+    let playback = voice.clone();
+    stream.set_write_callback(Some(Box::new(move |nbytes| {
+        write_playback(stream_ptr, nbytes, playback.as_ref());
+    })));
+}
+
+fn prime_shaker_playback(
+    stream: *mut libpulse_binding::stream::Stream,
+    voice: Option<&SharedShaker>,
+) {
+    if stream.is_null() {
+        return;
+    }
+    let nbytes = playback_due(unsafe { (*stream).writable_size() });
+    if nbytes == 0 {
+        return;
+    }
+    write_playback(stream, nbytes, voice);
+}
+
+fn playback_due(writable: Option<usize>) -> usize {
+    writable.unwrap_or(0)
 }
 
 fn shaker_flags() -> libpulse_binding::stream::FlagSet {
@@ -1140,5 +1172,95 @@ mod tests {
             .connect_shaker(&request, None)
             .expect("shaker playback");
         session.disconnect_shakers();
+    }
+
+    #[test]
+    fn playback_due_skips_a_quiet_stream() {
+        const PENDING_BYTES: usize = 3_840;
+        assert_eq!(playback_due(None), 0);
+        assert_eq!(playback_due(Some(0)), 0);
+        assert_eq!(playback_due(Some(PENDING_BYTES)), PENDING_BYTES);
+    }
+
+    #[test]
+    fn shaker_stream_renders_once_pulse_asks_for_samples() {
+        const SETTLE_MS: u64 = 300;
+        const ENGINE_RPM: u32 = 4_000;
+        const ENGINE_IDLE: u32 = 1_000;
+        const ENGINE_REDLINE: u32 = 8_000;
+        const ENGINE_THROTTLE: f64 = 1.0;
+        const TONE_HZ: u32 = 50;
+        const TONE_HZ_MAX: u32 = 120;
+        const TONE_AMPLITUDE: u32 = 100;
+        let mut session = PulseSession::open();
+        if session.outcome() != PulseOutcome::Ready {
+            return;
+        }
+        let voice = shaking_engine(
+            ENGINE_RPM,
+            ENGINE_IDLE,
+            ENGINE_REDLINE,
+            ENGINE_THROTTLE,
+            TONE_HZ,
+            TONE_HZ_MAX,
+            TONE_AMPLITUDE,
+        );
+        let request = ShakerRequest {
+            sink: String::new(),
+            node: "cargopit.Engine".to_string(),
+            stream_name: "Engine".to_string(),
+            effect_name: "Engine".to_string(),
+            tyre_name: None,
+            volume_percent: SAMPLE_VOLUME_FOR_PRIME,
+            channels: SHAKER_CHANNELS_STEREO,
+            mask: (SHAKER_CHANNEL_BIT << SHAKER_CHANNELS_STEREO) - SHAKER_CHANNEL_BIT,
+            gear: false,
+        };
+        session
+            .connect_shaker(&request, Some(voice.clone()))
+            .expect("shaker playback");
+        std::thread::sleep(std::time::Duration::from_millis(SETTLE_MS));
+        let renders = voice
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .renders();
+        session.disconnect_shakers();
+        assert!(renders > 0);
+    }
+
+    const SAMPLE_VOLUME_FOR_PRIME: i64 = 40;
+
+    fn shaking_engine(
+        rpm: u32,
+        idle: u32,
+        redline: u32,
+        throttle: f64,
+        tone_hz: u32,
+        tone_hz_max: u32,
+        amplitude: u32,
+    ) -> SharedShaker {
+        use crate::clock::VirtualClock;
+        use crate::haptic::{HapticSettings, VibrationEffect};
+        use crate::sound::ShakerVoice;
+        use crate::telemetry::Telemetry;
+
+        let mut voice = ShakerVoice::new(
+            HapticSettings {
+                effect: VibrationEffect::EngineRpm,
+                frequency: tone_hz,
+                frequency_max: tone_hz_max,
+                amplitude,
+                ..HapticSettings::default()
+            },
+            SHAKER_CHANNELS_STEREO,
+            0.0,
+        );
+        let mut frame = Telemetry::new();
+        frame.set_rpms(rpm);
+        frame.set_idlerpm(idle);
+        frame.set_maxrpm(redline);
+        frame.set_gas(throttle);
+        let _ = voice.update(&frame, &VirtualClock::new());
+        std::sync::Arc::new(std::sync::Mutex::new(voice))
     }
 }

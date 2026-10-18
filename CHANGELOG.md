@@ -32,6 +32,9 @@
 
 ### Fixed
 
+- A shaker device test now starts playback even when Pulse asks for the first
+  buffer before the write callback is installed. That request used to be
+  dropped, so the shaker stayed quiet unless a later request happened to arrive.
 - A sound device whose sink is missing is now reported and skipped. Before,
   cargopit waited on the stream forever or played through the default sink.
 - Sound streams no longer move to the default sink when their target sink
