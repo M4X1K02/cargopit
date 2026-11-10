@@ -42,6 +42,7 @@ const ENGINE_HARMONIC3_GAIN: f64 = 0.0;
 const ENGINE_PULSE_DEPTH: f64 = 0.0;
 const GEAR_DECAY_K: f64 = 3.0;
 const GEAR_DURATION_S: f64 = 0.10;
+const GEAR_HIT_LEVEL: f64 = 1.0;
 const GEAR_NEUTRAL: u32 = 1;
 const ATTACK_S: f64 = 0.008;
 const RELEASE_S: f64 = 0.150;
@@ -426,7 +427,7 @@ impl Tone {
             f64::from(self.frequency),
             f64::from(self.frequency_max),
         );
-        self.curr_amplitude = amplitude_from_level(amp);
+        self.curr_amplitude = self.haptic.modulated_sound_amplitude(amp, AMPLITUDE_UNITY);
         self.harmonic2_gain = ENGINE_HARMONIC2_GAIN;
         self.harmonic3_gain = ENGINE_HARMONIC3_GAIN;
         self.pulse_depth = ENGINE_PULSE_DEPTH;
@@ -452,7 +453,10 @@ impl Tone {
         }
         self.last_gear = frame.gear();
         let frequency = f64::from(self.frequency);
-        self.begin_decay(frequency, AMPLITUDE_UNITY, self.duration);
+        let amplitude = self
+            .haptic
+            .modulated_sound_amplitude(GEAR_HIT_LEVEL, AMPLITUDE_UNITY);
+        self.begin_decay(frequency, amplitude, self.duration);
         Some(SoundTick::Gear(SoundGearTick { frequency }))
     }
 
@@ -1040,6 +1044,47 @@ mod tests {
         assert!(tick.amplitude >= AMP_MIN);
         assert!(tick.amplitude <= AMP_MAX);
         assert_eq!(tick.frequency, f64::from(HAPTIC_HZ));
+    }
+
+    #[test]
+    fn engine_amplify_modulation_scales_amplitude() {
+        use crate::haptic::Modulation;
+        const AMP_MIN: u32 = 40;
+        const AMP_MAX: u32 = 100;
+        const PARTIAL_THROTTLE: f64 = 0.5;
+        let mut none = modulated_voice(
+            VibrationEffect::EngineRpm,
+            Modulation::None,
+            HAPTIC_HZ,
+            HAPTIC_HZ,
+            AMP_MIN,
+            AMP_MAX,
+        );
+        let mut amplify = modulated_voice(
+            VibrationEffect::EngineRpm,
+            Modulation::Amplify,
+            HAPTIC_HZ,
+            HAPTIC_HZ,
+            AMP_MIN,
+            AMP_MAX,
+        );
+        let mut frame = engine_frame();
+        frame.set_gas(PARTIAL_THROTTLE);
+        let SoundTick::Engine(base) = none
+            .update(&frame, &VirtualClock::new())
+            .expect("engine tick")
+        else {
+            panic!("engine tick");
+        };
+        let SoundTick::Engine(scaled) = amplify
+            .update(&frame, &VirtualClock::new())
+            .expect("engine tick")
+        else {
+            panic!("engine tick");
+        };
+        assert!(scaled.amplitude > base.amplitude);
+        assert!(scaled.amplitude >= AMP_MIN);
+        assert!(scaled.amplitude <= AMP_MAX);
     }
 
     fn modulated_voice(

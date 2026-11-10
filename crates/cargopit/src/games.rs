@@ -674,6 +674,16 @@ pub const MSG_READING_HAPTIC: &str = "reading configured haptic effect settings"
 pub const MSG_READING_SOUND: &str = "reading configured sound device settings";
 pub const MSG_MODULATION_MISSING: &str = "Effect modulation not found, set to none";
 pub const MSG_MODULATION_FREQ_FALLBACK: &str = "Falling back to no frequency modulation since frequencyMax is either not set or set below target frequency";
+pub const MSG_MODULATION_ENGINE_FREQUENCY_IGNORED: &str =
+    "Frequency modulation is ignored for Engine; tone pitch follows RPM via frequency and frequencyMax";
+pub const MSG_MODULATION_GEAR_FREQUENCY_IGNORED: &str =
+    "Frequency modulation is ignored for Gear; shift tone uses the configured frequency";
+
+pub fn modulation_binary_haptic_ignored_message(modulation: &str) -> String {
+    format!(
+        "Effect modulation {modulation} is not applied on this on/off haptic path"
+    )
+}
 
 pub fn invalid_modulation_message(name: &str) -> String {
     format!("{name} is not a valid modulation type, falling back to no effect modulation")
@@ -1800,6 +1810,18 @@ mod tests {
         assert_eq!(
             MSG_MODULATION_FREQ_FALLBACK,
             "Falling back to no frequency modulation since frequencyMax is either not set or set below target frequency"
+        );
+        assert_eq!(
+            MSG_MODULATION_ENGINE_FREQUENCY_IGNORED,
+            "Frequency modulation is ignored for Engine; tone pitch follows RPM via frequency and frequencyMax"
+        );
+        assert_eq!(
+            MSG_MODULATION_GEAR_FREQUENCY_IGNORED,
+            "Frequency modulation is ignored for Gear; shift tone uses the configured frequency"
+        );
+        assert_eq!(
+            modulation_binary_haptic_ignored_message("Amplitude"),
+            "Effect modulation Amplitude is not applied on this on/off haptic path"
         );
         assert_eq!(
             invalid_modulation_message("bogus"),

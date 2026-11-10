@@ -1981,7 +1981,7 @@ fn consider_sound(
 }
 
 fn finish_sound(entry: &DeviceEntry, id: i32, effect: i32, supports_haptics: bool) -> Considered {
-    let opened = sound_host::open_sound(entry, effect, &device_port(entry), supports_haptics);
+    let opened = sound_host::open_sound(entry, effect, &sound_sink(entry), supports_haptics);
     let ready = opened.ready;
     let request = opened.request.clone();
     let voice = opened.voice.clone();
@@ -2830,7 +2830,20 @@ fn csl_haptic_notices(entry: &DeviceEntry, effect: i32) -> Vec<InitNotice> {
         games::haptic_amplitude_message(amplitude),
     ));
     notices.push(notice(Level::Trace, games::haptic_motor_message(motor)));
+    notices.extend(modulation_binary_haptic_notices(entry));
     notices
+}
+
+fn modulation_binary_haptic_notices(entry: &DeviceEntry) -> Vec<InitNotice> {
+    let modulation = entry_modulation(entry);
+    if modulation == Modulation::None {
+        return Vec::new();
+    }
+    let label = names::modulation_label(modulation as i32);
+    vec![notice(
+        Level::Warn,
+        games::modulation_binary_haptic_ignored_message(label),
+    )]
 }
 
 fn csl_effect(entry: &DeviceEntry, effect: i32) -> Option<HapticEffect> {
@@ -4383,6 +4396,15 @@ fn open_moza_new(
     }
 }
 
+fn sound_sink(entry: &DeviceEntry) -> String {
+    entry
+        .get_str(keys::KEY_DEVID)
+        .map(str::trim)
+        .filter(|sink| !sink.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
 fn device_port(entry: &DeviceEntry) -> String {
     entry
         .get_str(keys::KEY_DEVID)
@@ -5333,6 +5355,21 @@ mod tests {
         entry.set_int(keys::KEY_FREQUENCY_MAX, 0);
         let fallback = csl_effect(&entry, names::EFFECT_TYRE_SLIP).expect("effect");
         assert_eq!(fallback.modulation(), Modulation::None);
+    }
+
+    #[test]
+    fn csl_haptic_notices_warn_when_modulation_is_configured() {
+        let mut entry = DeviceEntry::new();
+        entry.set_str(keys::KEY_EFFECT, "TyreSlip");
+        entry.set_str(keys::KEY_MODULATION, "Amplify");
+        let notices = csl_haptic_notices(&entry, names::EFFECT_TYRE_SLIP);
+        assert!(notice_has_level(
+            &notices,
+            Level::Warn,
+            &games::modulation_binary_haptic_ignored_message(
+                names::modulation_label(names::MODULATION_AMPLIFY),
+            ),
+        ));
     }
 
     #[test]
@@ -8887,6 +8924,20 @@ mod tests {
             .notices
             .iter()
             .any(|notice| notice.message == games::could_not_initialize_message(CLASS_SOUND)));
+    }
+
+    #[test]
+    fn sound_skips_when_only_devpath_is_set() {
+        const DEVPATH_ONLY: &str = "/dev/serial-by-id/usb-example";
+        let mut device = sound_entry("Gear", None);
+        device.remove(keys::KEY_DEVID);
+        device.set_str(keys::KEY_DEVPATH, DEVPATH_ONLY);
+        let skipped = open_profile_at(&sound_profile(device), 0, false, PROBE_OPEN_NS, true, None);
+        assert!(skipped.devices.is_empty());
+        assert!(skipped
+            .notices
+            .iter()
+            .any(|notice| notice.message == games::MSG_SOUND_SINK_REQUIRED));
     }
 
     #[test]

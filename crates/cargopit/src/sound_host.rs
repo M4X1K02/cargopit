@@ -220,7 +220,21 @@ impl SoundSettings {
             notices.push((Level::Info, games::sound_effect_message(phrase)));
         }
         notices.push((Level::Trace, games::sound_use_message(&self.path)));
+        notices.extend(self.sound_modulation_notices());
         notices
+    }
+
+    fn sound_modulation_notices(&self) -> Vec<(Level, String)> {
+        let modulation = Modulation::from_id(self.modulation).unwrap_or(Modulation::None);
+        if modulation != Modulation::Frequency {
+            return Vec::new();
+        }
+        let message = match self.effect {
+            names::EFFECT_ENGINE => games::MSG_MODULATION_ENGINE_FREQUENCY_IGNORED,
+            names::EFFECT_GEAR => games::MSG_MODULATION_GEAR_FREQUENCY_IGNORED,
+            _ => return Vec::new(),
+        };
+        vec![(Level::Warn, message.to_string())]
     }
 
     fn playback(&self, node: &str) -> ShakerRequest {
@@ -439,6 +453,32 @@ mod tests {
         let whitespace = open_sound(&device, names::EFFECT_GEAR, "   ", false);
         assert!(!whitespace.ready);
         assert_eq!(whitespace.notices[0].1, games::MSG_SOUND_SINK_REQUIRED);
+    }
+
+    #[test]
+    fn engine_open_warns_when_frequency_modulation_is_configured() {
+        let mut device = gear_entry();
+        device.set_str(keys::KEY_EFFECT, "Engine");
+        device.set_str(keys::KEY_MODULATION, "Frequency");
+        device.set_int(keys::KEY_FREQUENCY, SAMPLE_FREQUENCY);
+        device.set_int(keys::KEY_FREQUENCY_MAX, SAMPLE_FREQUENCY * 2);
+        let opened = open_sound(&device, names::EFFECT_ENGINE, SINK, true);
+        assert!(opened.ready);
+        assert!(opened.notices.iter().any(|(level, message)| {
+            *level == Level::Warn && message == games::MSG_MODULATION_ENGINE_FREQUENCY_IGNORED
+        }));
+    }
+
+    #[test]
+    fn gear_open_warns_when_frequency_modulation_is_configured() {
+        let mut device = gear_entry();
+        device.set_str(keys::KEY_MODULATION, "Frequency");
+        device.set_int(keys::KEY_FREQUENCY_MAX, SAMPLE_FREQUENCY * 2);
+        let opened = open_sound(&device, names::EFFECT_GEAR, SINK, false);
+        assert!(opened.ready);
+        assert!(opened.notices.iter().any(|(level, message)| {
+            *level == Level::Warn && message == games::MSG_MODULATION_GEAR_FREQUENCY_IGNORED
+        }));
     }
 
     #[test]
