@@ -316,6 +316,7 @@ pub const PULSE_CONTEXT_READY: i32 = 4;
 pub const PULSE_CONTEXT_FAILED: i32 = 5;
 pub const PULSE_CONTEXT_TERMINATED: i32 = 6;
 pub const PULSE_CONTEXT_MISSING: &str = "pulseaudio context is not ready";
+pub const PULSE_SINK_REQUIRED: &str = "pulseaudio sink name is required";
 
 const SHAKER_LATENCY_S: f64 = 0.040;
 const SHAKER_GEAR_LATENCY_S: f64 = 0.040;
@@ -561,6 +562,9 @@ impl PulseSession {
         request: &ShakerRequest,
         voice: Option<SharedShaker>,
     ) -> Result<(), String> {
+        if request.sink.trim().is_empty() {
+            return Err(PULSE_SINK_REQUIRED.to_string());
+        }
         if self.outcome != PulseOutcome::Ready {
             return Err(PULSE_CONTEXT_MISSING.to_string());
         }
@@ -1119,6 +1123,28 @@ mod tests {
     }
 
     #[test]
+    fn shaker_connect_rejects_an_empty_sink() {
+        let mut session = PulseSession::open();
+        let err = session
+            .connect_shaker(
+                &ShakerRequest {
+                    sink: String::new(),
+                    node: "cargopit.Gear".to_string(),
+                    stream_name: "Gear".to_string(),
+                    effect_name: "Gear".to_string(),
+                    tyre_name: None,
+                    volume_percent: 40,
+                    channels: SHAKER_CHANNELS_STEREO,
+                    mask: (SHAKER_CHANNEL_BIT << SHAKER_CHANNELS_STEREO) - SHAKER_CHANNEL_BIT,
+                    gear: true,
+                },
+                None,
+            )
+            .expect_err("empty sink");
+        assert_eq!(err, PULSE_SINK_REQUIRED);
+    }
+
+    #[test]
     fn shaker_stream_connects_when_pulse_is_ready() {
         const SAMPLE_VOLUME: i64 = 40;
         let mut session = PulseSession::open();
@@ -1126,7 +1152,7 @@ mod tests {
             return;
         }
         let request = ShakerRequest {
-            sink: String::new(),
+            sink: "alsa_output.test".to_string(),
             node: "cargopit.Gear".to_string(),
             stream_name: "Gear".to_string(),
             effect_name: "Gear".to_string(),
