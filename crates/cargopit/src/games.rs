@@ -680,9 +680,7 @@ pub const MSG_MODULATION_GEAR_FREQUENCY_IGNORED: &str =
     "Frequency modulation is ignored for Gear; shift tone uses the configured frequency";
 
 pub fn modulation_binary_haptic_ignored_message(modulation: &str) -> String {
-    format!(
-        "Effect modulation {modulation} is not applied on this on/off haptic path"
-    )
+    format!("Effect modulation {modulation} is not applied on this on/off haptic path")
 }
 
 pub fn invalid_modulation_message(name: &str) -> String {

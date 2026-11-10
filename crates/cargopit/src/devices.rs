@@ -5366,9 +5366,9 @@ mod tests {
         assert!(notice_has_level(
             &notices,
             Level::Warn,
-            &games::modulation_binary_haptic_ignored_message(
-                names::modulation_label(names::MODULATION_AMPLIFY),
-            ),
+            &games::modulation_binary_haptic_ignored_message(names::modulation_label(
+                names::MODULATION_AMPLIFY
+            ),),
         ));
     }
 
