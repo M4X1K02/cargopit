@@ -4,9 +4,11 @@
 
 set -euo pipefail
 
-CONTAINER="simracing"
+CONTAINER_NAME="cargopit"
+LEGACY_CONTAINER_NAME="simracing"
+LEGACY_INSTALL_DIR="${HOME}/.local/share/simracing"
+DEFAULT_INSTALL_DIR="${CARGOPIT_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cargopit}"
 BIN_DIR="$HOME/.local/bin"
-INSTALL_DIR="$HOME/.local/share/simracing"
 CONFIG_DIR="$HOME/.config/cargopit"
 UDEV_RULE="/etc/udev/rules.d/99-moza-serial.rules"
 
@@ -29,6 +31,23 @@ log_warn() {
     echo -e "${YELLOW}[WARN]${NC} $1"
 }
 
+distrobox_container_exists() {
+    local name="$1"
+    distrobox list 2>/dev/null | grep -q "$name" \
+        || distrobox list --root 2>/dev/null | grep -q "$name"
+}
+
+remove_container_if_present() {
+    local name="$1"
+    if ! distrobox_container_exists "$name"; then
+        log_info "Container '$name' not found, skipping"
+        return
+    fi
+    log_info "Removing distrobox container '$name'..."
+    distrobox rm --root --force "$name"
+    log_success "Container '$name' removed"
+}
+
 print_header() {
     echo ""
     echo "╔══════════════════════════════════════════════════════════════════╗"
@@ -40,9 +59,9 @@ print_header() {
 print_header
 
 log_warn "This will remove:"
-echo "  - Distrobox container '$CONTAINER'"
+echo "  - Distrobox container(s) '$CONTAINER_NAME' and/or '$LEGACY_CONTAINER_NAME' (if present)"
 echo "  - Wrapper scripts ($BIN_DIR/start-simd, start-cargopit, test-cargopit, cargopit-tui)"
-echo "  - simshmbridge source ($INSTALL_DIR)"
+echo "  - simshmbridge source under $DEFAULT_INSTALL_DIR and/or $LEGACY_INSTALL_DIR (if present)"
 echo ""
 echo "This will NOT remove:"
 echo "  - Configuration files ($CONFIG_DIR)"
@@ -65,21 +84,16 @@ rm -f "$BIN_DIR/test-cargopit"
 rm -f "$BIN_DIR/cargopit-tui"
 log_success "Wrapper scripts removed"
 
-# Remove simshmbridge source
-if [ -d "$INSTALL_DIR" ]; then
-    log_info "Removing simshmbridge source..."
-    rm -rf "$INSTALL_DIR"
-    log_success "simshmbridge source removed"
-fi
+for data_dir in "$DEFAULT_INSTALL_DIR" "$LEGACY_INSTALL_DIR"; do
+    if [ -d "$data_dir" ]; then
+        log_info "Removing data directory $data_dir..."
+        rm -rf "$data_dir"
+        log_success "Removed $data_dir"
+    fi
+done
 
-# Remove distrobox container
-if distrobox list --root 2>/dev/null | grep -q "$CONTAINER"; then
-    log_info "Removing distrobox container '$CONTAINER'..."
-    distrobox rm --root --force "$CONTAINER"
-    log_success "Container '$CONTAINER' removed"
-else
-    log_info "Container '$CONTAINER' not found, skipping"
-fi
+remove_container_if_present "$CONTAINER_NAME"
+remove_container_if_present "$LEGACY_CONTAINER_NAME"
 
 # Optionally remove udev rule
 if [ -f "$UDEV_RULE" ]; then
