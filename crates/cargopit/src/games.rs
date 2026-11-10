@@ -638,6 +638,8 @@ pub const VIBRATION_SUSPENSION: &str = "suspension vibrations.";
 pub const MSG_SOUND_SKIP_HAPTICS: &str =
     "Skipping sound effect setup because sim does not support haptic effects";
 pub const MSG_SOUND_STANDALONE: &str = "initializing standalone sound device...";
+pub const MSG_SOUND_SINK_REQUIRED: &str =
+    "sound device is missing sink name (devid); refusing the default sink";
 
 pub fn haptic_effect_message(phrase: &str) -> String {
     format!("Initializing haptic effect for {phrase}")
@@ -790,11 +792,11 @@ pub fn sound_describe_error(effect: i32) -> String {
     format!("could not describe sound stream for effect {effect}")
 }
 
-pub const SOUND_DEFAULT_SINK: &str = "the default sink";
+pub const SOUND_UNNAMED_SINK: &str = "a named sink";
 
 pub fn sound_connect_error(node: &str, sink: &str, err: &str) -> String {
-    let label = if sink.is_empty() {
-        SOUND_DEFAULT_SINK
+    let label = if sink.trim().is_empty() {
+        SOUND_UNNAMED_SINK
     } else {
         sink
     };
@@ -1901,7 +1903,11 @@ mod tests {
         );
         assert_eq!(
             sound_connect_error("cargopit.Gear", "", "Bad state"),
-            "could not connect sound stream cargopit.Gear to the default sink: Bad state"
+            "could not connect sound stream cargopit.Gear to a named sink: Bad state"
+        );
+        assert_eq!(
+            MSG_SOUND_SINK_REQUIRED,
+            "sound device is missing sink name (devid); refusing the default sink"
         );
         assert_eq!(
             unknown_haptic_message(9),

@@ -61,6 +61,14 @@ pub fn open_sound(
     path: &str,
     supports_haptics: bool,
 ) -> SoundOpen {
+    if path.trim().is_empty() {
+        return SoundOpen {
+            notices: vec![(Level::Error, games::MSG_SOUND_SINK_REQUIRED.to_string())],
+            ready: false,
+            request: None,
+            voice: None,
+        };
+    }
     if effect_uses_tyre(effect) && !supports_haptics {
         return SoundOpen {
             notices: vec![(Level::Warn, games::MSG_SOUND_SKIP_HAPTICS.to_string())],
@@ -414,6 +422,18 @@ mod tests {
         assert!(messages.contains(&duration.as_str()));
         assert!(messages.contains(&motor.as_str()));
         assert!(messages.contains(&amplitude.as_str()));
+    }
+
+    #[test]
+    fn open_sound_rejects_a_missing_sink() {
+        let device = gear_entry();
+        let opened = open_sound(&device, names::EFFECT_GEAR, "", false);
+        assert!(!opened.ready);
+        assert_eq!(opened.notices.len(), 1);
+        assert_eq!(opened.notices[0].1, games::MSG_SOUND_SINK_REQUIRED);
+        let whitespace = open_sound(&device, names::EFFECT_GEAR, "   ", false);
+        assert!(!whitespace.ready);
+        assert_eq!(whitespace.notices[0].1, games::MSG_SOUND_SINK_REQUIRED);
     }
 
     #[test]

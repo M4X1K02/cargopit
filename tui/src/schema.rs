@@ -743,7 +743,11 @@ pub fn validate(device: &DeviceEntry) -> Result<(), String> {
     }
     let identity_empty = match class {
         DeviceClass::Serial => device.get_str(consts::KEY_DEVPATH).unwrap_or("").is_empty(),
-        DeviceClass::Sound => device.get_str(consts::KEY_DEVID).unwrap_or("").is_empty(),
+        DeviceClass::Sound => device
+            .get_str(consts::KEY_DEVID)
+            .unwrap_or("")
+            .trim()
+            .is_empty(),
         DeviceClass::Usb => {
             let devid = device.get_str(consts::KEY_DEVID).unwrap_or("");
             let devpath = device.get_str(consts::KEY_DEVPATH).unwrap_or("");
@@ -849,6 +853,14 @@ mod tests {
         assert_eq!(DeviceClass::Usb.cycle_by(1), DeviceClass::Sound);
         assert_eq!(DeviceClass::Usb.cycle_by(-1), DeviceClass::Serial);
         assert_eq!(DeviceClass::Sound.cycle_by(-1), DeviceClass::Usb);
+    }
+
+    #[test]
+    fn sound_rejects_whitespace_sink_identity() {
+        let mut sound = DeviceEntry::new();
+        apply_defaults(&mut sound, DeviceClass::Sound, consts::TYPE_HAPTIC);
+        sound.set_str(consts::KEY_DEVID, "   ");
+        assert_eq!(validate(&sound), Err("device identity is required".into()));
     }
 
     #[test]
