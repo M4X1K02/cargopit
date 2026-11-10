@@ -2283,6 +2283,12 @@ mod tests {
     }
 
     #[test]
+    fn udp_mapping_poll_honors_fps_not_check_interval() {
+        assert!(map_interval_ms(60) < CHECK_INTERVAL_MS);
+        assert_eq!(map_interval_ms(100), 10);
+    }
+
+    #[test]
     fn mapping_stops_when_the_sim_leaves_active_play() {
         let live = SeenSim {
             is_sim_on: true,
