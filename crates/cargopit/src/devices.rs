@@ -8859,18 +8859,12 @@ mod tests {
     fn sound_skips_when_sink_name_is_missing() {
         let mut device = sound_entry("Gear", None);
         device.remove(keys::KEY_DEVID);
-        let skipped = open_profile_at(
-            &sound_profile(device),
-            0,
-            false,
-            PROBE_OPEN_NS,
-            true,
-            None,
-        );
+        let skipped = open_profile_at(&sound_profile(device), 0, false, PROBE_OPEN_NS, true, None);
         assert!(skipped.devices.is_empty());
-        assert!(skipped.notices.iter().any(|notice| {
-            notice.message == games::MSG_SOUND_SINK_REQUIRED
-        }));
+        assert!(skipped
+            .notices
+            .iter()
+            .any(|notice| { notice.message == games::MSG_SOUND_SINK_REQUIRED }));
         assert!(skipped
             .notices
             .iter()
