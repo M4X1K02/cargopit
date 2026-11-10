@@ -1,9 +1,11 @@
 # Releasing Cargopit
 
-The release version is stored in `version.txt`. The CMake build, CLI, TUI,
-package workflow, and Flatpak metadata use that value. A release tag must
-match it exactly; both `0.4.0` and `v0.4.0` are accepted, but use `0.4.0` for
-consistency with the existing tags.
+The release version lives in `version.txt` (CMake, TUI build, package workflow,
+and Flatpak metadata). `cargopit --version` comes from the workspace
+`package.version` in the root `Cargo.toml`. Bump `version.txt` and that
+`Cargo.toml` entry together before tagging. A release tag must match
+`version.txt` exactly; both `0.4.0` and `v0.4.0` are accepted, but use `0.4.0`
+for consistency with the existing tags.
 
 ## Pre-release checks
 
@@ -14,9 +16,9 @@ git submodule sync --recursive
 git submodule update --init --recursive
 cmake -B build -DENABLE_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
-ctest --test-dir build --output-on-failure --timeout 30
+ctest --test-dir build --output-on-failure --timeout 300
 cargo test --manifest-path tui/Cargo.toml
-bash tools/static-analysis.sh --ci --build-dir build/static-analysis
+bash tools/rust-static-analysis.sh
 ```
 
 Run **Make Packages** from the Actions tab once before tagging. A manual

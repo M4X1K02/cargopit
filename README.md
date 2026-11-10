@@ -20,7 +20,7 @@ Usage docs for sims, bridges, and hardware: [spacefreak18.github.io/simapi](http
 
 simd publishes one shared-memory record, `SIMAPI.DAT`. Cargopit is the gateway from that record to the rig: USB HID, Arduino serial, bass-shaker streams, and a RevBurner tachometer. Shared-memory titles in Proton (Assetto Corsa, ACC, AMS2, and the other Project CARS–family games) put a [simshmbridge](https://github.com/spacefreak18/simshmbridge) EXE in the game's prefix. UDP titles skip that bridge. Cargopit binds their ports when the sim uses UDP, and the same SIMAPI record still feeds the devices. Cargopit starts simd when it is installed and not already running.
 
-On a Moza wheel the same serial port has two owners. Cargopit arms telemetry mode and writes the RPM bar, flag alerts, and corner LEDs. [Boxflat](https://github.com/Lawstorant/boxflat) keeps force feedback and base settings. Cargopit drops the exclusive open and clears hang-up-on-close so Boxflat can open the port as well. If that drop fails, the log says Boxflat may still contend for the wheel.
+On Moza serial wheels (R3, R5, R8, R9/new-firmware, KS Pro) the same port can have two owners. Cargopit drives base telemetry output—shift lights on R3/R5/R8, RPM bar, flags, and corner LEDs on R9-style bases, display updates on KS Pro. [Boxflat](https://github.com/Lawstorant/boxflat) keeps force feedback and base settings. When cargopit opens the port it drops the exclusive lock and clears hang-up-on-close so Boxflat can share the serial device. If that drop fails, the log says Boxflat may still contend for the wheel.
 
 ![Telemetry gateway: sim to simd to cargopit, with Boxflat sharing the Moza serial port](docs/diagrams/gateway.svg)
 
@@ -98,13 +98,15 @@ simshmbridge is not in those packages. Use the [prebuilt compatibility EXEs](htt
 
 Release preparation and publishing steps are in [RELEASING.md](RELEASING.md).
 
-**Bazzite / Silverblue / Steam Deck (immutable).** Do not layer this with `rpm-ostree`. Use the distrobox helper:
+**Bazzite / Silverblue / Steam Deck (immutable).** Do not layer this with `rpm-ostree`. Prefer the distrobox helper (documented below); `./install.sh --distrobox` is a lighter alternate.
 
 ```bash
 bash tools/distro/distrobox/install-distrobox.sh
 ```
 
-This creates an Arch Linux container, installs simapi and simd, builds cargopit from source, and sets up wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`, `cargopit-tui`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
+That script creates an Arch Linux container named `simracing`, installs simapi and simd, builds cargopit under `~/.local/share/simracing`, and puts wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`, `cargopit-tui`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
+
+`./install.sh --distrobox` (also suggested when the installer detects an immutable host) creates a different container, `cargopit`, and re-runs `./install.sh --from-source` inside it. It does not run `install-distrobox.sh` or install the `simracing` wrappers; use one path or the other, not both expecting the same container name.
 
 **Supported games.** [Supported Sims](https://spacefreak18.github.io/simapi/supportedsims). On Linux some titles need a compatibility exe from simshmbridge. Follow the linked documentation for setup.
 
@@ -136,9 +138,9 @@ echo stop | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/cargopit.sock
 
 Logs: `~/.cache/cargopit/*.log`.
 
-## cargopit-tui: Work in progress
+## cargopit-tui
 
-`cargopit-tui` is the manager. It starts, tests, restarts, and stops the stack, edits one device profile shared across games, and follows the title that is actually running. Play and test flags, `simd.config`, Lua scripts, tachometer calibration, and tyre diameters are edited in the TUI. The on-disk config is shown read-only. Set `CARGOPIT_BIN` to the host the TUI should launch.
+`cargopit-tui` is the manager. It starts, tests, restarts, and stops the stack, edits one device profile shared across games, and follows the title that is actually running. Play and test flags, `simd.config`, Lua scripts, tachometer calibration, and tyre diameters are edited in the TUI. The on-disk config is shown read-only. Set `CARGOPIT_BIN` to the host the TUI should launch. The footer on each screen lists bindings for that view (more complete than the table below).
 
 The frames below are the current UI with a sample profile and a sample SIMAPI session (Assetto Corsa on track, devices present, simd and cargopit running).
 
@@ -173,15 +175,19 @@ Settings follow the sim that is playing. The device profile does not. Flags, `si
 ![Settings bound to the running sim](docs/tui/settings.png)
 
 
-| Keys            | Action                                        |
-| --------------- | --------------------------------------------- |
-| `1`–`5` or Tab  | Dashboard, Devices, Settings, Telemetry, Logs |
-| Enter           | Run the selected action, or open tune         |
-| `t`             | Start or stop a hardware test                 |
-| `a` `e` `y` `d` | Add, edit, duplicate, delete a device         |
-| `T`             | Insert a device template                      |
-| `,` `.`         | Previous or next profile                      |
-| `q`             | Quit                                          |
+| Keys               | Action                                                         |
+| ------------------ | -------------------------------------------------------------- |
+| `1`–`5` or Tab     | Dashboard, Devices, Settings, Telemetry, Logs                  |
+| Enter / Space      | Run the selected action, open tune, or toggle a row            |
+| `t`                | Start or stop a hardware test                                  |
+| `a` `e` `y` `d`    | Add, edit, duplicate, delete a device                          |
+| `T`                | Insert a device template                                       |
+| Shift+↑↓           | Reorder devices in the profile                                 |
+| `s`                | Save (profile name editor, device forms, Tune)                 |
+| `A`                | Apply Tune changes to a running play session (or restart play) |
+| `c`                | Bass-shaker seat sweep / phyphox check (Tune or Settings)      |
+| `,` `.` or ←→      | Previous or next profile; `D` deletes the current profile      |
+| `q` / Esc          | Quit; Esc also backs out of nested editors                     |
 
 
 
@@ -189,8 +195,8 @@ Settings follow the sim that is playing. The device profile does not. Flags, `si
 ## Features
 
 - Update loop at 60 fps by default, up to 1000 fps (`play --fps` for telemetry, per-device `fps` in `cargopit.config`), with a modular USB, serial, and sound backend.
-- Bass shakers over PulseAudio (including PipeWire's Pulse server): engine rumble, gear shifts, ABS, tyre slip/lock, and suspension. Per-device `enabled` and `streamVolume` keys in `cargopit.config`.
-- USB haptic shakers with engine rumble mapped across the shaker band, plus chassis/tyre gating so effects stay off when the car is not rolling.
+- Bass shakers over PulseAudio (including PipeWire's Pulse server): engine rumble (RPM mapped across the calibrated shaker band), gear shifts, ABS, tyre slip/lock, and suspension. Per-device `enabled` and `streamVolume` keys in `cargopit.config`.
+- USB haptic pedals and shakers: configured haptic effects on HID hardware, with chassis/tyre gating so rumble stays off when the car is not rolling (no engine-band mapping; that mapping is for Sound devices).
 - Tachometers: Revburner only, including existing Revburner XML and `cargopit config tachometer` to write a calibration file.
 - Serial output to Arduino and ESP32. Sample sketches for shift lights, simwind, and motor haptics live in `src/arduino/`. Custom serial devices use a [Lua payload format](https://spacefreak18.github.io/simapi/serial_custom).
 - Wheels and pedals including Clubsport Elite V3, [Logitech G29](https://spacefreak18.github.io/simapi/logitechg29), Moza R3/R5/R8/R9/KS Pro, Cammus C5/C12, Simagic GT Neo / P1000, and Simnet. Full list: [third-party devices](https://spacefreak18.github.io/simapi/thirdpartydevices).
