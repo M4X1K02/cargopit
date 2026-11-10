@@ -66,6 +66,7 @@ pub const KEY_MODULATION: &str = "modulation";
 pub const KEY_DURATION: &str = "duration";
 pub const KEY_MOTORS: &str = "motors";
 pub const KEY_AMPLITUDE: &str = "amplitude";
+pub const KEY_AMPLITUDE_MAX: &str = "amplitudeMax";
 pub const KEY_VOLUME: &str = "volume";
 pub const KEY_STREAM_VOLUME: &str = "streamVolume";
 pub const KEY_PAN: &str = "pan";

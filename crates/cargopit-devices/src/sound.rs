@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::clock::{Clock, VirtualClock};
 use crate::haptic::{
-    chassis_is_rolling, HapticEffect, HapticSettings, HapticTrace, TyreId, VibrationEffect,
+    band_frequency_hz, chassis_is_rolling, HapticEffect, HapticSettings, HapticTrace, TyreId,
+    VibrationEffect,
 };
 use crate::telemetry::Telemetry;
 
@@ -468,8 +469,7 @@ impl Tone {
             };
         };
         self.duration = 0.0;
-        self.curr_frequency = f64::from(self.frequency);
-        self.curr_amplitude = amplitude_from_level(level);
+        self.apply_continuous_tone(level);
         SoundPlay {
             tick: Some(SoundTick::Continuous(SoundToneTick {
                 level,
@@ -478,6 +478,13 @@ impl Tone {
             })),
             traces: played.traces,
         }
+    }
+
+    fn apply_continuous_tone(&mut self, level: f64) {
+        self.curr_frequency = self.haptic.modulated_frequency_hz(level);
+        self.curr_amplitude = self
+            .haptic
+            .modulated_sound_amplitude(level, AMPLITUDE_UNITY);
     }
 
     fn update_abs(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {
@@ -495,8 +502,7 @@ impl Tone {
             };
         };
         self.duration = 0.0;
-        self.curr_frequency = f64::from(self.frequency);
-        self.curr_amplitude = amplitude_from_level(level);
+        self.apply_continuous_tone(level);
         self.pulse_hz = ABS_PULSE_HZ;
         self.pulse_depth = ABS_PULSE_DEPTH;
         self.pulse_duty = ABS_PULSE_DUTY;
@@ -610,12 +616,7 @@ impl Tone {
     }
 
     fn band_hz(&self, level: f64) -> f64 {
-        let fmin = f64::from(self.frequency);
-        let mut fmax = f64::from(self.frequency_max);
-        if fmax < fmin {
-            fmax = fmin;
-        }
-        fmin + (fmax - fmin) * clamp_unit(level)
+        band_frequency_hz(self.frequency, self.frequency_max, level)
     }
 
     fn advance_decay(&mut self, coeff: &Coeff) {
@@ -972,6 +973,82 @@ mod tests {
     #[test]
     fn lock_tick_logs_a_continuous_tone() {
         assert_continuous_tick(VibrationEffect::TyreLock, lock_frame());
+    }
+
+    #[test]
+    fn continuous_frequency_modulation_uses_configured_band() {
+        use crate::haptic::Modulation;
+        let mut voice = modulated_voice(
+            VibrationEffect::TyreSlip,
+            Modulation::Frequency,
+            HAPTIC_HZ,
+            HAPTIC_HZ * 2,
+            HAPTIC_AMP,
+            HAPTIC_AMP,
+        );
+        let step = voice
+            .update(
+                &slip_frame(),
+                &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS),
+            )
+            .expect("tick");
+        let SoundTick::Continuous(tick) = step else {
+            panic!("continuous tick");
+        };
+        assert!(tick.frequency > f64::from(HAPTIC_HZ));
+        assert!(tick.frequency <= f64::from(HAPTIC_HZ * 2));
+    }
+
+    #[test]
+    fn continuous_amplify_modulation_scales_amplitude() {
+        use crate::haptic::Modulation;
+        const AMP_MIN: u32 = 50;
+        const AMP_MAX: u32 = 100;
+        let mut voice = modulated_voice(
+            VibrationEffect::TyreSlip,
+            Modulation::Amplify,
+            HAPTIC_HZ,
+            HAPTIC_HZ,
+            AMP_MIN,
+            AMP_MAX,
+        );
+        let step = voice
+            .update(
+                &slip_frame(),
+                &VirtualClock::from_monotonic_ns(CLOCK_TICK_NS),
+            )
+            .expect("tick");
+        let SoundTick::Continuous(tick) = step else {
+            panic!("continuous tick");
+        };
+        assert!(tick.amplitude >= AMP_MIN);
+        assert!(tick.amplitude <= AMP_MAX);
+        assert_eq!(tick.frequency, f64::from(HAPTIC_HZ));
+    }
+
+    fn modulated_voice(
+        effect: VibrationEffect,
+        modulation: crate::haptic::Modulation,
+        frequency: u32,
+        frequency_max: u32,
+        amplitude: u32,
+        amplitude_max: u32,
+    ) -> ShakerVoice {
+        ShakerVoice::new(
+            HapticSettings {
+                effect,
+                tyre: TyreId::AllFour,
+                modulation,
+                frequency,
+                frequency_max,
+                amplitude,
+                amplitude_max,
+                threshold: HAPTIC_THRESHOLD,
+                ..HapticSettings::default()
+            },
+            ENGINE_CHANNELS,
+            NOISE_OFF,
+        )
     }
 
     fn assert_continuous_tick(effect: VibrationEffect, frame: Telemetry) {

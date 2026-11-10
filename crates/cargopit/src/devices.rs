@@ -473,10 +473,11 @@ impl LoadedDevices {
             return Some((None, played.traces));
         }
         let effect = pedal.effect.as_ref()?;
+        let level = played.value;
         let report = usb::simnet_report(
             effect.motor_position(),
-            effect.frequency(),
-            effect.amplitude(),
+            u32_from_play_hz(effect.modulated_frequency_hz(level)),
+            effect.modulated_device_amplitude(level),
             played.value > 0.0,
         );
         pedal.state = played.value;
@@ -1790,6 +1791,10 @@ fn entry_frequency_max(entry: &DeviceEntry) -> i64 {
         .unwrap_or(HAPTIC_FREQUENCY_DEFAULT)
 }
 
+fn entry_amplitude_max(entry: &DeviceEntry) -> i64 {
+    entry.get_i64(keys::KEY_AMPLITUDE_MAX).unwrap_or(0)
+}
+
 fn entry_modulation(entry: &DeviceEntry) -> Modulation {
     Modulation::from_id(names::modulation_value(
         entry.get_str(keys::KEY_MODULATION),
@@ -2849,8 +2854,8 @@ fn csl_effect(entry: &DeviceEntry, effect: i32) -> Option<HapticEffect> {
         duration: csl_duration(entry, effect),
         motor_position: configured_motor(entry),
         frequency_max: u32_from_i64(entry_frequency_max(entry)),
+        amplitude_max: u32_from_i64(entry_amplitude_max(entry)),
         modulation: entry_modulation(entry),
-        ..HapticSettings::default()
     }))
 }
 
@@ -2898,6 +2903,13 @@ fn csl_vibration_phrase(effect: i32) -> Option<&'static str> {
 
 fn u32_from_i64(value: i64) -> u32 {
     u32::try_from(value).unwrap_or(0)
+}
+
+fn u32_from_play_hz(hz: f64) -> u32 {
+    if hz <= 0.0 {
+        return 0;
+    }
+    u32::try_from(hz.round_ties_even() as i64).unwrap_or(u32::MAX)
 }
 
 fn configured_motor_i64(entry: &DeviceEntry) -> i64 {

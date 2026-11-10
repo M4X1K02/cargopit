@@ -48,6 +48,7 @@ struct SoundSettings {
     modulation: i32,
     threshold: f64,
     amplitude: i64,
+    amplitude_max: i64,
     motor: i64,
     volume: i64,
     mask: u32,
@@ -176,7 +177,10 @@ impl SoundSettings {
             threshold: entry
                 .get_f64(keys::KEY_THRESHOLD)
                 .unwrap_or(THRESHOLD_DEFAULT),
-            amplitude: SOUND_AMPLITUDE_UNITY,
+            amplitude: entry
+                .get_i64(keys::KEY_AMPLITUDE)
+                .unwrap_or(SOUND_AMPLITUDE_UNITY),
+            amplitude_max: entry.get_i64(keys::KEY_AMPLITUDE_MAX).unwrap_or(0),
             motor: entry
                 .get_i64(keys::KEY_MOTORS)
                 .unwrap_or(SOUND_MOTOR_DEFAULT),
@@ -252,6 +256,7 @@ impl SoundSettings {
             frequency_max: u32_from_i64(self.frequency_max),
             modulation: Modulation::from_id(self.modulation).unwrap_or(Modulation::None),
             amplitude: u32_from_i64(self.amplitude),
+            amplitude_max: u32_from_i64(self.amplitude_max),
             duration: self.duration,
             threshold: self.threshold,
             ..HapticSettings::default()
