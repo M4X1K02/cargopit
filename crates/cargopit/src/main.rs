@@ -389,6 +389,9 @@ fn session_view(play: &PlayLoop, devices: &DeviceLoop, parsed: &cli::Invocation)
     let updates = (0..devices.loaded.len())
         .map(|index| devices.loaded.updates(index))
         .sum();
+    let overruns = (0..devices.loaded.len())
+        .map(|index| devices.loaded.overruns(index))
+        .sum();
     let state = match play.phase {
         PlayPhase::Searching => games::STATE_SEARCHING,
         PlayPhase::Mapping => games::STATE_MAPPING,
@@ -402,7 +405,7 @@ fn session_view(play: &PlayLoop, devices: &DeviceLoop, parsed: &cli::Invocation)
         sim: games::sim_display_name(play.sim_exe, play.phase == PlayPhase::Exiting),
         devices: devices.loaded.len() as u64,
         updates,
-        overruns: 0,
+        overruns,
     }
 }
 
@@ -629,9 +632,14 @@ fn tick_devices(parts: &mut PlayParts<'_>, parsed: &cli::Invocation, simulator_a
     let due = parts.devices.scheduler.poll(parts.clock.monotonic_ms());
     for event in due {
         match event.kind {
-            TimerKind::Device => drive_device(parts, parsed, event.device_index),
+            TimerKind::Device => {
+                parts
+                    .devices
+                    .loaded
+                    .record_overruns(event.device_index, event.missed_periods);
+                drive_device(parts, parsed, event.device_index);
+            }
             TimerKind::TyreDiameter => run_tyre_check(parts, parsed),
-            TimerKind::Discovery | TimerKind::Mapping => {}
         }
     }
 }

@@ -1,19 +1,16 @@
 //! Due-time scheduler. Equal deadlines run in config order.
 
+use cargopit_config::keys;
 use cargopit_devices::tick_interval_ms;
 
-const DISCOVERY_MS: u64 = 1000;
 const TYRE_CHECK_MS: u64 = 1000;
-const MAPPING_START_MS: u64 = 2000;
-const FPS_MIN: u32 = 1;
-const FPS_MAX: u32 = 1000;
+const MISSED_PERIODS_NONE: u64 = 0;
+const PERIOD_DIVISOR_MIN: u64 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TimerKind {
     Device,
-    Discovery,
     TyreDiameter,
-    Mapping,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +18,8 @@ pub struct Due {
     pub kind: TimerKind,
     pub device_index: usize,
     pub due_ms: u64,
+    /// Whole periods skipped before this fire (`0` when on time).
+    pub missed_periods: u64,
 }
 
 struct Timer {
@@ -51,26 +50,12 @@ impl Scheduler {
         self.push(TimerKind::Device, device_index, self.now_ms, period);
     }
 
-    pub fn add_discovery(&mut self) {
-        self.push(TimerKind::Discovery, 0, self.now_ms, DISCOVERY_MS);
-    }
-
     pub fn add_tyre_check(&mut self) {
         self.push(TimerKind::TyreDiameter, 0, self.now_ms, TYRE_CHECK_MS);
     }
 
     pub fn clear(&mut self) {
         self.timers.clear();
-    }
-
-    pub fn add_mapping(&mut self, fps: i32) {
-        let period = tick_interval_ms(clamp_fps(fps));
-        self.push(
-            TimerKind::Mapping,
-            0,
-            self.now_ms.saturating_add(MAPPING_START_MS),
-            period,
-        );
     }
 
     /// One clock sample. Overdue timers fire once, in `(due_ms, insertion)` order.
@@ -91,10 +76,12 @@ impl Scheduler {
         let mut fired = Vec::with_capacity(due.len());
         for index in due {
             let timer = &self.timers[index];
+            let missed = missed_periods(timer.due_ms, timer.period_ms, now_ms);
             fired.push(Due {
                 kind: timer.kind,
                 device_index: timer.device_index,
                 due_ms: timer.due_ms,
+                missed_periods: missed,
             });
             let mut next = timer.due_ms.saturating_add(timer.period_ms);
             if next <= now_ms {
@@ -125,13 +112,24 @@ impl Default for Scheduler {
 }
 
 pub fn clamp_fps(fps: i32) -> u32 {
-    if fps < FPS_MIN as i32 {
-        return FPS_MIN;
+    if fps < keys::FPS_MIN {
+        return keys::FPS_MIN as u32;
     }
-    if fps > FPS_MAX as i32 {
-        return FPS_MAX;
+    if fps > keys::FPS_MAX {
+        return keys::FPS_MAX as u32;
     }
     fps as u32
+}
+
+fn missed_periods(due_ms: u64, period_ms: u64, now_ms: u64) -> u64 {
+    if period_ms < PERIOD_DIVISOR_MIN {
+        return MISSED_PERIODS_NONE;
+    }
+    let overdue = now_ms.saturating_sub(due_ms);
+    if overdue < period_ms {
+        return MISSED_PERIODS_NONE;
+    }
+    overdue / period_ms
 }
 
 #[cfg(test)]
@@ -147,34 +145,10 @@ mod tests {
         assert_eq!(due.len(), 2);
         assert_eq!(due[0].device_index, 0);
         assert_eq!(due[1].device_index, 1);
+        assert_eq!(due[0].missed_periods, MISSED_PERIODS_NONE);
         assert!(scheduler.poll(15).is_empty());
         let next = scheduler.poll(16);
         assert_eq!(next.len(), 2);
-    }
-
-    #[test]
-    fn mapping_waits_and_discovery_repeats() {
-        let mut scheduler = Scheduler::new();
-        scheduler.add_discovery();
-        scheduler.add_mapping(60);
-        let start = scheduler.poll(0);
-        assert_eq!(start.len(), 1);
-        assert_eq!(start[0].kind, TimerKind::Discovery);
-        assert!(scheduler
-            .poll(1999)
-            .iter()
-            .all(|due| due.kind != TimerKind::Mapping));
-        let mapped = scheduler.poll(2000);
-        assert!(mapped.iter().any(|due| due.kind == TimerKind::Mapping));
-    }
-
-    #[test]
-    fn discovery_repeats_on_its_own_interval() {
-        let mut scheduler = Scheduler::new();
-        scheduler.add_discovery();
-        assert_eq!(scheduler.poll(0)[0].kind, TimerKind::Discovery);
-        assert!(scheduler.poll(999).is_empty());
-        assert_eq!(scheduler.poll(1000)[0].kind, TimerKind::Discovery);
     }
 
     #[test]
@@ -190,9 +164,20 @@ mod tests {
 
     #[test]
     fn below_minimum_fps_clamps_to_one() {
-        assert_eq!(clamp_fps(0), FPS_MIN);
-        assert_eq!(clamp_fps(-4), FPS_MIN);
-        assert_eq!(clamp_fps(1001), FPS_MAX);
+        assert_eq!(clamp_fps(0), keys::FPS_MIN as u32);
+        assert_eq!(clamp_fps(-4), keys::FPS_MIN as u32);
+        assert_eq!(clamp_fps(1001), keys::FPS_MAX as u32);
         assert_eq!(tick_interval_ms(clamp_fps(144)), 6);
+    }
+
+    #[test]
+    fn late_device_tick_counts_missed_periods() {
+        let mut scheduler = Scheduler::new();
+        scheduler.add_device(0, 100);
+        assert_eq!(scheduler.poll(0)[0].missed_periods, MISSED_PERIODS_NONE);
+        let late = scheduler.poll(35);
+        assert_eq!(late.len(), 1);
+        assert_eq!(late[0].kind, TimerKind::Device);
+        assert_eq!(late[0].missed_periods, 2);
     }
 }
