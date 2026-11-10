@@ -47,9 +47,13 @@ install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.desktop \
     $RPM_BUILD_ROOT/usr/share/applications/cargopit.desktop
 install -D -m644 $RPM_BUILD_DIR/cargopit/tools/cargopit.svg \
     $RPM_BUILD_ROOT/usr/share/icons/hicolor/scalable/apps/cargopit.svg
+mkdir -p $RPM_BUILD_ROOT/usr/share/cargopit/conf
+cp -r $RPM_BUILD_DIR/cargopit/conf/. $RPM_BUILD_ROOT/usr/share/cargopit/conf/
 
 %files
 /usr/bin/cargopit
 /usr/bin/cargopit-tui
 /usr/share/applications/cargopit.desktop
 /usr/share/icons/hicolor/scalable/apps/cargopit.svg
+%dir /usr/share/cargopit/conf
+/usr/share/cargopit/conf/*

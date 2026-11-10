@@ -28,11 +28,19 @@ endif()
 
 find_program(BASH_PROGRAM bash)
 if (BASH_PROGRAM)
-    add_test(NAME version_reporting
-        COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/version_reporting.sh
-            ${CARGOPIT_STAGED} ${PROJECT_VERSION})
+    set(VERSION_REPORTING_CMD
+        ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/version_reporting.sh
+        ${CARGOPIT_STAGED} ${PROJECT_VERSION})
+    if(BUILD_TUI)
+        list(APPEND VERSION_REPORTING_CMD ${CARGOPIT_TUI_STAGED})
+    endif()
+    add_test(NAME version_reporting COMMAND ${VERSION_REPORTING_CMD})
     set_tests_properties(version_reporting PROPERTIES
         REQUIRED_FILES ${CARGOPIT_STAGED})
+    if(BUILD_TUI)
+        set_property(TEST version_reporting APPEND PROPERTY
+            REQUIRED_FILES ${CARGOPIT_TUI_STAGED})
+    endif()
     add_test(NAME startup_play_missing_simd
         COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/startup_play.sh missing ${CARGOPIT_STAGED})
     set_tests_properties(startup_play_missing_simd PROPERTIES
