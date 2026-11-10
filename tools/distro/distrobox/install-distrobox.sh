@@ -9,10 +9,14 @@
 set -euo pipefail
 
 SCRIPT_VERSION="1.0.0"
-CONTAINER="simracing"
-INSTALL_DIR="$HOME/.local/share/simracing"
+CONTAINER_NAME="cargopit"
+LEGACY_CONTAINER_NAME="simracing"
+LEGACY_INSTALL_DIR="${HOME}/.local/share/simracing"
+DEFAULT_INSTALL_DIR="${CARGOPIT_INSTALL_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cargopit}"
 BIN_DIR="$HOME/.local/bin"
 CONFIG_DIR="$HOME/.config/cargopit"
+CONTAINER=""
+INSTALL_DIR=""
 CARGOPIT_GITHUB_REPO="M4X1K02/cargopit"
 CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 
@@ -45,6 +49,47 @@ print_header() {
     echo "║          Cargopit Distrobox Installer v${SCRIPT_VERSION}        ║"
     echo "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
+}
+
+distrobox_container_exists() {
+    local name="$1"
+    distrobox list 2>/dev/null | grep -q "$name" \
+        || distrobox list --root 2>/dev/null | grep -q "$name"
+}
+
+select_container() {
+    if distrobox_container_exists "$CONTAINER_NAME"; then
+        CONTAINER="$CONTAINER_NAME"
+        return
+    fi
+    if distrobox_container_exists "$LEGACY_CONTAINER_NAME"; then
+        CONTAINER="$LEGACY_CONTAINER_NAME"
+        log_warn "Found legacy container '$LEGACY_CONTAINER_NAME'; continuing with it (new installs use '$CONTAINER_NAME')."
+        return
+    fi
+    CONTAINER="$CONTAINER_NAME"
+}
+
+resolve_install_dir() {
+    if [ -n "${CARGOPIT_INSTALL_DIR:-}" ]; then
+        INSTALL_DIR="$CARGOPIT_INSTALL_DIR"
+        return
+    fi
+    if [ "$CONTAINER" = "$LEGACY_CONTAINER_NAME" ] && [ -d "$LEGACY_INSTALL_DIR" ]; then
+        INSTALL_DIR="$LEGACY_INSTALL_DIR"
+        return
+    fi
+    INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+}
+
+install_wrapper() {
+    local script_name="$1"
+    local container_cmd="$2"
+    cat > "$BIN_DIR/$script_name" << EOF
+#!/usr/bin/env bash
+exec distrobox enter --root ${CONTAINER} -- ${container_cmd} "\$@"
+EOF
+    chmod +x "$BIN_DIR/$script_name"
 }
 
 # --- Main ---
@@ -118,8 +163,11 @@ if [ ! -f "$UDEV_RULE" ]; then
     fi
 fi
 
+select_container
+resolve_install_dir
+
 # Create the Arch Linux distrobox container
-if ! distrobox list 2>/dev/null | grep -q "$CONTAINER"; then
+if ! distrobox_container_exists "$CONTAINER"; then
     log_info "Creating Arch Linux container '$CONTAINER'..."
     distrobox create \
         --image docker.io/library/archlinux:latest \
@@ -134,7 +182,10 @@ fi
 
 # Install packages inside the container
 log_info "Installing packages inside container (this may take a few minutes)..."
-distrobox enter --root "$CONTAINER" -- env CARGOPIT_GIT_URL="$CARGOPIT_GIT_URL" bash -c '
+distrobox enter --root "$CONTAINER" -- env \
+    CARGOPIT_GIT_URL="$CARGOPIT_GIT_URL" \
+    CARGOPIT_INSTALL_DIR="$INSTALL_DIR" \
+    bash -c '
     set -euo pipefail
 
     # Enable the multilib repo for 32-bit runtime support — Proton bridge
@@ -182,7 +233,11 @@ PACMANCONF_EOF
     yay -S --needed --noconfirm simd-git
 
     # Build simshmbridge (not on AUR)
-    INSTALL_DIR="$HOME/.local/share/simracing"
+    if [ -z "${CARGOPIT_INSTALL_DIR:-}" ]; then
+        echo "CARGOPIT_INSTALL_DIR is not set" >&2
+        exit 1
+    fi
+    INSTALL_DIR="$CARGOPIT_INSTALL_DIR"
     mkdir -p "$INSTALL_DIR"
 
     if [ -z "${CARGOPIT_GIT_URL:-}" ]; then
@@ -233,29 +288,10 @@ PACMANCONF_EOF
 log_info "Installing wrapper scripts..."
 mkdir -p "$BIN_DIR"
 
-cat > "$BIN_DIR/start-simd" << 'EOF'
-#!/usr/bin/env bash
-exec distrobox enter --root simracing -- simd "$@"
-EOF
-chmod +x "$BIN_DIR/start-simd"
-
-cat > "$BIN_DIR/start-cargopit" << 'EOF'
-#!/usr/bin/env bash
-exec distrobox enter --root simracing -- cargopit play "$@"
-EOF
-chmod +x "$BIN_DIR/start-cargopit"
-
-cat > "$BIN_DIR/test-cargopit" << 'EOF'
-#!/usr/bin/env bash
-exec distrobox enter --root simracing -- cargopit test -vv "$@"
-EOF
-chmod +x "$BIN_DIR/test-cargopit"
-
-cat > "$BIN_DIR/cargopit-tui" << 'EOF'
-#!/usr/bin/env bash
-exec distrobox enter --root simracing -- cargopit-tui "$@"
-EOF
-chmod +x "$BIN_DIR/cargopit-tui"
+install_wrapper start-simd 'simd'
+install_wrapper start-cargopit 'cargopit play'
+install_wrapper test-cargopit 'cargopit test -vv'
+install_wrapper cargopit-tui 'cargopit-tui'
 
 log_success "Wrapper scripts installed"
 

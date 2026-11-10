@@ -98,15 +98,17 @@ simshmbridge is not in those packages. Use the [prebuilt compatibility EXEs](htt
 
 Release preparation and publishing steps are in [RELEASING.md](RELEASING.md).
 
-**Bazzite / Silverblue / Steam Deck (immutable).** Do not layer this with `rpm-ostree`. Prefer the distrobox helper (documented below); `./install.sh --distrobox` is a lighter alternate.
+**Bazzite / Silverblue / Steam Deck (immutable).** Do not layer this with `rpm-ostree`. Use the distrobox helper:
 
 ```bash
 bash tools/distro/distrobox/install-distrobox.sh
 ```
 
-That script creates an Arch Linux container named `simracing`, installs simapi and simd, builds cargopit under `~/.local/share/simracing`, and puts wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`, `cargopit-tui`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
+From a source checkout, `./install.sh --distrobox` runs that same script.
 
-`./install.sh --distrobox` (also suggested when the installer detects an immutable host) creates a different container, `cargopit`, and re-runs `./install.sh --from-source` inside it. It does not run `install-distrobox.sh` or install the `simracing` wrappers; use one path or the other, not both expecting the same container name.
+The helper creates an Arch Linux distrobox named `cargopit` (privileged, with AUR packages and host wrapper scripts), installs simapi and simd, builds cargopit under `~/.local/share/cargopit`, and puts wrapper scripts (`start-simd`, `start-cargopit`, `test-cargopit`, `cargopit-tui`) in `~/.local/bin/`. Uninstall with `bash tools/distro/distrobox/uninstall-distrobox.sh`.
+
+If you already have a legacy `simracing` container from an older install, the helper reuses it and prints a one-line note; new installs use `cargopit`.
 
 **Supported games.** [Supported Sims](https://spacefreak18.github.io/simapi/supportedsims). On Linux some titles need a compatibility exe from simshmbridge. Follow the linked documentation for setup.
 

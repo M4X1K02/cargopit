@@ -13,6 +13,8 @@ CARGOPIT_GITHUB_REPO="M4X1K02/cargopit"
 CARGOPIT_GIT_URL="https://github.com/${CARGOPIT_GITHUB_REPO}.git"
 CARGOPIT_RAW_MASTER_URL="https://raw.githubusercontent.com/${CARGOPIT_GITHUB_REPO}/master"
 CARGOPIT_RELEASES_URL="https://github.com/${CARGOPIT_GITHUB_REPO}/releases"
+DISTROBOX_CONTAINER_NAME="cargopit"
+DISTROBOX_INSTALL_SCRIPT_REL="tools/distro/distrobox/install-distrobox.sh"
 AUR_INSTALL_UNAVAILABLE_MSG="AUR install is not offered yet; use --from-source"
 # Keep in sync with tui/Cargo.toml rust-version. Cargo.lock v4 needs cargo
 # 1.78+; ratatui's darling/instability crates need rustc 1.88+.
@@ -74,7 +76,7 @@ Usage: $(basename "${BASH_SOURCE[0]:-install.sh}") [options]
 
 Options:
   --from-source     Build simapi, simd, and cargopit from source (default)
-  --distrobox       Print (and run, if distrobox exists) immutable-distro setup
+  --distrobox       Run tools/distro/distrobox/install-distrobox.sh (immutable hosts)
   --build-bridges   Cross-compile simshmbridge with mingw instead of prebuilts
   --skip-bridges    Do not download or build simshmbridge compatibility EXEs
   --deps-only       Install build dependencies and exit
@@ -274,10 +276,9 @@ print_immutable_help() {
     echo "Do not install with the host package manager (rpm-ostree layering is a last resort)."
     echo "Use distrobox so the stack lives in a mutable container that shares \$HOME:"
     echo ""
-    echo "    distrobox create --name cargopit --image archlinux:latest"
-    echo "    distrobox enter cargopit"
-    echo "    curl -fsSL ${CARGOPIT_RAW_MASTER_URL}/install.sh -o install.sh"
-    echo "    bash install.sh --from-source"
+    echo "    bash tools/distro/distrobox/install-distrobox.sh"
+    echo ""
+    echo "Or from a source checkout: ./install.sh --distrobox"
     echo ""
     echo "Docs: https://spacefreak18.github.io/simapi/"
     echo "Override with --force-native if you really want to install on the host."
@@ -866,20 +867,31 @@ print_next_steps() {
 }
 
 run_distrobox() {
-    if have_cmd distrobox; then
-        log_info "Creating Arch distrobox 'cargopit' (if needed)..."
-        distrobox create --name cargopit --image archlinux:latest --yes || true
-        local script_arg="bash -c 'curl -fsSL ${CARGOPIT_RAW_MASTER_URL}/install.sh | bash -s -- --from-source'"
-        if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/install.sh" ]; then
-            script_arg="bash \"$SCRIPT_DIR/install.sh\" --from-source"
-        fi
-        log_info "Running installer inside distrobox..."
-        # shellcheck disable=SC2086
-        distrobox enter cargopit -- $script_arg
+    if ! have_cmd distrobox; then
+        print_immutable_help
+        exit 1
+    fi
+
+    local helper=""
+    if [ -n "$SCRIPT_DIR" ]; then
+        helper="$SCRIPT_DIR/$DISTROBOX_INSTALL_SCRIPT_REL"
+    fi
+    if [ -n "$helper" ] && [ -f "$helper" ]; then
+        log_info "Running distrobox helper: $helper"
+        bash "$helper"
         return 0
     fi
-    print_immutable_help
-    exit 1
+
+    log_warn "Distrobox helper not found ($DISTROBOX_INSTALL_SCRIPT_REL); using minimal bootstrap."
+    log_info "Creating Arch distrobox '$DISTROBOX_CONTAINER_NAME' (if needed)..."
+    distrobox create --name "$DISTROBOX_CONTAINER_NAME" --image archlinux:latest --yes || true
+    local script_arg="bash -c 'curl -fsSL ${CARGOPIT_RAW_MASTER_URL}/install.sh | bash -s -- --from-source'"
+    if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/install.sh" ]; then
+        script_arg="bash \"$SCRIPT_DIR/install.sh\" --from-source"
+    fi
+    log_info "Running installer inside distrobox..."
+    # shellcheck disable=SC2086
+    distrobox enter "$DISTROBOX_CONTAINER_NAME" -- $script_arg
 }
 
 parse_args() {
