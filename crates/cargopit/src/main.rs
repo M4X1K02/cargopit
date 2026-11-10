@@ -507,7 +507,7 @@ fn begin_mapping(
         map_api: seen.map_api,
         simulator_api: seen.simulator_api,
         wait_ms: if use_udp {
-            games::CHECK_INTERVAL_MS
+            games::map_interval_ms(fps)
         } else {
             games::MAPPING_START_MS
         },
@@ -537,7 +537,7 @@ fn map_or_release(
             play.map_api,
         );
         return PlayLoop {
-            wait_ms: games::CHECK_INTERVAL_MS,
+            wait_ms: games::map_interval_ms(fps),
             ..play
         };
     }
