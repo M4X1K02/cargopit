@@ -54,7 +54,6 @@ pub const REVBURNER_PRODUCT_ID: u16 = 0x0102;
 
 const CONFIG_INDEX_FIRST: i32 = 0;
 const USE_PULSES_DURING_PLAY: bool = false;
-const DEVICE_RUNNER_OVERRUNS: u64 = 0;
 const GRANULARITY_MIN: i64 = 0;
 const GRANULARITY_MAX: i64 = 4;
 const GRANULARITY_REJECTED: i64 = 3;
@@ -90,6 +89,7 @@ const SERIAL_IO_FAILED: i32 = -1;
 pub struct LoadedDevices {
     devices: Vec<SimDevice>,
     updates: Vec<u64>,
+    overruns: Vec<u64>,
     effects: Vec<Option<i32>>,
     ports: Vec<HidPort>,
     tables: Vec<TachMap>,
@@ -146,6 +146,7 @@ impl LoadedDevices {
         Self {
             devices: Vec::new(),
             updates: Vec::new(),
+            overruns: Vec::new(),
             effects: Vec::new(),
             ports: Vec::new(),
             tables: Vec::new(),
@@ -237,6 +238,20 @@ impl LoadedDevices {
         self.updates.get(index).copied().unwrap_or(0)
     }
 
+    pub fn overruns(&self, index: usize) -> u64 {
+        self.overruns.get(index).copied().unwrap_or(0)
+    }
+
+    pub fn record_overruns(&mut self, index: usize, missed: u64) {
+        if missed == 0 {
+            return;
+        }
+        let Some(count) = self.overruns.get_mut(index) else {
+            return;
+        };
+        *count = count.saturating_add(missed);
+    }
+
     pub fn tick(&mut self, index: usize, frame: &Telemetry, now_ns: u64) -> Vec<InitNotice> {
         if let Some(count) = self.updates.get_mut(index) {
             *count = count.wrapping_add(1);
@@ -271,7 +286,7 @@ impl LoadedDevices {
             let id = i32::try_from(index).unwrap_or(i32::MAX);
             notices.push(notice(
                 Level::Info,
-                games::device_runner_message(id, self.updates(index), DEVICE_RUNNER_OVERRUNS),
+                games::device_runner_message(id, self.updates(index), self.overruns(index)),
             ));
         }
         self.append_usb_free_notices(&mut notices);
@@ -1400,10 +1415,12 @@ fn open_profile_with(
         ));
     }
     let updates = vec![0; devices.len()];
+    let overruns = vec![0; devices.len()];
     ProfileLoad {
         devices: LoadedDevices {
             devices,
             updates,
+            overruns,
             effects,
             ports,
             tables,
