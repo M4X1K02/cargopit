@@ -482,7 +482,9 @@ impl Tone {
 
     fn apply_continuous_tone(&mut self, level: f64) {
         self.curr_frequency = self.haptic.modulated_frequency_hz(level);
-        self.curr_amplitude = self.haptic.modulated_sound_amplitude(level, AMPLITUDE_UNITY);
+        self.curr_amplitude = self
+            .haptic
+            .modulated_sound_amplitude(level, AMPLITUDE_UNITY);
     }
 
     fn update_abs(&mut self, frame: &Telemetry, clock: &impl Clock) -> SoundPlay {

@@ -705,7 +705,10 @@ mod tests {
         const FREQ_MAX: u32 = 80;
         const LEVEL_HALF: f64 = 0.5;
         const LEVEL_FULL: f64 = 1.0;
-        assert_eq!(band_frequency_hz(FREQ_MIN, FREQ_MAX, 0.0), f64::from(FREQ_MIN));
+        assert_eq!(
+            band_frequency_hz(FREQ_MIN, FREQ_MAX, 0.0),
+            f64::from(FREQ_MIN)
+        );
         assert_eq!(
             band_frequency_hz(FREQ_MIN, FREQ_MAX, LEVEL_FULL),
             f64::from(FREQ_MAX)
