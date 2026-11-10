@@ -101,7 +101,8 @@ jobs:
         mkdir -p PKG_SOURCE/usr/bin/
         mkdir -p PKG_SOURCE/usr/share/applications
         mkdir -p PKG_SOURCE/usr/share/icons/hicolor/scalable/apps
-        mkdir -p PKG_SOURCE/usr/share/cargopit
+        mkdir -p PKG_SOURCE/usr/share/cargopit/conf
+        cp -r ./conf/. PKG_SOURCE/usr/share/cargopit/conf/
         cp ./tools/cargopit.svg \
           PKG_SOURCE/usr/share/icons/hicolor/scalable/apps/cargopit.svg
     - name: Determine package version
