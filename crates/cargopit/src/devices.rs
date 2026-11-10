@@ -2856,7 +2856,6 @@ fn csl_effect(entry: &DeviceEntry, effect: i32) -> Option<HapticEffect> {
         frequency_max: u32_from_i64(entry_frequency_max(entry)),
         amplitude_max: u32_from_i64(entry_amplitude_max(entry)),
         modulation: entry_modulation(entry),
-        ..HapticSettings::default()
     }))
 }
 
