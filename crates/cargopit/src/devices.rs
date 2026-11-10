@@ -4229,9 +4229,10 @@ fn consider_moza_r5(
 fn moza_r5_ready(
     entry: &DeviceEntry,
     id: i32,
-    notices: Vec<InitNotice>,
-    port: SerialPort,
+    mut notices: Vec<InitNotice>,
+    mut port: SerialPort,
 ) -> Considered {
+    append_moza_share_notices(&mut notices, &mut port);
     Considered {
         setup_notices: Vec::new(),
         notices,
@@ -4301,6 +4302,7 @@ fn finish_moza_ks(
     if !write_ks_init(&mut port, &mut notices) {
         return reject_opened_serial(port, notices);
     }
+    append_moza_share_notices(&mut notices, &mut port);
     moza_ks_ready(entry, id, notices, port)
 }
 
@@ -4510,7 +4512,7 @@ fn finish_moza(
     mut notices: Vec<InitNotice>,
     now_ns: u64,
 ) -> Considered {
-    notices.extend(share_notices(&mut port));
+    append_moza_share_notices(&mut notices, &mut port);
     let mut wheel = MozaNewWheel::new();
     let step = wheel.prepare(now_ns);
     let wrote = write_serial_frames(Some(&mut port), &step.frames);
@@ -4548,6 +4550,10 @@ fn finish_moza(
         simled: None,
         custom_leds: None,
     }
+}
+
+fn append_moza_share_notices(notices: &mut Vec<InitNotice>, port: &mut SerialPort) {
+    notices.extend(share_notices(port));
 }
 
 fn share_notices(port: &mut SerialPort) -> Vec<InitNotice> {
