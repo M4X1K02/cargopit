@@ -168,7 +168,7 @@ fn current_health(app: &App, diag: &Diagnostics) -> HealthScore {
     health_score(
         app.status.simd_running,
         app.pipeline_pit(),
-        diag.simapi_exists,
+        diag.simapi_live,
         devices_healthy(configured, diag.missing),
     )
 }

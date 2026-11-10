@@ -48,8 +48,8 @@ impl HealthScore {
     }
 }
 
-pub fn health_score(simd: bool, pit: bool, simapi: bool, devices_ok: bool) -> HealthScore {
-    let checks = [simd, pit, simapi, devices_ok];
+pub fn health_score(simd: bool, pit: bool, simapi_live: bool, devices_ok: bool) -> HealthScore {
+    let checks = [simd, pit, simapi_live, devices_ok];
     HealthScore {
         met: checks.iter().filter(|check| **check).count(),
         total: checks.len(),
@@ -173,6 +173,10 @@ mod tests {
         assert!(ready.all_met());
         assert_eq!(ready.label(), consts::HEALTH_LABEL_READY);
         assert_eq!(ready.ratio(), 1.0);
+
+        let mapped_only = health_score(true, true, false, true);
+        assert_eq!(mapped_only.met, 3);
+        assert!(!mapped_only.all_met());
     }
 
     #[test]
