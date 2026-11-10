@@ -102,6 +102,53 @@ impl Modulation {
     }
 }
 
+const LEVEL_MIN: f64 = 0.0;
+const LEVEL_MAX: f64 = 1.0;
+
+pub fn clamp_unit_level(level: f64) -> f64 {
+    level.clamp(LEVEL_MIN, LEVEL_MAX)
+}
+
+pub fn band_frequency_hz(min: u32, max: u32, level: f64) -> f64 {
+    let level = clamp_unit_level(level);
+    let fmin = f64::from(min);
+    let mut fmax = f64::from(max);
+    if fmax < fmin {
+        fmax = fmin;
+    }
+    fmin + (fmax - fmin) * level
+}
+
+fn band_amplitude_u32(min: u32, max: u32, level: f64) -> u32 {
+    let level = clamp_unit_level(level);
+    let amin = f64::from(min);
+    let mut amax = f64::from(max);
+    if amax < amin {
+        amax = amin;
+    }
+    round_u32(amin + (amax - amin) * level)
+}
+
+fn round_u32(value: f64) -> u32 {
+    if value < 0.0 {
+        return 0;
+    }
+    value.round_ties_even() as u32
+}
+
+fn frequency_range_valid(min: u32, max: u32) -> bool {
+    max > 0 && max >= min
+}
+
+fn amplify_range_valid(min: u32, max: u32) -> bool {
+    max > 0 && max >= min
+}
+
+pub fn sound_amplitude_from_level(level: f64, unity: u32) -> u32 {
+    let scaled = f64::from(unity) * clamp_unit_level(level);
+    round_u32(scaled)
+}
+
 #[derive(Clone, Debug)]
 pub struct HapticSettings {
     pub effect: VibrationEffect,
@@ -250,6 +297,36 @@ impl HapticEffect {
 
     pub fn duration(&self) -> f64 {
         self.duration
+    }
+
+    pub fn modulated_frequency_hz(&self, level: f64) -> f64 {
+        if self.modulation != Modulation::Frequency {
+            return f64::from(self.frequency);
+        }
+        if !frequency_range_valid(self.frequency, self.frequency_max) {
+            return f64::from(self.frequency);
+        }
+        band_frequency_hz(self.frequency, self.frequency_max, level)
+    }
+
+    pub fn modulated_sound_amplitude(&self, level: f64, unity: u32) -> u32 {
+        if self.modulation != Modulation::Amplify {
+            return sound_amplitude_from_level(level, unity);
+        }
+        if !amplify_range_valid(self.amplitude, self.amplitude_max) {
+            return sound_amplitude_from_level(level, unity);
+        }
+        band_amplitude_u32(self.amplitude, self.amplitude_max, level)
+    }
+
+    pub fn modulated_device_amplitude(&self, level: f64) -> u32 {
+        if self.modulation != Modulation::Amplify {
+            return self.amplitude;
+        }
+        if !amplify_range_valid(self.amplitude, self.amplitude_max) {
+            return self.amplitude;
+        }
+        band_amplitude_u32(self.amplitude, self.amplitude_max, level)
     }
 
     pub fn play(&mut self, sim: &Telemetry, dt_seconds: f64) -> f64 {
@@ -621,6 +698,63 @@ mod tests {
 
     const DT: f64 = 1.0 / FILTER_REFERENCE_HZ;
     const THRESHOLD: f64 = 0.1;
+
+    #[test]
+    fn band_frequency_hz_interpolates_between_bounds() {
+        const FREQ_MIN: u32 = 40;
+        const FREQ_MAX: u32 = 80;
+        const LEVEL_HALF: f64 = 0.5;
+        const LEVEL_FULL: f64 = 1.0;
+        assert_eq!(band_frequency_hz(FREQ_MIN, FREQ_MAX, 0.0), f64::from(FREQ_MIN));
+        assert_eq!(
+            band_frequency_hz(FREQ_MIN, FREQ_MAX, LEVEL_FULL),
+            f64::from(FREQ_MAX)
+        );
+        assert_eq!(
+            band_frequency_hz(FREQ_MIN, FREQ_MAX, LEVEL_HALF),
+            f64::from(FREQ_MIN) + f64::from(FREQ_MAX - FREQ_MIN) * LEVEL_HALF
+        );
+    }
+
+    #[test]
+    fn modulated_outputs_follow_configured_modulation() {
+        const FREQ_MIN: u32 = 30;
+        const FREQ_MAX: u32 = 60;
+        const AMP_MIN: u32 = 40;
+        const AMP_MAX: u32 = 100;
+        const UNITY: u32 = 100;
+        const LEVEL: f64 = 0.5;
+        let none = HapticEffect::new(&HapticSettings {
+            frequency: FREQ_MIN,
+            frequency_max: FREQ_MAX,
+            amplitude: AMP_MIN,
+            amplitude_max: AMP_MAX,
+            modulation: Modulation::None,
+            ..HapticSettings::default()
+        });
+        assert_eq!(none.modulated_frequency_hz(LEVEL), f64::from(FREQ_MIN));
+        assert_eq!(none.modulated_sound_amplitude(LEVEL, UNITY), 50);
+
+        let frequency = HapticEffect::new(&HapticSettings {
+            frequency: FREQ_MIN,
+            frequency_max: FREQ_MAX,
+            modulation: Modulation::Frequency,
+            ..HapticSettings::default()
+        });
+        assert_eq!(
+            frequency.modulated_frequency_hz(LEVEL),
+            band_frequency_hz(FREQ_MIN, FREQ_MAX, LEVEL)
+        );
+
+        let amplify = HapticEffect::new(&HapticSettings {
+            amplitude: AMP_MIN,
+            amplitude_max: AMP_MAX,
+            modulation: Modulation::Amplify,
+            ..HapticSettings::default()
+        });
+        assert_eq!(amplify.modulated_device_amplitude(LEVEL), 70);
+        assert_eq!(amplify.modulated_sound_amplitude(LEVEL, UNITY), 70);
+    }
 
     #[test]
     fn modulation_from_id_matches_c_enum() {
